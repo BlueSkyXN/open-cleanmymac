@@ -1,0 +1,165 @@
+# 架构说明
+
+本文描述 `openclean 0.23.0` 的实际实现架构。参考软件的功能事实位于 `specs/`；本文件
+只描述本项目自己的模块、数据流和安全边界。
+
+## 1. 架构定义
+
+项目采用**模块化单体 CLI**，理由是当前所有用户态能力共享同一个进程、数据模型和
+文件系统事务边界，不需要为扫描域引入服务间通信。只有未来的 macOS 特权操作必须跨越
+权限边界，届时才建设独立 native host/helper 和 XPC 协议。
+
+```mermaid
+flowchart TD
+    U[用户 / shell / 自动化] --> CLI[cli.py\nargparse + JSON/text]
+    U --> TUI[tui.py / space_tui.py\ncurses review]
+    CLI --> ORCH[engine.py\n五域扫描编排]
+    TUI --> ORCH
+    ORCH --> DAG[task_graph.py\n依赖校验和并发]
+    DAG --> SP[scanpoints.py\n静态扫描点]
+    DAG --> DYN[动态扫描器\nDocker / app languages / startup items]
+    SP --> FS[目录枚举与物理大小计量]
+    DYN --> FS
+    FS --> GATE[predicates.py + knowledge_base.py\n最外层保护闸]
+    GATE --> MODEL[Item / ScanIssue / ScanResult]
+    MODEL --> OUT[文本 / JSON / TUI]
+    MODEL --> SELECT[显式选择与安全级]
+    SELECT --> AUDIT[cleanup.py\n批量预检 + live 复核]
+    AUDIT --> TRASH[同卷 Trash]
+    AUDIT --> DOCKER[固定 Docker prune 白名单]
+    AUDIT -. 不可执行 .-> XPC[未来 native XPC helper]
+```
+
+## 2. 模块边界
+
+| 模块 | 职责 | 不负责 |
+|---|---|---|
+| `cli.py` | 参数契约、命令编排、文本/JSON 输出、退出码 | 文件删除细节 |
+| `models.py` | `Item`、身份快照、issue 和聚合指标 | 扫描策略 |
+| `scanpoints.py` | 五域静态扫描点和安全元数据 | 文件系统访问 |
+| `engine.py` | 根展开、并发扫描、计量、重叠归属、项目发现 | 用户交互 |
+| `task_graph.py` | DAG 校验、就绪调度、依赖失败传播 | 业务规则 |
+| `progress.py` | 固定权重、单调快照、TTY renderer | 任务执行 |
+| `predicates.py` | 组合谓词、KB 优先的保护闸 | 规则持久化 |
+| `knowledge_base.py` | JSON schema、规则匹配、用户 ignore 原子写入 | 远程下载 |
+| `knowledge_update.py` | HTTPS、OpenSSL 验签、防回滚、公钥钉扎、原子安装 | 内置服务 URL/公钥 |
+| `cleanup.py` | 选择、预检、fd-relative Trash 操作、执行报告 | 特权提升 |
+| `macos.py` | Trash、Darwin cache、mount、Time Machine 发现和路径边界 | 通用业务编排 |
+| `docker.py` | 只读容量解析和三条固定 prune 映射 | 任意 Docker 命令或 volume 删除 |
+| `tui.py` | clean/purge 分组复选与确认 | 直接执行文件操作 |
+| `space_tui.py` | analyze 导航、跨层选择、Finder reveal | 绕过 `cleanup.py` |
+
+`application_languages.py` 和 `startup_items.py` 是专项扫描器。它们返回统一的 `Item` 和
+`ScanIssue`，但不能自行删除目标。
+
+## 3. 核心数据模型
+
+### Item
+
+`Item` 同时描述“发现了什么”和“当前能否执行”。关键字段包括：
+
+- `path` 或资源 `identifier`；
+- 物理 `size`、逻辑大小、云占位计数；
+- `safety`、`actionable`、`requires_privilege`、阻断原因；
+- `preselected`、`requires_explicit_selection`；
+- 扫描来源 `path_source`，例如 builtin/environment；
+- 扫描时记录的 device/inode/owner 身份；
+- project、Docker、startup item 等领域元数据。
+
+扫描结果不等于删除计划。任何不可执行项的 `reclaimable_bytes` 都是 0；其占用只计入
+`potential_bytes`，并按特权或不支持原因单独聚合。
+
+### ScanIssue
+
+issue 使用稳定 code、message、task、path 和 `blocking`。`complete=true` 表示没有取消
+且没有 blocking issue；非阻断提示仍可能说明某个动态来源被安全跳过。自动化消费者应
+同时检查 `issues`，不能只看退出码。
+
+### CleanupReport
+
+执行报告区分：
+
+- `moved_to_trash_bytes`：数据已暂存到 Trash，尚未释放物理空间；
+- `permanently_deleted_bytes`：Trash 清空或 Docker prune 实际释放；
+- 每个 outcome 的 status、目标、目的地、受影响大小和消息。
+
+## 4. 扫描与调度
+
+1. CLI 根据 domain 装配静态和动态任务。
+2. `task_graph.py` 在执行前拒绝重复 ID、未知依赖、自依赖和环。
+3. 就绪任务在线程池并发运行；依赖失败只阻断下游，独立任务继续。
+4. 每个任务在启动前获得固定权重，进度按
+   `sum(task_progress * weight) / sum(weight)` 聚合。
+5. 目录遍历不跟随 symlink，硬链接按 `(device, inode)` 去重，物理大小用
+   `st_blocks * 512` 计量。
+6. 云占位不计入可回收空间；重叠父子候选最终只归属一次容量。
+7. 保护规则在读取候选细节前尽早短路，结果按声明顺序稳定汇总。
+
+## 5. 写操作状态机
+
+```mermaid
+stateDiagram-v2
+    [*] --> Scanned
+    Scanned --> Previewed: 默认
+    Scanned --> Selected: 参数或 TUI 选择
+    Selected --> Previewed: 没有 --yes
+    Selected --> Rejected: 风险门/规则/身份/路径复核失败
+    Selected --> Audited: 显式 --yes 且全部预检通过
+    Audited --> Rejected: live inode/owner/symlink/进程变化
+    Audited --> Trashed: 普通文件系统项
+    Audited --> PermanentlyDeleted: 清空 Trash
+    Audited --> DockerPruned: 固定白名单资源
+    Trashed --> Reported
+    PermanentlyDeleted --> Reported
+    DockerPruned --> Reported
+    Previewed --> [*]
+    Rejected --> [*]
+    Reported --> [*]
+```
+
+批量预检采用 all-or-nothing 启动策略：任何选中项在执行前失败，整个批次不开始。每项
+实际操作前仍再次复核，防止扫描与执行之间状态变化。
+
+## 6. 路径与竞态防护
+
+- 路径先做词法规范化，不用一次 `realpath()` 作为安全保证。
+- 从可信 anchor 到候选逐组件拒绝 symlink ancestor。
+- 环境变量扫描根只允许位于 `~/Library/Caches` 或 `~/.cache`，并标记为
+  `environment + confirm + requires_explicit_selection`。
+- 普通 Trash 移动逐组件用 `O_NOFOLLOW | O_DIRECTORY` 打开目录 fd；最终使用
+  `os.rename(..., src_dir_fd=..., dst_dir_fd=...)`。
+- 清空 Trash 使用 fd-relative `unlink/rmtree`，不删除 Trash 根目录。
+- 扫描、批量预检、最终移动均复核 inode、类型、owner、mount 和保护规则。
+
+这些措施降低 TOCTOU 风险，但 Python 用户态进程不是安全沙箱。工具只对当前用户明确
+授权的候选执行操作，不把当前实现描述为对恶意同 UID 进程的绝对隔离。
+
+## 7. 外部边界
+
+### Docker
+
+扫描只调用 `docker system df --format json`。执行器不接受用户提供的任意命令，只能映射
+到代码内固定的 builder/image/container prune；Local Volumes 始终不可执行。Docker
+prune 不经过 Trash。
+
+### 托管知识库
+
+网络更新不是后台行为，只由显式 `config --update-knowledge HTTPS_URL` 触发。客户端限制
+大小、拒绝 URL 凭据和 HTTPS 降级，验证规范 JSON 的 SHA-256 签名，钉住公钥指纹和
+sequence，再以 `0600 + fsync + os.replace` 安装。项目不内置第三方规则和未知 trust root。
+
+### 特权 XPC
+
+当前 Python wheel 没有 host app、helper、entitlements 或签名链，所有特权候选都在模型层
+`actionable=false`。未来实现必须是独立 native 交付物，并满足：audit token/designated
+requirement 双向校验、领域操作白名单、helper 端重新推导路径、fd-based no-follow、协议
+版本/大小/超时/幂等约束，以及安装升级/回滚验收。不能暴露通用 `{delete, path}` API。
+详见 [specs/04-ipc-protocol.md](../specs/04-ipc-protocol.md)。
+
+## 8. 包装与发布边界
+
+- wheel 只包含运行时包和 console script；
+- sdist 有意包含 tests、隔离 preview、release checker 和 checkout 便捷入口，保证源码归档
+  可自验证；
+- CI 只构建并上传短期 artifact，不创建 tag、GitHub Release、PyPI 或 Homebrew 发布；
+- 仓库当前没有公共许可证，发布渠道必须在许可证/商标/净室审阅后另行决定。

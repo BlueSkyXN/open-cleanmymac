@@ -1,0 +1,45 @@
+# ── 合规红线：以下内容【绝不入库、绝不外发】──
+# 结构分析产物：含参考软件的符号、扫描规则原文等事实提取结果，
+# 公开传播存在版权风险。仅本机留存作个人研究。
+analysis/
+# 过程记录
+local/
+
+# Python
+__pycache__/
+*.pyc
+build/
+dist/
+*.egg-info/
+.venv/
+.coverage
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 本机配置与签名材料
+.env
+.env.*
+.secrets/
+*.key
+
+# 正式验签公钥可有意入库；显式命名也覆盖开发者的全局 *.pem ignore
+!public-*.pem
+!*-public.pem
+!*.public.pem
+
+# 私钥规则放在 public 例外之后，歧义名称仍以拒绝为准
+*-private.pem
+private-*.pem
+private.pem
+*.p12
+*.pfx
+*.mobileprovision
+id_rsa*
+id_ed25519*
+
+# 编辑器
+.idea/
+.vscode/
+# macOS
+.DS_Store

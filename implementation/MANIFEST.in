@@ -1,0 +1,10 @@
+include README.md
+include TODO.md
+include openclean_cli.py
+recursive-include scripts *.py
+recursive-include tests *.py
+global-exclude .DS_Store
+global-exclude *.py[cod]
+prune .ruff_cache
+prune .pytest_cache
+prune .mypy_cache

@@ -1,0 +1,230 @@
+# implementation
+
+这是 `openclean` 的独立 Python 实现层。运行时只使用标准库，要求 macOS 和 Python
+3.11+；当前 CI 只验证 Python 3.11。净室边界、功能矩阵和用户安全说明见
+[仓库 README](https://github.com/BlueSkyXN/open-cleanmymac/blob/main/README.md)。
+
+## 安装与入口
+
+```bash
+# 从 Git checkout 根安装
+python3 -m venv .venv
+.venv/bin/python -m pip install ./implementation
+.venv/bin/openclean --version
+.venv/bin/python -m openclean --help
+
+# 从 implementation/ 或解压后的 sdist 根安装
+python3 -m pip install .
+```
+
+源码 checkout 也可直接运行：
+
+```bash
+cd implementation
+PYTHONPATH=. python3 -m openclean --version
+PYTHONPATH=. python3 openclean_cli.py --version
+```
+
+`openclean_cli.py` 是 checkout/sdist 便捷入口；wheel 的正式入口是 console script 和
+`python -m openclean`。
+
+## 命令面
+
+以下示例默认只读：
+
+```bash
+openclean scan
+openclean scan --domain developer --domain ai --json
+openclean scan --domain project --project-root ~/Code
+openclean clean                         # 四类候选预览
+openclean clean dev --no-interactive
+openclean purge ~/Projects --no-interactive
+openclean analyze ~ --top 20 --no-interactive
+openclean ignore list --json
+openclean config --json
+openclean optimize ram --json           # 预期 unavailable，退出 1
+openclean cat
+```
+
+写操作示例仅用于说明契约，不应在未审阅候选时直接运行：
+
+```text
+openclean clean dev --yes
+openclean clean trash --include-confirm --yes
+openclean purge PATH --yes
+openclean analyze PATH --select EXACT_CHILD --yes --no-interactive
+openclean ignore add PATH
+openclean config --analytics off
+openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-public.pem
+```
+
+前四条会修改文件；清空 Trash 和 Docker prune 是永久操作。最后三类会写本地配置或联网
+安装规则。验证写路径应运行 `make preview`，它只使用 `TemporaryDirectory`。
+
+## 选择与执行
+
+- 没有 `--yes` 时，`clean`/`purge`/`analyze` 即使带选择参数也只预览。
+- `safe` 可默认预选；`confirm` 需要 `--include-confirm` 或精确 `--select`；
+  `critical` 还需要 `--include-critical` 和独立交互确认。
+- `requires_explicit_selection=true` 的环境来源项不会被 `--include-confirm` 批量选中，必须
+  使用完整路径或 identifier 精确选择。
+- `--force --yes` 只执行默认预选项，并拒绝与任何扩大选择参数组合。
+- 普通用户态路径移动到同卷 Trash；`clean trash` 永久删除内容但保留 Trash 根目录。
+- Docker Build Cache/Images/Containers 分别映射固定官方 prune 命令；Local Volumes
+  始终不可执行。
+- 特权系统项、ApplicationLanguages、云保护项和不支持资源无法被参数强制解锁。
+
+## TUI
+
+连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 界面。JSON、管道和
+`--no-interactive` 不打开 TUI。`analyze --line-interactive` 提供只读行式导航。
+
+TUI 的选择只是选择；实际执行仍要求启动命令带 `--yes`，并在汇总页再次按 `Y`。
+快捷键见
+[完整预览文档](https://github.com/BlueSkyXN/open-cleanmymac/blob/main/docs/PREVIEW.md)。
+
+## JSON schema v2
+
+成功结果包含 `schema_version=2`。通用容量字段：
+
+- `potential_bytes`：发现的物理占用；
+- `reclaimable_bytes`：`actionable=true` 候选占用；
+- `requires_privilege_bytes`：当前需要特权 helper 的占用；
+- `unsupported_bytes`：既不可执行又非特权候选的占用。
+
+`scan` 额外返回 `command`、`mode` 和 `requested_domains`。`analyze` 返回 `top`、
+`truncated`、`entry_count_total`、`entry_count_returned`。`optimize --json` 返回：
+
+```json
+{
+  "schema_version": 2,
+  "command": "optimize ram",
+  "mode": "guard",
+  "status": "unavailable",
+  "executed": false,
+  "reason": "..."
+}
+```
+
+参数、规则、路径、选择和配置错误使用：
+
+```json
+{
+  "schema_version": 2,
+  "command": "scan",
+  "status": "error",
+  "executed": false,
+  "exit_code": 2,
+  "error": {"code": "usage_error", "message": "..."}
+}
+```
+
+JSON 包含绝对路径，进入日志或 issue 前必须脱敏。`complete=true` 只表示没有 blocking
+issue；仍应检查 `issues` 中的安全跳过和动态来源提示。
+
+## 自建规则
+
+默认规则路径是 `~/.config/openclean/rules.json`；`--rules FILE` 使用显式单文件。
+规范格式只支持 JSON，不支持 YAML：
+
+```json
+{
+  "schema_version": 1,
+  "ignore": {
+    "paths": ["~/Library/Caches/KeepMe"],
+    "globs": ["**/CacheStorage/keep-*"],
+    "regexes": ["/important-[^/]+$"]
+  },
+  "protect": {
+    "paths": ["/System", "/usr"]
+  },
+  "applications": {
+    "com.example.app": {
+      "name": "Example",
+      "protected": true,
+      "additional_files": ["~/Library/Application Support/Example"],
+      "deep_search": false
+    }
+  }
+}
+```
+
+`paths` 必须是绝对路径或 `~` 路径，并匹配自身和后代。`globs`/`regexes` 匹配规范化
+绝对路径。`protect` 和 `ignore` 都阻止扫描/执行，且 KnowledgeBase 保护闸最先求值。
+
+## 签名托管知识库
+
+项目不内置更新 URL、公钥或第三方私有规则。更新只由显式命令触发，接受的 envelope：
+
+```json
+{
+  "envelope_schema_version": 1,
+  "sequence": 42,
+  "created_at": "2026-07-30T12:00:00+08:00",
+  "signature_algorithm": "openssl-dgst-sha256",
+  "rules": {"schema_version": 1},
+  "signature": "<base64 signature>"
+}
+```
+
+客户端限制 2 MiB、只接受 HTTPS、拒绝 URL 凭据，使用用户提供的 PEM 公钥调用系统
+OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence，并通过 `0600` 临时
+文件、`fsync`、`os.replace` 原子安装。托管 `knowledge.json` 与用户 `rules.json`
+分层合并，远程更新不覆盖用户 ignore。
+
+## 路径安全
+
+- 不跟随候选或 ancestor symlink；
+- 环境变量缓存根只允许位于 `~/Library/Caches` 或 `~/.cache`，并强制精确选择；
+- 目录大小按物理块计量，硬链接 device/inode 去重，云占位不计回收量；
+- 执行前批量复核保护规则、device/inode、owner、mount、云和运行中进程；
+- 普通移动逐组件打开 no-follow 目录 fd，并使用 fd-relative rename；
+- 任一批量预检失败时整个批次不启动。
+
+详见
+[架构说明](https://github.com/BlueSkyXN/open-cleanmymac/blob/main/docs/ARCHITECTURE.md)
+和
+[安全政策](https://github.com/BlueSkyXN/open-cleanmymac/blob/main/SECURITY.md)。
+
+## 退出码
+
+| code | 含义 |
+|---:|---|
+| `0` | 命令按契约完成 |
+| `1` | 有 blocking issue/outcome 失败，或能力明确 unavailable |
+| `2` | 参数、规则、路径、选择或配置错误 |
+| `130` | 用户中断 |
+
+`ignore add/remove` 是幂等配置操作：目标已被覆盖或不存在时仍返回 `0`，并在 JSON 中
+给出 `changed=false`。
+
+## 开发检查
+
+从仓库根运行：
+
+```bash
+make lint
+make test
+make preview
+make check
+make package
+make release-check
+```
+
+直接命令：
+
+```bash
+cd implementation
+ruff check openclean tests scripts
+python3 -W error -m py_compile openclean/*.py tests/*.py scripts/*.py
+PYTHONPATH=. python3 -W error -m unittest discover -s tests -q
+PYTHONPATH=. python3 scripts/preview_all.py --json
+python3 -m build --no-isolation
+python3 scripts/check_release_artifacts.py --json
+```
+
+wheel 只含运行时包；sdist 有意包含 tests、`scripts/preview_all.py`、release checker、
+`openclean_cli.py`、README 和 TODO，以便源码归档自验证。两种归档都必须排除
+`analysis/`、`local/`、缓存、`.DS_Store` 和敏感材料。
+
+剩余工作见 [TODO.md](TODO.md)。
