@@ -1,5 +1,9 @@
 # implementation
 
+[仓库 README](../README.md) · [能力地图](../docs/CAPABILITIES.md) ·
+[功能预览](../docs/PREVIEW.md) · [架构](../docs/ARCHITECTURE.md) ·
+[安全](../SECURITY.md) · [规格索引](../specs/_index.md)
+
 这是 `openclean` 的独立 Python 实现层。运行时只使用标准库，要求 macOS 和 Python
 3.11+；当前 CI 只验证 Python 3.11。净室边界、功能矩阵和用户安全说明见
 [仓库 README](https://github.com/BlueSkyXN/open-cleanmymac/blob/main/README.md)。
@@ -26,7 +30,8 @@ PYTHONPATH=. python3 openclean_cli.py --version
 ```
 
 `openclean_cli.py` 是 checkout/sdist 便捷入口；wheel 的正式入口是 console script 和
-`python -m openclean`。
+`python -m openclean`。低于 Python 3.11 的源码运行时仍可查看 help/version；业务命令会
+在进入扫描前返回 `unsupported_python`，不会输出内部 traceback。
 
 ## 命令面
 
@@ -50,7 +55,7 @@ openclean cat
 
 ```text
 openclean clean dev --yes
-openclean clean trash --include-confirm --yes
+openclean clean trash --select EXACT_TRASH_ROOT --include-confirm --yes
 openclean purge PATH --yes
 openclean analyze PATH --select EXACT_CHILD --yes --no-interactive
 openclean ignore add PATH
@@ -64,8 +69,11 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 ## 选择与执行
 
 - 没有 `--yes` 时，`clean`/`purge`/`analyze` 即使带选择参数也只预览。
-- `safe` 可默认预选；`confirm` 需要 `--include-confirm` 或精确 `--select`；
-  `critical` 还需要 `--include-critical` 和独立交互确认。
+- 没有 `--select` 时，`safe` 可默认预选，`--all`/`--include-confirm`/
+  `--include-critical` 分别扩展对应批量层级。
+- 一旦指定 `--select`，选择集从空开始，不继承默认预选；confirm/critical 精确目标仍需
+  对应 `--include-confirm`/`--include-critical` 作为风险授权，但不会顺带选择同等级其他项。
+- `--select` 与 `--all` 语义冲突，CLI 在扫描前返回 exit 2。
 - `requires_explicit_selection=true` 的环境来源项不会被 `--include-confirm` 批量选中，必须
   使用完整路径或 identifier 精确选择。
 - `--force --yes` 只执行默认预选项，并拒绝与任何扩大选择参数组合。
@@ -76,8 +84,9 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 
 ## TUI
 
-连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 界面。JSON、管道和
-`--no-interactive` 不打开 TUI。`analyze --line-interactive` 提供只读行式导航。
+连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 界面。JSON、管道、
+`--no-interactive` 和任何参数化选择 flag 不打开 TUI。`analyze --line-interactive`
+提供只读行式导航。
 
 TUI 的选择只是选择；实际执行仍要求启动命令带 `--yes`，并在汇总页再次按 `Y`。
 快捷键见
@@ -176,8 +185,11 @@ OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence，
 
 - 不跟随候选或 ancestor symlink；
 - 环境变量缓存根只允许位于 `~/Library/Caches` 或 `~/.cache`，并强制精确选择；
-- 目录大小按物理块计量，硬链接 device/inode 去重，云占位不计回收量；
+- 目录大小按物理块计量，硬链接 device/inode 去重；Darwin `SF_DATALESS` 与 zero-block
+  启发式在目录枚举前阻止 dataless/疑似云占位，它们不计回收量；
 - 执行前批量复核保护规则、device/inode、owner、mount、云和运行中进程；
+- 后代目录以 no-follow fd 打开，并在 `scandir(fd)` 前重新 `fstat` 类型、owner、device
+  和 dataless 状态；
 - 普通移动逐组件打开 no-follow 目录 fd，并使用 fd-relative rename；
 - 任一批量预检失败时整个批次不启动。
 
@@ -206,6 +218,7 @@ OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence，
 make lint
 make test
 make preview
+make docs-assets
 make check
 make package
 make release-check
@@ -219,12 +232,16 @@ ruff check openclean tests scripts
 python3 -W error -m py_compile openclean/*.py tests/*.py scripts/*.py
 PYTHONPATH=. python3 -W error -m unittest discover -s tests -q
 PYTHONPATH=. python3 scripts/preview_all.py --json
+PYTHONPATH=. python3 scripts/capture_tui_assets.py --check
 python3 -m build --no-isolation
 python3 scripts/check_release_artifacts.py --json
 ```
 
-wheel 只含运行时包；sdist 有意包含 tests、`scripts/preview_all.py`、release checker、
+wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成器、release checker、
 `openclean_cli.py`、README 和 TODO，以便源码归档自验证。两种归档都必须排除
 `analysis/`、`local/`、缓存、`.DS_Store` 和敏感材料。
 
 剩余工作见 [TODO.md](TODO.md)。
+
+当前本地验证基线为 278 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+checkout 的 `make check` 输出为准。

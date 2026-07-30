@@ -1,5 +1,10 @@
 # 开发任务与能力缺口
 
+[README](../README.md) · [能力地图](../docs/CAPABILITIES.md) ·
+[功能预览](../docs/PREVIEW.md) · [架构](../docs/ARCHITECTURE.md) ·
+[安全](../SECURITY.md) · [规格索引](../specs/_index.md) ·
+[实现说明](README.md)
+
 当前基线：`openclean 0.23.0`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
 本清单只保留尚未完成或需要外部验收的工作；已完成功能见根 README、CHANGELOG 和测试。
 CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI 对齐目标。
@@ -70,6 +75,10 @@ notarization 和真实安装/升级/回滚验收。Python wheel 本身不能安�
 目标 macOS 版本的真实验证，重点检查 curses、`st_blocks`、`getconf`、`tmutil`、mount、
 Trash 权限和 OpenSSL CLI 差异。
 
+另需在专用测试账号/隔离 File Provider 数据上验证 `SF_DATALESS`：扫描前后占位状态不变、
+dataless 目录不触发枚举或下载，并覆盖 iCloud Drive 与至少一个第三方 provider。不要在
+真实用户文件上通过 evict/Remove Download 制造测试夹具。
+
 ## P2：保守增强
 
 ### 6. 权限能力模型
@@ -100,13 +109,16 @@ universal binary thinning 未实现。若未来仅做审计，需要结构化记
 
 ## 当前已完成的交付门
 
-- 五域扫描、物理/逻辑大小、硬链接去重、云占位保护、重叠归属；
+- 五域扫描、物理/逻辑大小、硬链接去重、Darwin `SF_DATALESS`/zero-block 占位保护、
+  重叠归属；
 - Predicate/KnowledgeBase、ignore lifecycle、签名托管规则客户端；
-- clean/purge/analyze 预览、TUI、精确选择、用户态执行和报告；
+- clean/purge/analyze 预览、TUI、精确选择、用户态执行和报告；`--select` 不继承默认
+  预选，tier flag 只作为精确目标的风险授权；
 - 同卷 Trash、Trash 清空、Docker 固定 prune、运行中进程保护；
 - 任务 DAG、加权进度、动态扫描并发；
 - System Junk、Darwin cache、broken startup items、Time Machine、ApplicationLanguages；
-- JSON schema v2 和统一机器错误 envelope；
+- JSON schema v2 和统一机器错误 envelope；重复 domain/root 去重，显式 project root
+  做存在性、目录类型和 symlink 参数校验；
 - 19 场景隔离预览、macOS CI、wheel/sdist 和归档审计。
 
 ## 提交前验证

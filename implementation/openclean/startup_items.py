@@ -135,6 +135,15 @@ def _informational_issue(
     )
 
 
+def _dataless_issue(path: Path, task: str) -> ScanIssue:
+    return _informational_issue(
+        "dataless_object_skipped",
+        "检测到 macOS dataless/疑似云占位对象；为避免触发下载，已跳过",
+        path,
+        task,
+    )
+
+
 def scan_broken_startup_items(
     roots: Iterable[str | os.PathLike[str]],
     protection: Predicate,
@@ -171,6 +180,9 @@ def scan_broken_startup_items(
             or not stat.S_ISDIR(root_stat.st_mode)
         ):
             continue
+        if root_facts.is_dataless:
+            result.issues.append(_dataless_issue(root, category))
+            continue
         try:
             with os.scandir(root) as iterator:
                 entries = sorted(iterator, key=lambda entry: entry.name)
@@ -197,6 +209,9 @@ def scan_broken_startup_items(
                 or stat.S_ISLNK(candidate_stat.st_mode)
                 or not stat.S_ISREG(candidate_stat.st_mode)
             ):
+                continue
+            if facts.is_probable_cloud_placeholder:
+                result.issues.append(_dataless_issue(path, category))
                 continue
             try:
                 program = read_startup_program(path)
@@ -228,7 +243,8 @@ def scan_broken_startup_items(
             except (PermissionError, FileNotFoundError, OSError) as exc:
                 result.issues.append(_filesystem_issue(exc, path, category))
                 continue
-            if FileFacts(path=path, stat=verified_stat).identity != facts.identity:
+            verified_facts = FileFacts(path=path, stat=verified_stat)
+            if verified_facts.identity != facts.identity:
                 result.issues.append(
                     _informational_issue(
                         "startup_item_changed",
@@ -238,7 +254,11 @@ def scan_broken_startup_items(
                     )
                 )
                 continue
+            if verified_facts.is_probable_cloud_placeholder:
+                result.issues.append(_dataless_issue(path, category))
+                continue
 
+            facts = verified_facts
             is_cloud_file = facts.is_probable_cloud_placeholder
             allocated_size = 0 if is_cloud_file else facts.allocated_size
             requires_privilege = bool(

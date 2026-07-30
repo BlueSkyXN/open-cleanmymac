@@ -81,6 +81,11 @@ def analyze_path(
     if not stat.S_ISDIR(root_stat.st_mode):
         raise AnalyzeError(f"分析路径不是目录：{root}")
     root_facts = FileFacts(path=root, stat=root_stat)
+    if root_facts.is_dataless:
+        raise AnalyzeError(
+            "为避免触发云端枚举或下载，拒绝分析 macOS dataless 根目录："
+            f"{root}"
+        )
     if protection.should_ignore(root_facts):
         raise AnalyzeError(f"分析路径命中忽略或保护规则：{root}")
 

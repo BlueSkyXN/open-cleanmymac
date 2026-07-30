@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from openclean.analyzer import AnalyzeError, analyze_path
@@ -15,6 +16,37 @@ from openclean.knowledge_base import KnowledgeBase
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_rejects_dataless_root_without_enumerating_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            root_stat = root.lstat()
+            original_lstat = Path.lstat
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                if path != root:
+                    return stat_result
+                return SimpleNamespace(
+                    st_mode=root_stat.st_mode,
+                    st_size=root_stat.st_size,
+                    st_blocks=root_stat.st_blocks,
+                    st_mtime=root_stat.st_mtime,
+                    st_dev=root_stat.st_dev,
+                    st_ino=root_stat.st_ino,
+                    st_nlink=root_stat.st_nlink,
+                    st_uid=root_stat.st_uid,
+                    st_flags=0x40000000,
+                )
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", 0x40000000
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.analyzer.os.scandir"
+            ) as scandir, self.assertRaisesRegex(AnalyzeError, "dataless"):
+                analyze_path(root)
+
+            scandir.assert_not_called()
+
     def test_analyzes_first_level_sorted_and_applies_protection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

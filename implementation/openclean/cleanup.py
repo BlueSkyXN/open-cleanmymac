@@ -71,41 +71,47 @@ def select_cleanup_items(
     include_confirm: bool = False,
     include_critical: bool = False,
 ) -> list[Item]:
-    """根据默认选择与显式授权生成执行集合。"""
+    """根据默认选择或精确 selector 与显式授权生成执行集合。"""
     candidates = list(items)
-    selected_keys = {
-        _item_key(item)
-        for item in candidates
-        if item.preselected is True
-        and item.actionable
-        and not item.requires_explicit_selection
-    }
-    if select_all_safe:
-        selected_keys.update(
-            _item_key(item)
-            for item in candidates
-            if item.safety == "safe"
-            and item.actionable
-            and not item.requires_explicit_selection
-        )
-    if include_confirm:
-        selected_keys.update(
-            _item_key(item)
-            for item in candidates
-            if item.safety == "confirm"
-            and item.actionable
-            and not item.requires_explicit_selection
-        )
-    if include_critical:
-        selected_keys.update(
-            _item_key(item)
-            for item in candidates
-            if item.safety == "critical"
-            and item.actionable
-            and not item.requires_explicit_selection
-        )
+    selector_values = tuple(selectors)
+    if selector_values and select_all_safe:
+        raise SelectionError("--select 不能与 --all 同时使用")
 
-    for selector in selectors:
+    selected_keys: set[tuple[str, str, str, str]] = set()
+    if not selector_values:
+        selected_keys.update(
+            _item_key(item)
+            for item in candidates
+            if item.preselected is True
+            and item.actionable
+            and not item.requires_explicit_selection
+        )
+        if select_all_safe:
+            selected_keys.update(
+                _item_key(item)
+                for item in candidates
+                if item.safety == "safe"
+                and item.actionable
+                and not item.requires_explicit_selection
+            )
+        if include_confirm:
+            selected_keys.update(
+                _item_key(item)
+                for item in candidates
+                if item.safety == "confirm"
+                and item.actionable
+                and not item.requires_explicit_selection
+            )
+        if include_critical:
+            selected_keys.update(
+                _item_key(item)
+                for item in candidates
+                if item.safety == "critical"
+                and item.actionable
+                and not item.requires_explicit_selection
+            )
+
+    for selector in selector_values:
         matches = [
             item for item in candidates if _matches_selector(item, selector)
         ]
@@ -274,6 +280,25 @@ def _validate_cleanup_scope(
 def _validate_startup_item(item: Item, path: Path) -> None:
     if not item.startup_program:
         return
+
+    def validate_source() -> None:
+        live_stat = _lstat(path)
+        if stat.S_ISLNK(live_stat.st_mode) or not stat.S_ISREG(
+            live_stat.st_mode
+        ):
+            raise CleanupSafetyError(
+                f"失效启动项已不再是普通文件：{path}"
+            )
+        live_facts = FileFacts(path=path, stat=live_stat)
+        if live_facts.is_probable_cloud_placeholder:
+            raise CleanupSafetyError(
+                "失效启动项变成了 macOS dataless/疑似云占位文件："
+                f"{path}"
+            )
+        if item.identity is not None and live_facts.identity != item.identity:
+            raise CleanupSafetyError(f"失效启动项 inode 已变化：{path}")
+
+    validate_source()
     try:
         still_broken = startup_item_still_broken(
             path,
@@ -282,6 +307,7 @@ def _validate_startup_item(item: Item, path: Path) -> None:
         )
     except StartupItemError as exc:
         raise CleanupSafetyError(f"无法重新验证失效启动项：{exc}") from exc
+    validate_source()
     if not still_broken:
         raise CleanupSafetyError("启动项引用的程序已恢复，拒绝清理")
 
@@ -298,18 +324,48 @@ def _audit_descendants(
     protection: Predicate,
     expected_uid: int,
 ) -> None:
+    def validate_directory(directory: Path, stat_result: os.stat_result) -> None:
+        if stat.S_ISLNK(stat_result.st_mode) or not stat.S_ISDIR(
+            stat_result.st_mode
+        ):
+            raise CleanupSafetyError(
+                f"候选后代已不再是普通目录：{directory}"
+            )
+        if stat_result.st_uid != expected_uid:
+            raise CleanupSafetyError(
+                f"候选后代目录不属于当前用户：{directory}"
+            )
+        if stat_result.st_dev != root_device:
+            raise CleanupSafetyError(
+                f"候选后代目录位于其他文件系统：{directory}"
+            )
+        facts = FileFacts(path=directory, stat=stat_result)
+        if facts.is_probable_cloud_placeholder:
+            raise CleanupSafetyError(
+                f"发现 macOS dataless/疑似云占位目录：{directory}"
+            )
+
     stack = [root]
     while stack:
         directory = stack.pop()
+        directory_stat = _lstat(directory)
+        validate_directory(directory, directory_stat)
+        directory_fd = _open_directory_no_follow(directory, anchor=root)
         try:
-            with os.scandir(directory) as iterator:
+            live_stat = os.fstat(directory_fd)
+            validate_directory(directory, live_stat)
+            with os.scandir(directory_fd) as iterator:
                 entries = list(iterator)
+        except CleanupSafetyError:
+            raise
         except (PermissionError, FileNotFoundError, OSError) as exc:
             raise CleanupSafetyError(
                 f"无法复核目录 {directory}：{exc}"
             ) from exc
+        finally:
+            os.close(directory_fd)
         for entry in entries:
-            path = normalize_path(entry.path)
+            path = normalize_path(directory / entry.name)
             if _knowledge_base_blocks(protection, path):
                 raise CleanupSafetyError(f"命中忽略或保护规则：{path}")
             stat_result = _lstat(path)
@@ -321,7 +377,9 @@ def _audit_descendants(
             if _predicate_blocks(protection, facts):
                 raise CleanupSafetyError(f"命中忽略或保护规则：{path}")
             if facts.is_probable_cloud_placeholder:
-                raise CleanupSafetyError(f"发现云占位文件：{path}")
+                raise CleanupSafetyError(
+                    f"发现 macOS dataless/疑似云占位文件：{path}"
+                )
             if stat.S_ISLNK(stat_result.st_mode):
                 continue
             if stat.S_ISDIR(stat_result.st_mode):
@@ -366,7 +424,7 @@ def _audit_item(
     if item.excluded_paths:
         raise CleanupSafetyError("候选包含忽略或保护路径")
     if item.cloud_file_count or item.is_cloud_file:
-        raise CleanupSafetyError("候选包含云占位文件")
+        raise CleanupSafetyError("候选包含 macOS dataless/疑似云占位文件")
 
     path = normalize_path(item.path)
     _validate_cleanup_scope(item, path, uid, home)
@@ -384,7 +442,9 @@ def _audit_item(
     if _predicate_blocks(protection, facts):
         raise CleanupSafetyError(f"命中忽略或保护规则：{path}")
     if facts.is_probable_cloud_placeholder:
-        raise CleanupSafetyError(f"候选变成了云占位文件：{path}")
+        raise CleanupSafetyError(
+            f"候选变成了 macOS dataless/疑似云占位文件：{path}"
+        )
     if item.identity is not None and facts.identity != item.identity:
         raise CleanupSafetyError(f"候选 inode 已变化：{path}")
     _validate_startup_item(item, path)
@@ -554,6 +614,10 @@ def _move_to_trash(
     if not _identity_matches(path, item):
         raise CleanupSafetyError(f"准备 Trash 后 inode 已变化：{path}")
     path_stat = _lstat(path)
+    if FileFacts(path=path, stat=path_stat).is_probable_cloud_placeholder:
+        raise CleanupSafetyError(
+            f"候选变成了 macOS dataless/疑似云占位文件：{path}"
+        )
     trash_stat = _lstat(trash)
     if stat.S_ISLNK(trash_stat.st_mode) or not stat.S_ISDIR(
         trash_stat.st_mode
@@ -585,7 +649,12 @@ def _move_to_trash(
         source_stat = _stat_at(source_parent_fd, path.name, path)
         if stat.S_ISLNK(source_stat.st_mode):
             raise CleanupSafetyError(f"候选根路径变成了符号链接：{path}")
-        source_identity = FileFacts(path=path, stat=source_stat).identity
+        source_facts = FileFacts(path=path, stat=source_stat)
+        if source_facts.is_probable_cloud_placeholder:
+            raise CleanupSafetyError(
+                f"移动前候选变成了 macOS dataless/疑似云占位文件：{path}"
+            )
+        source_identity = source_facts.identity
         if item.identity is not None and source_identity != item.identity:
             raise CleanupSafetyError(f"移动前 inode 已变化：{path}")
         if source_stat.st_dev != os.fstat(trash_fd).st_dev:
@@ -662,6 +731,10 @@ def _empty_trash(
     _audit_descendants(root, root_stat.st_dev, protection, uid)
 
     failures: list[str] = []
+    live_root_stat = os.fstat(root_fd)
+    if FileFacts(path=root, stat=live_root_stat).is_dataless:
+        os.close(root_fd)
+        raise CleanupSafetyError(f"Trash 根目录变成了 macOS dataless 目录：{root}")
     try:
         with os.scandir(root_fd) as iterator:
             entries = list(iterator)
@@ -678,8 +751,15 @@ def _empty_trash(
             failures.append(f"{root / entry.name}: {exc}")
 
     try:
+        live_root_stat = os.fstat(root_fd)
+        if FileFacts(path=root, stat=live_root_stat).is_dataless:
+            raise CleanupSafetyError(
+                f"Trash 根目录变成了 macOS dataless 目录：{root}"
+            )
         with os.scandir(root_fd) as iterator:
             remaining = [entry.name for entry in iterator]
+    except CleanupSafetyError:
+        raise
     except (PermissionError, FileNotFoundError, OSError) as exc:
         failures.append(f"复核失败：{exc}")
         remaining = []

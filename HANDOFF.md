@@ -1,5 +1,10 @@
 # open-cleanmymac 交接快照
 
+[README](README.md) · [能力地图](docs/CAPABILITIES.md) ·
+[功能预览](docs/PREVIEW.md) · [架构](docs/ARCHITECTURE.md) ·
+[安全](SECURITY.md) · [规格索引](specs/_index.md) ·
+[实现说明](implementation/README.md)
+
 > 版本：`0.23.0` · 日期：2026-07-30 · 状态：private GitHub Alpha 基线
 
 ## 立即上手
@@ -12,7 +17,8 @@ make release-check
 
 全部功能的安全演示入口是 `make preview`。它在 `TemporaryDirectory` 中覆盖 19 个场景，
 不会扫描或修改真实 `HOME`。用户文档从 [README.md](README.md) 开始，架构见
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，当前缺口见
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，逐项状态见
+[docs/CAPABILITIES.md](docs/CAPABILITIES.md)，当前缺口见
 [implementation/TODO.md](implementation/TODO.md)。
 
 ## 当前完成状态
@@ -20,9 +26,10 @@ make release-check
 已实现并有自动化覆盖：
 
 - system/developer/ai/trash/project 五域扫描；
-- 物理/逻辑大小、硬链接去重、云占位和重叠归属；
+- 物理/逻辑大小、硬链接去重、Darwin `SF_DATALESS`/zero-block 占位保护和重叠归属；
 - Predicate 组合、JSON KnowledgeBase、ignore、签名更新客户端；
-- clean/purge/analyze 的文本、JSON、curses 审阅和用户态执行；
+- clean/purge/analyze 的文本、JSON、curses 审阅和用户态执行；精确 `--select` 不继承
+  默认或同等级批量选择；
 - 同卷 Trash、Trash 永久清空、Docker 三类固定 prune；
 - 项目分组和 7 天预选、Time Machine 只读提示；
 - System Junk 精细候选、Darwin cache、broken startup items；
@@ -30,7 +37,7 @@ make release-check
 - 任务 DAG、加权进度、运行中进程保护；
 - JSON schema v2、机器错误 envelope、标准 Python 包装和 release archive audit。
 
-最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，244 个单元测试通过，
+最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，278 个单元测试通过，
 19/19 隔离预览通过且 `real_user_data_modified=false`。这是本地快照；远端状态必须读取
 GitHub exact commit 的 Actions 结果后另行确认。
 
@@ -69,6 +76,7 @@ GitHub exact commit 的 Actions 结果后另行确认。
 | DAG/进度 | `task_graph.py`、`progress.py` |
 | 专项扫描 | `docker.py`、`startup_items.py`、`application_languages.py` |
 | 全功能预览 | `implementation/scripts/preview_all.py` |
+| TUI 文档资产 | `implementation/scripts/capture_tui_assets.py`、`docs/assets/` |
 | 归档检查 | `implementation/scripts/check_release_artifacts.py` |
 
 ## 包装策略

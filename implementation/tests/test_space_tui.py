@@ -47,7 +47,14 @@ class _FakeScreen:
 
 
 class SpaceTuiTests(unittest.TestCase):
-    def _run(self, root: Path, keys: list[int], *, allow_execution: bool):
+    def _run(
+        self,
+        root: Path,
+        keys: list[int],
+        *,
+        allow_execution: bool,
+        top: int = 0,
+    ):
         screen = _FakeScreen(keys)
         with mock.patch.dict(os.environ, {"HOME": str(root.parent)}), mock.patch(
             "curses.curs_set"
@@ -56,10 +63,29 @@ class SpaceTuiTests(unittest.TestCase):
                 screen,
                 root,
                 protection=IgnoreRules(),
-                top=0,
+                top=top,
                 allow_execution=allow_execution,
             )
         return result, screen
+
+    def test_top_limit_is_visible_in_browser_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            root.mkdir()
+            (root / "large.bin").write_bytes(b"x" * 10_000)
+            (root / "small.bin").write_bytes(b"x")
+
+            _, screen = self._run(
+                root,
+                [ord("q")],
+                allow_execution=False,
+                top=1,
+            )
+
+            self.assertTrue(
+                any("显示最大 1/2 项" in line for line in screen.lines)
+            )
+            self.assertTrue(any("占比基于全部" in line for line in screen.lines))
 
     def test_navigation_selection_deduplicates_descendants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

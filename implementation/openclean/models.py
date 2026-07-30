@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,6 +14,14 @@ SAFETY_LEVELS = frozenset({"safe", "confirm", "critical"})
 RESOURCE_KINDS = frozenset({"filesystem", "docker"})
 CLEANUP_SCOPES = frozenset({"", "darwin-user-cache"})
 PATH_SOURCES = frozenset({"builtin", "environment"})
+
+# ``SF_DATALESS`` is part of the public macOS ``sys/stat.h`` contract.  Older
+# Python builds expose ``st_flags`` but not the corresponding ``stat`` constant.
+MACOS_SF_DATALESS = (
+    getattr(stat, "SF_DATALESS", 0x40000000)
+    if sys.platform == "darwin"
+    else 0
+)
 
 
 def normalize_path(path: str | os.PathLike[str]) -> Path:
@@ -79,9 +88,19 @@ class FileFacts:
         return blocks * 512 if blocks is not None else self.stat.st_size
 
     @property
+    def is_dataless(self) -> bool:
+        """Return whether macOS marks this filesystem object as dataless."""
+        if self.stat is None or not MACOS_SF_DATALESS:
+            return False
+        flags = getattr(self.stat, "st_flags", 0)
+        return bool(flags & MACOS_SF_DATALESS)
+
+    @property
     def is_probable_cloud_placeholder(self) -> bool:
         if self.stat is None:
             return False
+        if self.is_dataless:
+            return True
         mode = getattr(self.stat, "st_mode", None)
         if mode is not None and not stat.S_ISREG(mode):
             return False

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import stat
 import sys
 from pathlib import Path
 
@@ -56,6 +57,7 @@ CLEAN_DOMAIN_LABELS = {
     "trash": "Trash",
 }
 CLI_SCHEMA_VERSION = 2
+MINIMUM_PYTHON = (3, 11)
 CAT_ART = " /\\_/\\\n( o.o )\n > ^ <"
 
 
@@ -155,7 +157,10 @@ def _add_rule_options(parser: argparse.ArgumentParser) -> None:
         "--ignore",
         action="append",
         default=[],
-        help="忽略包含该子串的路径，可多次指定",
+        help=(
+            "仅本次运行按路径子串临时忽略，可多次指定；"
+            "持久规则使用 ignore add"
+        ),
     )
     _add_rules_path_option(parser)
 
@@ -190,19 +195,28 @@ def _add_cleanup_execution_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--include-confirm",
         action="store_true",
-        help="显式选择全部可执行 confirm 项",
+        help=(
+            "无 --select 时批量选择全部可执行 confirm 项；"
+            "精确模式中只作为 confirm 风险授权"
+        ),
     )
     parser.add_argument(
         "--include-critical",
         action="store_true",
-        help="第二重授权：显式选择全部可执行 critical 项",
+        help=(
+            "无 --select 时批量选择全部可执行 critical 项；"
+            "精确模式中只作为 critical 第二重授权"
+        ),
     )
     parser.add_argument(
         "--select",
         action="append",
         default=[],
         metavar="PATH_OR_ID",
-        help="按完整路径或资源 identifier 选择候选，可多次指定",
+        help=(
+            "精确选择完整路径或资源 identifier，可多次指定；"
+            "不继承默认预选，confirm/critical 仍需对应授权"
+        ),
     )
     parser.add_argument(
         "--no-interactive",
@@ -232,7 +246,31 @@ def _validate_cleanup_execution_args(args: argparse.Namespace) -> str | None:
         or args.select
     ):
         return "--force 只执行默认预选项，不能与选择扩展参数同时使用"
+    if args.select and args.select_all_safe:
+        return "--select 是精确选择模式，不能与批量选择参数 --all 同时使用"
     return None
+
+
+def _validated_project_roots(raw_roots: list[Path]) -> list[Path]:
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for raw_root in raw_roots:
+        root = normalize_path(raw_root)
+        if root in seen:
+            continue
+        seen.add(root)
+        try:
+            root_stat = root.lstat()
+        except FileNotFoundError as exc:
+            raise ValueError(f"项目扫描根目录不存在：{root}") from exc
+        except (PermissionError, OSError) as exc:
+            raise ValueError(f"无法访问项目扫描根目录 {root}：{exc}") from exc
+        if stat.S_ISLNK(root_stat.st_mode):
+            raise ValueError(f"项目扫描根目录不能是符号链接：{root}")
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise ValueError(f"项目扫描根路径不是目录：{root}")
+        roots.append(root)
+    return roots
 
 
 def _prepare_cleanup_selection(
@@ -393,6 +431,18 @@ def _item_location(item) -> str:
     return item.identifier or item.resource_kind
 
 
+def _item_annotations(item: Item) -> str:
+    annotations: list[str] = []
+    if item.requires_explicit_selection:
+        annotations.append("[需 --select 精确选择]")
+    if item.requires_privilege:
+        annotations.append("[需要特权 helper]")
+    if not item.actionable:
+        reason = item.action_block_reason or "该候选不可执行"
+        annotations.append(f"[不可执行: {reason}]")
+    return f"  {' '.join(annotations)}" if annotations else ""
+
+
 def _cleanup_payload(report: CleanupReport) -> dict[str, object]:
     return {
         "complete": report.complete,
@@ -524,14 +574,14 @@ def _print_report(
         return
 
     cats = result.by_category()
-    print(f"\n{'类别':<22}{'大小':>10}  {'安全':<6}路径")
+    print(f"\n{'类别':<22}{'大小':>10}  {'安全':<8} 路径")
     print("─" * 78)
     for cat, items in sorted(cats.items(),
                              key=lambda kv: -sum(i.size for i in kv[1])):
         for i in sorted(items, key=lambda x: -x.size):
             print(
                 f"{cat:<22}{human(i.size):>10}  "
-                f"{i.safety:<6}{_item_location(i)}"
+                f"{i.safety:<8} {_item_location(i)}{_item_annotations(i)}"
             )
     print("─" * 78)
     print(
@@ -589,7 +639,12 @@ def _print_purge_report(
         print("未发现项目构建产物。")
         _print_issues(result)
         return
-    print("\n项目构建产物（只读预览，不会删除）")
+    title = (
+        "项目清理执行结果"
+        if cleanup is not None
+        else "项目构建产物（只读预览，不会删除）"
+    )
+    print(f"\n{title}")
     print("─" * 88)
     for project_root, items in sorted(projects.items(), key=lambda pair: str(pair[0])):
         project_total = sum(item.size for item in items)
@@ -605,11 +660,11 @@ def _print_purge_report(
             print(
                 f"  {marker} {item.artifact_name:<20} "
                 f"{human(item.size):>10}  {age:>8}  "
-                f"{item.safety:<8}{item.path}{cloud}"
+                f"{item.safety:<8} {item.path}{cloud}{_item_annotations(item)}"
             )
     print("\n" + "─" * 88)
     print(
-        f"发现 {human(result.total)}；超过 7 天的默认预选项 "
+        f"发现 {human(result.total)}；当前选择 "
         f"{human(result.preselected_total)}"
     )
     if cleanup is None:
@@ -675,7 +730,12 @@ def _print_clean_report(
         print("未发现可清理项。")
         _print_issues(result)
         return
-    print("\n清理扫描结果（只读预览，不会删除）")
+    title = (
+        "清理执行结果"
+        if cleanup is not None
+        else "清理扫描结果（只读预览，不会删除）"
+    )
+    print(f"\n{title}")
     print("─" * 88)
     for domain in domains:
         items = grouped[domain]
@@ -690,12 +750,12 @@ def _print_clean_report(
             )
             print(
                 f"  {marker} {item.category:<24} "
-                f"{human(item.size):>10}  {item.safety:<8}"
-                f"{_item_location(item)}{cloud}"
+                f"{human(item.size):>10}  {item.safety:<8} "
+                f"{_item_location(item)}{cloud}{_item_annotations(item)}"
             )
     print("\n" + "─" * 88)
     print(
-        f"发现 {human(result.total)}；默认预选 "
+        f"发现 {human(result.total)}；当前选择 "
         f"{human(result.preselected_total)}"
     )
     if cleanup is None:
@@ -803,7 +863,7 @@ def _print_analyze_report(
         )
         print(
             f"{marker} {human(entry.item.size):>10}  {entry.percent:6.1f}%  "
-            f"{entry.item.path}{cloud}"
+            f"{entry.item.path}{cloud}{_item_annotations(entry.item)}"
         )
     print("─" * 88)
     if len(entries) < len(analysis.entries):
@@ -879,8 +939,15 @@ def main(argv: list[str] | None = None) -> int:
     sp = sub.add_parser("scan", help="扫描并报告可清理项（只读，不删除）")
     sp.add_argument("--domain", action="append", choices=ALL_DOMAINS,
                     help=f"扫描域，可多次指定；默认全部：{', '.join(ALL_DOMAINS)}")
-    sp.add_argument("--project-root", action="append", type=Path,
-                    help="项目产物扫描的根目录（配合 --domain project）")
+    sp.add_argument(
+        "--project-root",
+        action="append",
+        type=Path,
+        help=(
+            "项目产物扫描根目录，可多次指定；必须是非 symlink 的现有目录，"
+            "并配合 --domain project"
+        ),
+    )
     _add_rule_options(sp)
     sp.add_argument(
         "--workers",
@@ -893,6 +960,10 @@ def main(argv: list[str] | None = None) -> int:
     clean = sub.add_parser(
         "clean",
         help="扫描并审阅 junk/dev/ai/trash；仅 --yes 才执行当前选择",
+        description=(
+            "默认只读扫描并审阅候选。普通文件系统项通常移动到同卷 Trash；"
+            "clean trash 与 Docker prune 是永久操作，不经过可恢复的 Trash。"
+        ),
     )
     clean.add_argument(
         "category",
@@ -956,6 +1027,10 @@ def main(argv: list[str] | None = None) -> int:
     purge = sub.add_parser(
         "purge",
         help="按项目扫描可重建产物；仅 --yes 才执行当前选择",
+        description=(
+            "默认只读扫描项目中的可重建产物。只有明确选择并指定 --yes 后，"
+            "普通文件系统项才会移动到同卷 Trash。"
+        ),
     )
     purge.add_argument(
         "path",
@@ -975,7 +1050,7 @@ def main(argv: list[str] | None = None) -> int:
 
     optimize = sub.add_parser(
         "optimize",
-        help="维护命令面已对齐；安全公开执行器尚不可用",
+        help="显示 ram/purgeable 能力状态；安全公开执行器尚不可用",
     )
     optimize_sub = optimize.add_subparsers(
         dest="optimize_cmd",
@@ -986,7 +1061,7 @@ def main(argv: list[str] | None = None) -> int:
         help="释放 RAM（当前安全拒绝执行）",
         description=(
             "当前只提供能力探测：macOS 没有已验证的公开无特权 RAM "
-            "释放接口；命令返回 unavailable 且不执行操作。"
+            "释放接口；命令返回 unavailable、预期退出码 1，且不执行操作。"
         ),
     )
     optimize_ram.add_argument("--json", action="store_true", help="输出 JSON")
@@ -995,7 +1070,7 @@ def main(argv: list[str] | None = None) -> int:
         help="释放 purgeable disk space（当前安全拒绝执行）",
         description=(
             "当前只提供能力探测：尚未找到可验证且安全的公开 purgeable "
-            "space 释放接口；命令返回 unavailable 且不执行操作。"
+            "space 释放接口；命令返回 unavailable、预期退出码 1，且不执行操作。"
         ),
     )
     optimize_purgeable.add_argument(
@@ -1005,6 +1080,9 @@ def main(argv: list[str] | None = None) -> int:
     ignore_command = sub.add_parser(
         "ignore",
         help="管理 scan、clean、purge 和 analyze 共用的持久忽略路径",
+        description=(
+            "管理 scan、clean、purge 和 analyze 共用的持久忽略路径。"
+        ),
     )
     ignore_sub = ignore_command.add_subparsers(
         dest="ignore_cmd", required=True
@@ -1013,11 +1091,19 @@ def main(argv: list[str] | None = None) -> int:
     _add_rules_path_option(ignore_list)
     ignore_list.add_argument("--json", action="store_true", help="输出 JSON")
     ignore_add = ignore_sub.add_parser("add", help="添加忽略路径")
-    ignore_add.add_argument("path", type=Path)
+    ignore_add.add_argument(
+        "path",
+        type=Path,
+        help="要持久忽略的路径；保存为规范化绝对路径",
+    )
     _add_rules_path_option(ignore_add)
     ignore_add.add_argument("--json", action="store_true", help="输出 JSON")
     ignore_remove = ignore_sub.add_parser("remove", help="移除精确匹配的忽略路径")
-    ignore_remove.add_argument("path", type=Path)
+    ignore_remove.add_argument(
+        "path",
+        type=Path,
+        help="要移除的路径；必须与持久规则精确匹配",
+    )
     _add_rules_path_option(ignore_remove)
     ignore_remove.add_argument("--json", action="store_true", help="输出 JSON")
 
@@ -1081,6 +1167,16 @@ def main(argv: list[str] | None = None) -> int:
         ap.print_help()
         return 0
 
+    if tuple(sys.version_info[:2]) < MINIMUM_PYTHON:
+        running = ".".join(str(part) for part in sys.version_info[:3])
+        return _fail(
+            args,
+            _command_from_argv(raw_argv),
+            "unsupported_python",
+            "openclean 需要 Python 3.11 或更高版本；"
+            f"当前运行时为 Python {running}。",
+        )
+
     if args.cmd == "optimize":
         reason = (
             "macOS 没有已验证的公开无特权 RAM 释放接口"
@@ -1104,7 +1200,31 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.cmd == "scan":
-        domains = args.domain or ALL_DOMAINS
+        domains = list(dict.fromkeys(args.domain or ALL_DOMAINS))
+        if (
+            args.project_root
+            and args.domain is not None
+            and "project" not in domains
+        ):
+            return _fail(
+                args,
+                "scan",
+                "invalid_option_combination",
+                "scan：--project-root 需要同时请求 --domain project。",
+            )
+        explicit_project_roots: list[Path] | None = None
+        if args.project_root:
+            try:
+                explicit_project_roots = _validated_project_roots(
+                    args.project_root
+                )
+            except ValueError as exc:
+                return _fail(
+                    args,
+                    "scan",
+                    "invalid_project_root",
+                    f"scan：{exc}。",
+                )
         ctl = Control()
         try:
             ignore = _load_ignore_rules(args)
@@ -1135,7 +1255,7 @@ def main(argv: list[str] | None = None) -> int:
                 items_result.issues.extend(regular_result.issues)
                 items_result.cancelled = regular_result.cancelled
             if "project" in domains:
-                roots = args.project_root or default_project_search_roots()
+                roots = explicit_project_roots or default_project_search_roots()
                 if roots:
                     renderer = _progress_renderer(args.json)
                     try:
@@ -1485,10 +1605,10 @@ def main(argv: list[str] | None = None) -> int:
                 print("忽略列表为空。")
         elif args.ignore_cmd == "add":
             message = "已加入忽略列表" if changed else "该路径已被现有规则覆盖"
-            print(f"{message}：{args.path.expanduser()}")
+            print(f"{message}：{normalize_path(args.path)}")
         else:
             message = "已从忽略列表移除" if changed else "未找到精确匹配的忽略路径"
-            print(f"{message}：{args.path.expanduser()}")
+            print(f"{message}：{normalize_path(args.path)}")
         return 0
 
     if args.cmd == "config":

@@ -22,6 +22,27 @@ class _TTYBuffer(io.StringIO):
 
 
 class SpaceBrowserTests(unittest.TestCase):
+    def test_top_limit_is_visible_in_line_browser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            root.mkdir()
+            (root / "large.bin").write_bytes(b"x" * 10_000)
+            (root / "small.bin").write_bytes(b"x")
+            output = io.StringIO()
+
+            status = run_space_browser(
+                root,
+                protection=IgnoreRules(),
+                top=1,
+                input_fn=lambda _: "q",
+                output=output,
+                error=io.StringIO(),
+            )
+
+            self.assertEqual(status, 0)
+            self.assertIn("仅显示最大的 1/2 项", output.getvalue())
+            self.assertIn("容量与百分比基于", output.getvalue())
+
     def test_navigates_into_directory_and_back_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "root"
