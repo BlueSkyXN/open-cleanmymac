@@ -282,6 +282,7 @@ class ApplicationLanguagesScanTests(unittest.TestCase):
             self.assertEqual(item.category, "应用语言包")
             self.assertEqual(item.safety, "critical")
             self.assertFalse(item.actionable)
+            self.assertFalse(item.requires_privilege)
             self.assertFalse(item.preselected)
             self.assertEqual(item.artifact_name, "de")
             self.assertEqual(item.total_count, 1)
@@ -291,6 +292,8 @@ class ApplicationLanguagesScanTests(unittest.TestCase):
             self.assertIn("代码签名", item.action_block_reason)
             self.assertIn("保守语言审计", item.note)
             self.assertIn("候选语言（1）：de", item.note)
+            self.assertEqual(result.requires_privilege_total, 0)
+            self.assertEqual(result.unsupported_total, item.size)
             self.assertGreater(len(checkpoints), 0)
             self.assertGreater(len(progress), 0)
 
@@ -534,6 +537,8 @@ class ApplicationLanguagesIntegrationTests(unittest.TestCase):
         self.assertEqual(audit["reclaimable_bytes"], 0)
         self.assertEqual(payload["potential_bytes"], 8192)
         self.assertEqual(payload["reclaimable_bytes"], 0)
+        self.assertEqual(payload["requires_privilege_bytes"], 0)
+        self.assertEqual(payload["unsupported_bytes"], 8192)
         self.assertFalse(audit["actionable"])
         self.assertFalse(audit["preselected"])
 

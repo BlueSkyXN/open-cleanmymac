@@ -6,10 +6,12 @@ Docker Local Volumes 保持不可执行。
 """
 from __future__ import annotations
 
+import ctypes
+import errno
 import os
-import shutil
 import stat
 import subprocess
+import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -24,7 +26,7 @@ from .macos import (
     nonprivileged_action_block_reason,
     symlink_component,
 )
-from .models import FileFacts, Item, ScanResult, normalize_path
+from .models import FileFacts, FileIdentity, Item, ScanResult, normalize_path
 from .predicates import Predicate, ProtectionGate
 from .processes import (
     ProcessDetectionError,
@@ -43,6 +45,30 @@ class CleanupSafetyError(RuntimeError):
 
 
 _SUCCESS_STATUSES = frozenset({"moved_to_trash", "deleted", "pruned"})
+_RENAME_EXCL = 0x00000004
+_RENAME_NOFOLLOW_ANY = 0x00000010
+
+
+def _load_renameatx_np():
+    if sys.platform != "darwin":
+        return None, None
+    try:
+        library = ctypes.CDLL(None, use_errno=True)
+        function = library.renameatx_np
+    except (AttributeError, OSError):
+        return None, None
+    function.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    function.restype = ctypes.c_int
+    return library, function
+
+
+_RENAME_LIBRARY, _RENAMEATX_NP = _load_renameatx_np()
 
 
 def _item_key(item: Item) -> tuple[str, str, str, str]:
@@ -318,12 +344,21 @@ def _is_trash_root(path: Path, uid: int) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class _AuditedEntry:
+    relative_parts: tuple[str, ...]
+    identity: FileIdentity
+    is_directory: bool
+
+
 def _audit_descendants(
     root: Path,
     root_device: int,
     protection: Predicate,
     expected_uid: int,
-) -> None:
+    *,
+    expected_root_identity: FileIdentity | None = None,
+) -> tuple[_AuditedEntry, ...]:
     def validate_directory(directory: Path, stat_result: os.stat_result) -> None:
         if stat.S_ISLNK(stat_result.st_mode) or not stat.S_ISDIR(
             stat_result.st_mode
@@ -345,17 +380,26 @@ def _audit_descendants(
                 f"发现 macOS dataless/疑似云占位目录：{directory}"
             )
 
-    stack = [root]
+    audited: list[_AuditedEntry] = []
+    stack = [(root, ())]
     while stack:
-        directory = stack.pop()
+        directory, directory_parts = stack.pop()
         directory_stat = _lstat(directory)
         validate_directory(directory, directory_stat)
         directory_fd = _open_directory_no_follow(directory, anchor=root)
         try:
             live_stat = os.fstat(directory_fd)
             validate_directory(directory, live_stat)
+            if (
+                not directory_parts
+                and expected_root_identity is not None
+                and FileIdentity.from_stat(live_stat) != expected_root_identity
+            ):
+                raise CleanupSafetyError(
+                    f"候选根目录 inode 已变化：{directory}"
+                )
             with os.scandir(directory_fd) as iterator:
-                entries = list(iterator)
+                entries = sorted(iterator, key=lambda entry: entry.name)
         except CleanupSafetyError:
             raise
         except (PermissionError, FileNotFoundError, OSError) as exc:
@@ -366,6 +410,7 @@ def _audit_descendants(
             os.close(directory_fd)
         for entry in entries:
             path = normalize_path(directory / entry.name)
+            relative_parts = (*directory_parts, entry.name)
             if _knowledge_base_blocks(protection, path):
                 raise CleanupSafetyError(f"命中忽略或保护规则：{path}")
             stat_result = _lstat(path)
@@ -380,12 +425,25 @@ def _audit_descendants(
                 raise CleanupSafetyError(
                     f"发现 macOS dataless/疑似云占位文件：{path}"
                 )
+            audited.append(
+                _AuditedEntry(
+                    relative_parts=relative_parts,
+                    identity=FileIdentity.from_stat(stat_result),
+                    is_directory=stat.S_ISDIR(stat_result.st_mode),
+                )
+            )
             if stat.S_ISLNK(stat_result.st_mode):
                 continue
             if stat.S_ISDIR(stat_result.st_mode):
                 if stat_result.st_dev != root_device:
                     raise CleanupSafetyError(f"目录包含其他文件系统：{path}")
-                stack.append(path)
+                stack.append((path, relative_parts))
+    return tuple(
+        sorted(
+            audited,
+            key=lambda entry: (-len(entry.relative_parts), entry.relative_parts),
+        )
+    )
 
 
 def _audit_item(
@@ -570,6 +628,64 @@ def _stat_at(directory_fd: int, name: str, path: Path) -> os.stat_result:
         raise CleanupSafetyError(f"无法安全检查路径 {path}：{exc}") from exc
 
 
+def _rename_no_replace(
+    source_parent_fd: int,
+    source_name: str,
+    destination_parent_fd: int,
+    destination_name: str,
+) -> None:
+    """使用 Darwin renameatx_np 原子移动，拒绝覆盖和任意 symlink 解析。"""
+    if _RENAMEATX_NP is None:
+        raise CleanupSafetyError(
+            "当前平台缺少 renameatx_np，无法保证 Trash 目标不被覆盖"
+        )
+    ctypes.set_errno(0)
+    result = _RENAMEATX_NP(
+        source_parent_fd,
+        os.fsencode(source_name),
+        destination_parent_fd,
+        os.fsencode(destination_name),
+        _RENAME_EXCL | _RENAME_NOFOLLOW_ANY,
+    )
+    if result != 0:
+        error_number = ctypes.get_errno() or errno.EIO
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _open_audited_parent(
+    root_fd: int,
+    parent_parts: tuple[str, ...],
+    directory_identities: dict[tuple[str, ...], FileIdentity],
+) -> int:
+    """从已打开的 Trash 根逐层打开并复核审计时目录身份。"""
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    if not no_follow or not directory_flag:
+        raise CleanupSafetyError("当前平台缺少 O_NOFOLLOW/O_DIRECTORY")
+    flags = os.O_RDONLY | no_follow | directory_flag
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.dup(root_fd)
+    traversed: tuple[str, ...] = ()
+    try:
+        for component in parent_parts:
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+            traversed = (*traversed, component)
+            expected = directory_identities.get(traversed)
+            if (
+                expected is None
+                or FileIdentity.from_stat(os.fstat(descriptor)) != expected
+            ):
+                raise CleanupSafetyError(
+                    "Trash 审计目录身份已变化：" + "/".join(traversed)
+                )
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
 def _move_to_trash(
     item: Item,
     protection: Predicate,
@@ -666,27 +782,55 @@ def _move_to_trash(
         else:
             raise CleanupSafetyError(f"Trash 目标已被占用：{destination}")
         try:
-            os.rename(
+            _rename_no_replace(
+                source_parent_fd,
                 path.name,
+                trash_fd,
                 destination.name,
-                src_dir_fd=source_parent_fd,
-                dst_dir_fd=trash_fd,
             )
         except (PermissionError, OSError) as exc:
             raise CleanupSafetyError(f"移动到 Trash 失败 {path}：{exc}") from exc
         try:
-            os.stat(path.name, dir_fd=source_parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
-            raise CleanupSafetyError(f"移动后源路径仍然存在：{path}")
-        destination_stat = _stat_at(trash_fd, destination.name, destination)
+            destination_stat = _stat_at(trash_fd, destination.name, destination)
+        except CleanupSafetyError as exc:
+            return CleanupOutcome(
+                item=item,
+                status="partial",
+                destination=destination,
+                message=(
+                    "Trash rename 已成功，但无法确认移动后目标；"
+                    f"原操作已经发生：{exc}"
+                ),
+            )
         if (
             item.identity is not None
             and FileFacts(path=destination, stat=destination_stat).identity
             != item.identity
         ):
-            raise CleanupSafetyError(f"移动后 inode 校验失败：{destination}")
+            return CleanupOutcome(
+                item=item,
+                status="partial",
+                destination=destination,
+                message=(
+                    "Trash rename 已成功，但目标 inode 在复核前发生变化；"
+                    "原操作已经发生"
+                ),
+            )
+        source_note = ""
+        try:
+            recreated_stat = os.stat(
+                path.name,
+                dir_fd=source_parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            source_note = f"；移动后无法复核源路径：{exc}"
+        else:
+            recreated_identity = FileIdentity.from_stat(recreated_stat)
+            kind = "原 inode 的新链接" if recreated_identity == item.identity else "新对象"
+            source_note = f"；源路径已出现{kind}，未对其执行清理"
     finally:
         os.close(source_parent_fd)
         os.close(trash_fd)
@@ -695,7 +839,7 @@ def _move_to_trash(
         status="moved_to_trash",
         bytes_affected=item.size,
         destination=destination,
-        message="已移动到同卷 Trash；空间尚未实际释放",
+        message=f"已移动到同卷 Trash；空间尚未实际释放{source_note}",
     )
 
 
@@ -724,32 +868,71 @@ def _empty_trash(
     ):
         os.close(root_fd)
         raise CleanupSafetyError(f"Trash 根目录 inode 已变化：{root}")
-    if not getattr(shutil.rmtree, "avoids_symlink_attacks", False):
+    root_identity = FileIdentity.from_stat(root_stat)
+    try:
+        snapshot = _audit_descendants(
+            root,
+            root_stat.st_dev,
+            protection,
+            uid,
+            expected_root_identity=root_identity,
+        )
+    except Exception:
         os.close(root_fd)
-        raise CleanupSafetyError("当前 Python 不支持抗符号链接攻击的目录删除")
-
-    _audit_descendants(root, root_stat.st_dev, protection, uid)
-
+        raise
+    directory_identities = {
+        entry.relative_parts: entry.identity
+        for entry in snapshot
+        if entry.is_directory
+    }
     failures: list[str] = []
+    deleted_count = 0
+    disappeared_count = 0
     live_root_stat = os.fstat(root_fd)
     if FileFacts(path=root, stat=live_root_stat).is_dataless:
         os.close(root_fd)
         raise CleanupSafetyError(f"Trash 根目录变成了 macOS dataless 目录：{root}")
-    try:
-        with os.scandir(root_fd) as iterator:
-            entries = list(iterator)
-    except (PermissionError, FileNotFoundError, OSError) as exc:
-        os.close(root_fd)
-        raise CleanupSafetyError(f"无法枚举 Trash {root}：{exc}") from exc
-    for entry in entries:
+    for entry in snapshot:
+        relative_path = Path(*entry.relative_parts)
+        parent_fd: int | None = None
         try:
-            if entry.is_dir(follow_symlinks=False):
-                shutil.rmtree(entry.name, dir_fd=root_fd)
+            parent_fd = _open_audited_parent(
+                root_fd,
+                entry.relative_parts[:-1],
+                directory_identities,
+            )
+            name = entry.relative_parts[-1]
+            try:
+                current_stat = os.stat(
+                    name,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                disappeared_count += 1
+                continue
+            if FileIdentity.from_stat(current_stat) != entry.identity:
+                raise CleanupSafetyError(
+                    f"审计后 inode 已变化：{root / relative_path}"
+                )
+            if stat.S_ISDIR(current_stat.st_mode) != entry.is_directory:
+                raise CleanupSafetyError(
+                    f"审计后类型已变化：{root / relative_path}"
+                )
+            if entry.is_directory:
+                os.rmdir(name, dir_fd=parent_fd)
             else:
-                os.unlink(entry.name, dir_fd=root_fd)
-        except (PermissionError, FileNotFoundError, OSError) as exc:
-            failures.append(f"{root / entry.name}: {exc}")
+                os.unlink(name, dir_fd=parent_fd)
+            deleted_count += 1
+        except FileNotFoundError:
+            disappeared_count += 1
+        except (CleanupSafetyError, PermissionError, OSError) as exc:
+            failures.append(f"{root / relative_path}: {exc}")
+        finally:
+            if parent_fd is not None:
+                os.close(parent_fd)
 
+    remaining: list[str] | None
     try:
         live_root_stat = os.fstat(root_fd)
         if FileFacts(path=root, stat=live_root_stat).is_dataless:
@@ -757,23 +940,47 @@ def _empty_trash(
                 f"Trash 根目录变成了 macOS dataless 目录：{root}"
             )
         with os.scandir(root_fd) as iterator:
-            remaining = [entry.name for entry in iterator]
+            remaining = sorted(entry.name for entry in iterator)
     except CleanupSafetyError:
         raise
     except (PermissionError, FileNotFoundError, OSError) as exc:
         failures.append(f"复核失败：{exc}")
-        remaining = []
+        remaining = None
     finally:
         os.close(root_fd)
-    if remaining:
-        failures.append(f"仍有 {len(remaining)} 项未删除")
+
+    audited_root_names = {
+        entry.relative_parts[0]
+        for entry in snapshot
+        if len(entry.relative_parts) == 1
+    }
+    remaining_names = set(remaining or ())
+    audited_remaining = sorted(remaining_names & audited_root_names)
+    new_remaining = sorted(remaining_names - audited_root_names)
+    if audited_remaining:
+        failures.append(f"仍有 {len(audited_remaining)} 个已审计顶层项未删除")
+
+    summary = f"已永久删除 {deleted_count}/{len(snapshot)} 个审计对象"
+    if disappeared_count:
+        summary += f"；{disappeared_count} 个对象在删除前已不存在"
+    if new_remaining:
+        summary += f"；保留审计后新增 {len(new_remaining)} 个顶层项"
     if failures:
-        raise CleanupSafetyError("；".join(failures[:5]))
+        status = "partial" if deleted_count else "failed"
+        return CleanupOutcome(
+            item=item,
+            status=status,
+            bytes_affected=0,
+            message=(
+                f"{summary}；{'；'.join(failures[:5])}；"
+                "部分结果的实际释放容量无法可靠确定"
+            ),
+        )
     return CleanupOutcome(
         item=item,
         status="deleted",
-        bytes_affected=item.size,
-        message="Trash 内容已永久删除",
+        bytes_affected=(item.size if deleted_count == len(snapshot) else 0),
+        message=summary,
     )
 
 

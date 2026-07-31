@@ -74,12 +74,12 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 - 一旦指定 `--select`，选择集从空开始，不继承默认预选；confirm/critical 精确目标仍需
   对应 `--include-confirm`/`--include-critical` 作为风险授权，但不会顺带选择同等级其他项。
 - `--select` 与 `--all` 语义冲突，CLI 在扫描前返回 exit 2。
-- `requires_explicit_selection=true` 的环境来源项不会被 `--include-confirm` 批量选中，必须
-  使用完整路径或 identifier 精确选择。
+- `requires_explicit_selection=true` 的环境来源项和 Docker prune 不会被默认选择、`--all`
+  或 tier 批量参数选中，必须使用完整路径或 identifier 精确选择。
 - `--force --yes` 只执行默认预选项，并拒绝与任何扩大选择参数组合。
 - 普通用户态路径移动到同卷 Trash；`clean trash` 永久删除内容但保留 Trash 根目录。
-- Docker Build Cache/Images/Containers 分别映射固定官方 prune 命令；Local Volumes
-  始终不可执行。
+- Docker Build Cache/Images/Containers 分别映射固定官方 prune 命令且均需 identifier
+  精确选择；Local Volumes 始终不可执行。
 - 特权系统项、ApplicationLanguages、云保护项和不支持资源无法被参数强制解锁。
 
 ## TUI
@@ -177,9 +177,10 @@ issue；仍应检查 `issues` 中的安全跳过和动态来源提示。
 ```
 
 客户端限制 2 MiB、只接受 HTTPS、拒绝 URL 凭据，使用用户提供的 PEM 公钥调用系统
-OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence，并通过 `0600` 临时
-文件、`fsync`、`os.replace` 原子安装。托管 `knowledge.json` 与用户 `rules.json`
-分层合并，远程更新不覆盖用户 ignore。
+OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence；稳定的 `0600`
+`<destination>.lock` 把 sequence/key 重判与 `os.replace` 安装放进同一个跨进程临界区，
+临时文件同时使用 `fsync`。托管 `knowledge.json` 与用户 `rules.json` 分层合并，远程
+更新不覆盖用户 ignore。
 
 ## 路径安全
 
@@ -190,7 +191,9 @@ OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence，
 - 执行前批量复核保护规则、device/inode、owner、mount、云和运行中进程；
 - 后代目录以 no-follow fd 打开，并在 `scandir(fd)` 前重新 `fstat` 类型、owner、device
   和 dataless 状态；
-- 普通移动逐组件打开 no-follow 目录 fd，并使用 fd-relative rename；
+- 普通移动逐组件打开 no-follow 目录 fd，并使用 Darwin
+  `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)` 原子拒绝覆盖；
+- Trash 永久清空只删除最终审计快照；审计后新增项保留，部分删除返回 `partial`；
 - 任一批量预检失败时整个批次不启动。
 
 详见
@@ -243,5 +246,5 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 
 剩余工作见 [TODO.md](TODO.md)。
 
-当前本地验证基线为 278 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+当前本地验证基线为 286 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
 checkout 的 `make check` 输出为准。

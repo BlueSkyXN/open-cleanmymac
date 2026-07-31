@@ -14,7 +14,6 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .macos import nonprivileged_action_block_reason
 from .models import FileFacts, Item, ScanIssue, ScanResult, normalize_path
 from .predicates import Predicate, ProtectionGate
 
@@ -599,9 +598,7 @@ def scan_application_languages(
                     allocated_size=allocated_size,
                     actionable=False,
                     action_block_reason=_READ_ONLY_REASON,
-                    requires_privilege=bool(
-                        nonprivileged_action_block_reason(application)
-                    ),
+                    requires_privilege=False,
                     identity=application_facts.identity,
                     artifact_name=",".join(language_names),
                     total_count=len(language_names),

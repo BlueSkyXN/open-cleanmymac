@@ -58,7 +58,7 @@ python3 -m venv .venv
 | `clean trash` | ✅ | ✅ | `confirm`；执行会永久清空内容 |
 | `purge [path]` | ✅ | ✅ 用户态 | 旧产物默认预选；普通项移到同卷 Trash |
 | `analyze [path]` | ✅ | ✅ 精确选择 | TUI/JSON/行式导航；不删除 Time Machine 快照 |
-| Docker daemon 容量 | ✅ | ✅ 受限 | 只允许 Build Cache/Images/Containers 官方 prune；Volumes 拒绝 |
+| Docker daemon 容量 | ✅ | ✅ 受限 | 三类官方 prune 均需 identifier 精确选择；Volumes 拒绝 |
 | ApplicationLanguages | ✅ | ❌ | 只读审计；修改签名 app 风险过高 |
 | Broken startup items | ✅ | ✅ 用户项 | 系统项需要尚未实现的特权帮助器 |
 | Time Machine 本地快照 | ✅ | ❌ | 只显示数量/名称；公开列表不提供精确大小 |
@@ -132,7 +132,7 @@ JSON 会包含绝对路径、项目名和本机目录结构。把输出附到 is
 | `scan`、不带 `--yes` 的 `clean`/`purge`/`analyze` | 否 | 不适用 |
 | 普通 `clean`/`purge`/`analyze --yes` | 是 | 通常移动到同卷 Trash，可手工恢复 |
 | `clean trash --select EXACT_ROOT --include-confirm --yes` | 是 | 永久删除所选 Trash 内容，不能恢复 |
-| Docker prune | 是 | 永久操作；不经过 Trash |
+| Docker prune | 是 | 永久操作；不经过 Trash，必须精确选择资源 identifier |
 | `ignore add/remove`、`config --analytics` | 是 | 修改本地 `0600` JSON 配置 |
 | `config --update-knowledge` | 网络 + 写入 | 验签、防回滚后原子安装规则 |
 
@@ -141,8 +141,10 @@ JSON 会包含绝对路径、项目名和本机目录结构。把输出附到 is
 `st_blocks == 0 && st_size > 0` 的保守启发式，在目录枚举前阻止 dataless/疑似占位项；
 这不等于识别所有已经 materialized 的 cloud-synced 文件。Poetry/uv 环境变量路径只
 允许落在受信缓存根下，
-并强制降级为需要精确选择的 `confirm`。包含 symlink ancestor 的路径会被拒绝；普通
-移动使用逐组件 `O_NOFOLLOW` 的目录 fd 和 `renameat` 语义，降低路径替换竞态风险。
+并强制降级为需要精确选择的 `confirm`。Docker 三类 prune 同样不参与默认或批量选择。
+包含 symlink ancestor 的路径会被拒绝；普通移动使用逐组件 `O_NOFOLLOW` 的目录 fd 和
+Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`，原子拒绝覆盖 Trash 中并发出现
+的目标。Trash 永久清空只处理最终审计快照，审计后新增项会保留。
 
 `safe`、`confirm`、`critical` 是候选风险级别，不是数据价值保证。用户规则中的
 `ignore`/`protect` 是额外保护层，不能代替备份和人工审阅。安全政策见
@@ -187,7 +189,7 @@ make package
 make release-check
 ```
 
-当前本地基线通过 278 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
+当前本地基线通过 286 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
 checkout 实际运行结果为准。CI 在 macOS/Python 3.11 上执行 lint、测试、预览、构建、
 归档审计和隔离 wheel 安装，不会发布 PyPI、Homebrew 或 GitHub Release。
 

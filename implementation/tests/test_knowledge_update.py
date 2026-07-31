@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import fcntl
 import io
 import json
+import multiprocessing
+import os
 import stat
 import subprocess
 import tempfile
@@ -21,6 +24,41 @@ from openclean.knowledge_update import (
     parse_signed_envelope,
     update_knowledge_base,
 )
+
+
+def _unsigned_envelope(sequence: int) -> bytes:
+    canonical = canonical_envelope_payload(
+        sequence,
+        "2026-07-29T12:00:00+08:00",
+        {"schema_version": 1},
+    )
+    envelope = json.loads(canonical)
+    envelope["signature"] = base64.b64encode(b"test-signature").decode("ascii")
+    return json.dumps(envelope).encode("utf-8")
+
+
+def _concurrent_update_worker(
+    destination: str,
+    public_key: str,
+    envelope: bytes,
+    verified,
+    outcomes,
+) -> None:
+    def verifier(*_) -> None:
+        verified.set()
+
+    try:
+        result = update_knowledge_base(
+            "https://updates.example.test/knowledge.json",
+            public_key,
+            destination=destination,
+            fetcher=lambda *_: envelope,
+            verifier=verifier,
+        )
+    except Exception as exc:  # noqa: BLE001 - child reports exact outcome
+        outcomes.put(("error", type(exc).__name__, str(exc)))
+    else:
+        outcomes.put(("ok", result.sequence, ""))
 
 
 class SignedEnvelopeFactory:
@@ -138,9 +176,12 @@ class KnowledgeUpdateTests(unittest.TestCase):
                 installed["_managed"]["public_key_sha256"],
                 result.public_key_sha256,
             )
+            lock_path = destination.with_name(f"{destination.name}.lock")
+            self.assertTrue(stat.S_ISREG(lock_path.stat().st_mode))
+            self.assertEqual(stat.S_IMODE(lock_path.stat().st_mode), 0o600)
             self.assertEqual(
                 sorted(path.name for path in destination.parent.iterdir()),
-                ["knowledge.json"],
+                ["knowledge.json", "knowledge.json.lock"],
             )
 
     def test_tampered_signed_payload_is_rejected_without_write(self) -> None:
@@ -178,6 +219,8 @@ class KnowledgeUpdateTests(unittest.TestCase):
                 fetcher=lambda *_: first,
             )
             original = destination.read_bytes()
+            lock_path = destination.with_name(f"{destination.name}.lock")
+            lock_inode = lock_path.stat().st_ino
 
             for sequence in (1, 2):
                 replay = keys.envelope(
@@ -197,6 +240,64 @@ class KnowledgeUpdateTests(unittest.TestCase):
                     )
 
             self.assertEqual(destination.read_bytes(), original)
+            self.assertEqual(lock_path.stat().st_ino, lock_inode)
+            self.assertEqual(stat.S_IMODE(lock_path.stat().st_mode), 0o600)
+
+    def test_concurrent_updates_serialize_sequence_check_and_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            public_key = root / "public.pem"
+            public_key.write_text("test public key", encoding="utf-8")
+            destination = root / "knowledge.json"
+            lock_path = destination.with_name(f"{destination.name}.lock")
+            lock_path.touch(mode=0o600)
+
+            lock_descriptor = os.open(lock_path, os.O_RDWR)
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+            context = multiprocessing.get_context("spawn")
+            outcomes = context.Queue()
+            verified = [context.Event(), context.Event()]
+            processes = [
+                context.Process(
+                    target=_concurrent_update_worker,
+                    args=(
+                        str(destination),
+                        str(public_key),
+                        _unsigned_envelope(sequence),
+                        verified[index],
+                        outcomes,
+                    ),
+                )
+                for index, sequence in enumerate((1, 2))
+            ]
+            try:
+                for process in processes:
+                    process.start()
+                self.assertTrue(all(event.wait(5) for event in verified))
+                for process in processes:
+                    process.join(1)
+
+                self.assertTrue(all(process.is_alive() for process in processes))
+                self.assertFalse(destination.exists())
+            finally:
+                fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+                os.close(lock_descriptor)
+                for process in processes:
+                    process.join(10)
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(5)
+
+            self.assertTrue(all(process.exitcode == 0 for process in processes))
+            child_outcomes = [outcomes.get(timeout=2) for _ in processes]
+            self.assertTrue(
+                all(
+                    outcome[0] == "ok" or "回滚或重放" in outcome[2]
+                    for outcome in child_outcomes
+                )
+            )
+            installed = json.loads(destination.read_text(encoding="utf-8"))
+            self.assertEqual(installed["_managed"]["sequence"], 2)
 
     def test_key_rotation_requires_explicit_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -370,10 +471,37 @@ class KnowledgeUpdateTests(unittest.TestCase):
                 )
 
             self.assertEqual(destination.read_bytes(), installed)
+            lock_path = destination.with_name(f"{destination.name}.lock")
+            self.assertTrue(lock_path.is_file())
+            self.assertEqual(stat.S_IMODE(lock_path.stat().st_mode), 0o600)
             self.assertEqual(
                 sorted(path.name for path in root.iterdir() if path.name.startswith(".knowledge")),
                 [],
             )
+
+    def test_symlink_lock_file_fails_closed_without_installing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            public_key = root / "public.pem"
+            public_key.write_text("test public key", encoding="utf-8")
+            destination = root / "knowledge.json"
+            lock_target = root / "unrelated.lock"
+            lock_target.write_text("keep", encoding="utf-8")
+            lock_path = destination.with_name(f"{destination.name}.lock")
+            lock_path.symlink_to(lock_target)
+
+            with self.assertRaisesRegex(KnowledgeUpdateError, "知识库锁"):
+                update_knowledge_base(
+                    "https://updates.example.test/knowledge.json",
+                    public_key,
+                    destination=destination,
+                    fetcher=lambda *_: _unsigned_envelope(1),
+                    verifier=lambda *_: None,
+                )
+
+            self.assertFalse(destination.exists())
+            self.assertTrue(lock_path.is_symlink())
+            self.assertEqual(lock_target.read_text(encoding="utf-8"), "keep")
 
 
 class SignedEnvelopeValidationTests(unittest.TestCase):

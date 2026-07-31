@@ -35,7 +35,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 | 用户 ignore | `ignore list\|add\|remove` | `available` | 写入用户 `0600` JSON；不内置私有规则 |
 | CLI 配置 | `config` | `available` | analytics 仅是偏好；当前没有遥测上传 |
 | 签名托管知识库客户端 | `config --update-knowledge` | `external-prerequisite` | 客户端已完成；项目尚无正式 URL、公钥和发布流程 |
-| Docker 容量与固定 prune | `scan/clean dev` | `external-prerequisite` | 本地代码可用；真实 daemon 三条 prune 尚未单独验收；Volumes 永远拒绝 |
+| Docker 容量与固定 prune | `scan/clean dev` | `external-prerequisite` | 三类 prune 均需 identifier 精确选择；daemon/context 绑定和真实验收待完成；Volumes 永远拒绝 |
 | 失效启动项 | `scan/clean junk` | `available` | 仅可确认失效的用户项可执行；系统项需要 helper |
 | ApplicationLanguages | `scan/clean junk` | `read-only` | 固定 `critical + actionable=false`；不修改签名 app |
 | Time Machine 本地快照提示 | `analyze` | `read-only` | 只显示名称/数量；不宣称精确大小，不删除 |
@@ -59,8 +59,8 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 | 文本/JSON/TUI 输出 | `public-cli` | `cli.py`、`tui.py`、`space_tui.py` | schema v2、错误 envelope、状态机及 SVG 资产测试 |
 | 用户 ignore | `public-cli` | `knowledge_base.py` | lifecycle、权限、规范路径回执、原子写测试 |
 | CLI 配置 | `public-cli` | `config.py` | analytics lifecycle/readback |
-| 签名托管知识库客户端 | `project-extension` | `knowledge_update.py` | HTTPS/验签/防回滚/原子安装测试 |
-| Docker 容量与固定 prune | `project-extension` | `docker.py` | parser/白名单/报告隔离测试 |
+| 签名托管知识库客户端 | `project-extension` | `knowledge_update.py` | HTTPS/验签/跨进程防回滚/原子安装测试 |
+| Docker 容量与固定 prune | `project-extension` | `docker.py` | parser/白名单/精确选择/报告隔离测试 |
 | 失效启动项 | `internal` | `startup_items.py` | plist 解析、重判、用户态执行测试 |
 | ApplicationLanguages | `internal` | `application_languages.py` | metadata/语言/签名风险测试 |
 | Time Machine 本地快照提示 | `internal` | `macos.py`、`analyzer.py` | `tmutil` parser 与根卷分支测试 |
@@ -73,7 +73,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 ## 验证边界
 
-当前自动化基线覆盖 278 个 `unittest` 和 19 个 `TemporaryDirectory` 隔离预览场景。
+当前自动化基线覆盖 286 个 `unittest` 和 19 个 `TemporaryDirectory` 隔离预览场景。
 这能证明当前 checkout 的本地逻辑、归档和合成写路径，但不能替代以下验收：
 
 - 真实 iCloud Drive/第三方 File Provider 的 dataless 状态保持；

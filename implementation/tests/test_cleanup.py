@@ -256,6 +256,114 @@ class CleanupExecutionTests(unittest.TestCase):
             self.assertTrue((existing / "old.bin").exists())
             self.assertTrue((destination / "new.bin").exists())
 
+    def test_trash_name_created_after_check_is_never_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            source = home / "payload.bin"
+            trash = home / ".Trash"
+            home.mkdir()
+            trash.mkdir()
+            source.write_bytes(b"source")
+            item = self._scan_directory(source)
+            original_stat = os.stat
+            inserted = False
+
+            def racing_stat(path, *args, **kwargs):
+                nonlocal inserted
+                try:
+                    return original_stat(path, *args, **kwargs)
+                except FileNotFoundError:
+                    directory_fd = kwargs.get("dir_fd")
+                    if not inserted and directory_fd is not None:
+                        descriptor = os.open(
+                            path,
+                            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                            0o600,
+                            dir_fd=directory_fd,
+                        )
+                        try:
+                            os.write(descriptor, b"existing-trash-data")
+                        finally:
+                            os.close(descriptor)
+                        inserted = True
+                    raise
+
+            with mock.patch(
+                "openclean.cleanup.os.stat", side_effect=racing_stat
+            ):
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    trash_resolver=lambda _: trash,
+                )
+
+            self.assertTrue(inserted)
+            self.assertFalse(report.complete)
+            self.assertEqual(report.outcomes[0].status, "failed")
+            self.assertEqual((trash / source.name).read_bytes(), b"existing-trash-data")
+            self.assertEqual(source.read_bytes(), b"source")
+
+    def test_source_recreated_after_rename_does_not_hide_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            source = home / "payload.bin"
+            trash = home / ".Trash"
+            home.mkdir()
+            trash.mkdir()
+            source.write_bytes(b"original")
+            item = self._scan_directory(source)
+            original_stat = os.stat
+            source_parent_fd = None
+            recreated = False
+
+            def racing_stat(path, *args, **kwargs):
+                nonlocal source_parent_fd, recreated
+                directory_fd = kwargs.get("dir_fd")
+                try:
+                    stat_result = original_stat(path, *args, **kwargs)
+                except FileNotFoundError:
+                    if directory_fd == source_parent_fd and not recreated:
+                        descriptor = os.open(
+                            path,
+                            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                            0o600,
+                            dir_fd=directory_fd,
+                        )
+                        try:
+                            os.write(descriptor, b"recreated")
+                        finally:
+                            os.close(descriptor)
+                        recreated = True
+                        return original_stat(path, *args, **kwargs)
+                    raise
+                if (
+                    source_parent_fd is None
+                    and directory_fd is not None
+                    and stat_result.st_ino == item.identity.inode
+                ):
+                    source_parent_fd = directory_fd
+                return stat_result
+
+            with mock.patch(
+                "openclean.cleanup.os.stat", side_effect=racing_stat
+            ):
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    trash_resolver=lambda _: trash,
+                )
+
+            outcome = report.outcomes[0]
+            self.assertTrue(recreated)
+            self.assertTrue(report.complete)
+            self.assertEqual(outcome.status, "moved_to_trash")
+            self.assertEqual(outcome.destination, trash / source.name)
+            self.assertEqual(outcome.destination.read_bytes(), b"original")
+            self.assertEqual(source.read_bytes(), b"recreated")
+            self.assertIn("源路径已出现新对象", outcome.message)
+
     def test_rule_change_blocks_whole_batch_before_any_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
@@ -635,7 +743,7 @@ class CleanupExecutionTests(unittest.TestCase):
                 "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
             ), mock.patch(
                 "openclean.cleanup._stat_at", side_effect=dataless_source_stat
-            ), mock.patch("openclean.cleanup.os.rename") as rename:
+            ), mock.patch("openclean.cleanup._rename_no_replace") as rename:
                 report = execute_cleanup(
                     [item],
                     IgnoreRules(),
@@ -670,7 +778,7 @@ class CleanupExecutionTests(unittest.TestCase):
             with mock.patch(
                 "openclean.cleanup._stat_at",
                 side_effect=zero_block_source_stat,
-            ), mock.patch("openclean.cleanup.os.rename") as rename:
+            ), mock.patch("openclean.cleanup._rename_no_replace") as rename:
                 report = execute_cleanup(
                     [item],
                     IgnoreRules(),
@@ -709,6 +817,155 @@ class CleanupExecutionTests(unittest.TestCase):
             self.assertEqual(list(trash.iterdir()), [])
             self.assertTrue(outside.exists())
             self.assertEqual(report.deleted_bytes, item.size)
+
+    def test_empty_trash_preserves_entries_added_after_final_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            trash = home / ".Trash"
+            trash.mkdir(parents=True)
+            old = trash / "old.bin"
+            arrived = trash / "arrived-after-audit.bin"
+            old.write_bytes(b"old")
+            item = self._scan_directory(trash, domain="trash")
+            protection = IgnoreRules(
+                knowledge_base=KnowledgeBase.from_mapping(
+                    {
+                        "schema_version": 1,
+                        "protect": {"paths": [str(arrived)]},
+                    }
+                )
+            )
+            original_audit = cleanup_module._audit_descendants
+            audit_calls = 0
+
+            def racing_audit(*args, **kwargs):
+                nonlocal audit_calls
+                snapshot = original_audit(*args, **kwargs)
+                audit_calls += 1
+                if audit_calls == 3:
+                    arrived.write_bytes(b"keep")
+                return snapshot
+
+            with mock.patch(
+                "openclean.cleanup._audit_descendants",
+                side_effect=racing_audit,
+            ):
+                report = execute_cleanup(
+                    [item],
+                    protection,
+                    home=home,
+                    uid=os.getuid(),
+                )
+
+            self.assertEqual(audit_calls, 3)
+            self.assertTrue(report.complete)
+            self.assertEqual(report.outcomes[0].status, "deleted")
+            self.assertFalse(old.exists())
+            self.assertEqual(arrived.read_bytes(), b"keep")
+            self.assertIn("保留审计后新增", report.outcomes[0].message)
+
+    def test_empty_trash_preserves_nested_entry_added_after_final_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            trash = home / ".Trash"
+            folder = trash / "folder"
+            folder.mkdir(parents=True)
+            old = folder / "old.bin"
+            arrived = folder / "arrived-after-audit.bin"
+            old.write_bytes(b"old")
+            item = self._scan_directory(trash, domain="trash")
+            original_audit = cleanup_module._audit_descendants
+            audit_calls = 0
+
+            def racing_audit(*args, **kwargs):
+                nonlocal audit_calls
+                snapshot = original_audit(*args, **kwargs)
+                audit_calls += 1
+                if audit_calls == 3:
+                    arrived.write_bytes(b"keep")
+                return snapshot
+
+            with mock.patch(
+                "openclean.cleanup._audit_descendants",
+                side_effect=racing_audit,
+            ):
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    uid=os.getuid(),
+                )
+
+            outcome = report.outcomes[0]
+            self.assertEqual(audit_calls, 3)
+            self.assertFalse(report.complete)
+            self.assertEqual(outcome.status, "partial")
+            self.assertFalse(old.exists())
+            self.assertEqual(arrived.read_bytes(), b"keep")
+            self.assertIn("实际释放容量无法可靠确定", outcome.message)
+
+    def test_missing_atomic_rename_api_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            source = home / "payload.bin"
+            trash = home / ".Trash"
+            home.mkdir()
+            trash.mkdir()
+            source.write_bytes(b"source")
+            item = self._scan_directory(source)
+
+            with mock.patch("openclean.cleanup._RENAMEATX_NP", None):
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    trash_resolver=lambda _: trash,
+                )
+
+            self.assertFalse(report.complete)
+            self.assertEqual(report.outcomes[0].status, "failed")
+            self.assertIn("缺少 renameatx_np", report.outcomes[0].message)
+            self.assertEqual(source.read_bytes(), b"source")
+            self.assertEqual(list(trash.iterdir()), [])
+
+    def test_empty_trash_reports_partial_after_some_permanent_deletes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            trash = home / ".Trash"
+            trash.mkdir(parents=True)
+            first = trash / "a.bin"
+            second = trash / "b.bin"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            item = self._scan_directory(trash, domain="trash")
+            original_unlink = os.unlink
+            calls = 0
+
+            def partial_unlink(path, *args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise PermissionError("injected failure")
+                return original_unlink(path, *args, **kwargs)
+
+            with mock.patch(
+                "openclean.cleanup.os.unlink", side_effect=partial_unlink
+            ):
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    uid=os.getuid(),
+                )
+
+            outcome = report.outcomes[0]
+            self.assertFalse(report.complete)
+            self.assertEqual(outcome.status, "partial")
+            self.assertEqual(outcome.bytes_affected, 0)
+            self.assertFalse(first.exists())
+            self.assertTrue(second.exists())
+            self.assertIn("已永久删除 1/2", outcome.message)
+            self.assertIn("无法可靠确定", outcome.message)
 
     def test_refuses_non_trash_root_and_privileged_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from openclean.cleanup import select_cleanup_items
 from openclean.cli import main
 from openclean.docker import (
     DockerPruneError,
@@ -122,7 +123,22 @@ class DockerScannerTests(unittest.TestCase):
             by_identifier["docker:local-volumes"].action_block_reason,
         )
         self.assertEqual(by_identifier["docker:build-cache"].safety, "safe")
-        self.assertTrue(by_identifier["docker:build-cache"].preselected)
+        self.assertFalse(by_identifier["docker:build-cache"].preselected)
+        self.assertTrue(
+            by_identifier["docker:build-cache"].requires_explicit_selection
+        )
+        self.assertTrue(by_identifier["docker:images"].requires_explicit_selection)
+        self.assertTrue(
+            by_identifier["docker:containers"].requires_explicit_selection
+        )
+        self.assertEqual(select_cleanup_items(result.items), [])
+        self.assertEqual(
+            select_cleanup_items(
+                result.items,
+                selectors=["docker:build-cache"],
+            ),
+            [by_identifier["docker:build-cache"]],
+        )
         self.assertTrue(by_identifier["docker:build-cache"].actionable)
 
     def test_prune_maps_only_audited_resource_identifiers(self) -> None:
@@ -201,6 +217,20 @@ class DockerScannerTests(unittest.TestCase):
         )
         self.assertEqual(result.reclaimed_bytes, 0)
         self.assertIn("未提供可解析", result.message)
+
+        malformed = prune_docker_resource(
+            "docker:build-cache",
+            finder=lambda _: "/usr/local/bin/docker",
+            runner=lambda command, **_: subprocess.CompletedProcess(
+                command,
+                0,
+                "Total reclaimed space: definitely-not-a-size",
+                "",
+            ),
+        )
+        self.assertEqual(malformed.reclaimed_bytes, 0)
+        self.assertIn("已完成", malformed.message)
+        self.assertIn("无法解析", malformed.message)
 
     def test_zero_reclaimable_rows_are_not_candidates(self) -> None:
         stdout = _docker_row("Images", "1", "1", "20MB", "0B (0%)")

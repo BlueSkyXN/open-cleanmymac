@@ -34,9 +34,14 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 - `clean`/`purge --select` 从空选择集开始，不继承默认项；tier flag 在精确模式中只解锁
   指定目标，不批量扩大选择范围。`--select` 与 `--all` 被拒绝组合。
 - 用户态文件通常移动到同卷 Trash；清空 Trash 和 Docker prune 是永久操作。
+- Docker Build Cache、Images、Containers 均要求 identifier 精确选择，不参与默认或批量
+  选择；当前仍不宣称扫描与执行已经绑定同一个 daemon/context。
 - KnowledgeBase 保护闸在扫描和执行前重复运行。
 - 扫描和执行拒绝 symlink 目标与 symlink ancestor，并复核 device/inode/owner/mount。
-- fd-relative `O_NOFOLLOW`/`renameat` 用于普通 Trash 移动；批量预检失败时不开始整批执行。
+- fd-relative `O_NOFOLLOW` 和 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`
+  用于普通 Trash 移动；目标竞态时拒绝覆盖，批量预检失败时不开始整批执行。
+- Trash 永久清空只处理最终审计得到的 inode 快照；审计后新增项保留，部分删除以
+  `partial` 明确报告不可逆副作用。
 - 后代目录审计使用 no-follow fd + `fstat` + `scandir(fd)`，拒绝扫描后替换的 symlink、
   类型、owner、device 或 dataless 变化。
 - 环境变量缓存根受可信目录约束，并要求精确选择。
@@ -44,7 +49,8 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
   dataless/疑似云占位对象不计入可回收空间且不可执行。
 - 特权路径、Docker volumes、ApplicationLanguages 修改和 universal binary thinning保持
   fail-closed。
-- 托管知识库只接受显式 HTTPS、钉住公钥、递增 sequence 和有效签名。
+- 托管知识库只接受显式 HTTPS、钉住公钥、递增 sequence 和有效签名；sequence/key 检查
+  与安装由稳定 `0600` 目标锁跨进程序列化。
 
 ## 已知边界
 

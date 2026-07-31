@@ -46,8 +46,8 @@ flowchart TD
 | `progress.py` | 固定权重、单调快照、TTY renderer | 任务执行 |
 | `predicates.py` | 组合谓词、KB 优先的保护闸 | 规则持久化 |
 | `knowledge_base.py` | JSON schema、规则匹配、用户 ignore 原子写入 | 远程下载 |
-| `knowledge_update.py` | HTTPS、OpenSSL 验签、防回滚、公钥钉扎、原子安装 | 内置服务 URL/公钥 |
-| `cleanup.py` | 选择、预检、fd-relative Trash 操作、执行报告 | 特权提升 |
+| `knowledge_update.py` | HTTPS、OpenSSL 验签、跨进程防回滚、公钥钉扎、原子安装 | 内置服务 URL/公钥 |
+| `cleanup.py` | 选择、预检、原子 no-replace Trash 操作、审计快照、执行报告 | 特权提升 |
 | `macos.py` | Trash、Darwin cache、mount、Time Machine 发现和路径边界 | 通用业务编排 |
 | `docker.py` | 只读容量解析和三条固定 prune 映射 | 任意 Docker 命令或 volume 删除 |
 | `tui.py` | clean/purge 分组复选与确认 | 直接执行文件操作 |
@@ -137,7 +137,8 @@ stateDiagram-v2
   `environment + confirm + requires_explicit_selection`。
 - 普通 Trash 移动逐组件用 `O_NOFOLLOW | O_DIRECTORY` 打开目录 fd；最终使用
   `os.rename(..., src_dir_fd=..., dst_dir_fd=...)`。
-- 清空 Trash 使用 fd-relative `unlink/rmtree`，不删除 Trash 根目录。
+- 清空 Trash 使用最终审计快照和 fd-relative `unlink/rmdir`，不删除 Trash 根目录，也不
+  删除审计后新到达的项。
 - 清理前的后代树复核同样使用 no-follow 目录 fd、`fstat` 和 `scandir(fd)`；每层重新检查
   directory、owner、device 和 dataless 状态，并用父路径 + entry name 重建完整路径。
 - 每次目录枚举前检查 macOS `SF_DATALESS`；普通文件另保留 zero-block 保守兜底，防止

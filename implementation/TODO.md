@@ -46,7 +46,7 @@ notarization 和真实安装/升级/回滚验收。Python wheel 本身不能安�
 
 ### 3. 正式知识库发布 channel
 
-客户端 HTTPS、签名、大小限制、防回滚、公钥钉扎、key rotation 和原子安装已完成。
+客户端 HTTPS、签名、大小限制、跨进程防回滚、公钥钉扎、key rotation 和原子安装已完成。
 仍需项目自己拥有并审计：
 
 - HTTPS 发布服务；
@@ -64,6 +64,8 @@ notarization 和真实安装/升级/回滚验收。Python wheel 本身不能安�
 
 - `docker system df --format json` 不同版本输出；
 - Build Cache、Images、Containers 三条 prune 的 before/after 和错误报告；
+- 扫描与执行绑定同一 Docker context、endpoint 和 daemon identity，拒绝静默切换到远端或
+  其他 daemon；当前三类 prune 仅以“必须精确选择”作为临时收紧，不能替代身份绑定；
 - 运行中 container、并发 daemon 变化和超时；
 - Local Volumes 永远不可执行。
 

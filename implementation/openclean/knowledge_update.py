@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -10,7 +11,8 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -306,6 +308,46 @@ def _installed_metadata(destination: Path) -> dict[str, Any] | None:
     return metadata
 
 
+@contextmanager
+def _destination_lock(destination: Path) -> Iterator[None]:
+    """对单个托管目标串行化 metadata 检查与原子替换。"""
+    parent = destination.parent
+    lock_path = destination.with_name(f"{destination.name}.lock")
+    try:
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        raise KnowledgeUpdateError(f"无法准备托管知识库锁目录：{exc}") from exc
+
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        raise KnowledgeUpdateError("当前平台缺少 O_NOFOLLOW，无法安全创建知识库锁")
+    flags = os.O_RDWR | os.O_CREAT | no_follow | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise KnowledgeUpdateError(f"无法打开托管知识库锁 {lock_path}：{exc}") from exc
+
+    try:
+        lock_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(lock_stat.st_mode):
+            raise KnowledgeUpdateError("托管知识库锁必须是普通文件")
+        if lock_stat.st_uid != os.geteuid():
+            raise KnowledgeUpdateError("托管知识库锁不属于当前用户")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+    except KnowledgeUpdateError:
+        os.close(descriptor)
+        raise
+    except OSError as exc:
+        os.close(descriptor)
+        raise KnowledgeUpdateError(f"无法获取托管知识库锁 {lock_path}：{exc}") from exc
+
+    try:
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def _atomic_install(destination: Path, payload: dict[str, Any]) -> None:
     parent = destination.parent
     try:
@@ -384,17 +426,6 @@ def update_knowledge_base(
         raise KnowledgeUpdateError(f"签名知识库规则无效：{exc}") from exc
 
     target = normalize_path(destination)
-    existing = _installed_metadata(target)
-    if existing is not None:
-        previous_sequence = existing["sequence"]
-        if envelope.sequence <= previous_sequence:
-            raise KnowledgeUpdateError(
-                f"拒绝知识库回滚或重放：{envelope.sequence} <= {previous_sequence}"
-            )
-        previous_key = existing["public_key_sha256"]
-        if previous_key != key_fingerprint and not allow_key_rotation:
-            raise KnowledgeUpdateError("知识库公钥指纹已变化；需要显式允许 key rotation")
-
     canonical_rules = _canonical_json(envelope.rules)
     rules_sha256 = hashlib.sha256(canonical_rules).hexdigest()
     installed = dict(envelope.rules)
@@ -408,7 +439,21 @@ def update_knowledge_base(
         "public_key_sha256": key_fingerprint,
         "rules_sha256": rules_sha256,
     }
-    _atomic_install(target, installed)
+    with _destination_lock(target):
+        existing = _installed_metadata(target)
+        if existing is not None:
+            previous_sequence = existing["sequence"]
+            if envelope.sequence <= previous_sequence:
+                raise KnowledgeUpdateError(
+                    "拒绝知识库回滚或重放："
+                    f"{envelope.sequence} <= {previous_sequence}"
+                )
+            previous_key = existing["public_key_sha256"]
+            if previous_key != key_fingerprint and not allow_key_rotation:
+                raise KnowledgeUpdateError(
+                    "知识库公钥指纹已变化；需要显式允许 key rotation"
+                )
+        _atomic_install(target, installed)
     return KnowledgeUpdateResult(
         destination=target,
         sequence=envelope.sequence,

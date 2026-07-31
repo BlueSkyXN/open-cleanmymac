@@ -177,8 +177,9 @@ def _item_from_row(row: object) -> Item | None:
         category=policy.category,
         safety=policy.safety,
         note=note,
-        preselected=policy.safety == "safe",
+        preselected=False,
         domain="developer",
+        requires_explicit_selection=policy.prune_command is not None,
         resource_kind="docker",
         identifier=policy.identifier,
         resource_total_size=total_size,
@@ -270,7 +271,13 @@ def prune_docker_resource(
     try:
         reclaimed = parse_docker_size(match.group(1))
     except (TypeError, ValueError) as exc:
-        raise DockerPruneError(f"Docker prune 容量输出无效：{exc}") from exc
+        return DockerPruneResult(
+            reclaimed_bytes=0,
+            message=(
+                "Docker 官方 prune 已完成，但释放容量输出无法解析："
+                f"{_bounded_message(exc, '未知格式')}"
+            ),
+        )
     return DockerPruneResult(
         reclaimed_bytes=reclaimed,
         message="Docker 官方 prune 已完成",
