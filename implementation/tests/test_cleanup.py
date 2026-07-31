@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from openclean import cleanup as cleanup_module
 from openclean.cleanup import (
     SelectionError,
     execute_cleanup,
@@ -19,6 +20,28 @@ from openclean.engine import IgnoreRules, scan_points
 from openclean.knowledge_base import KnowledgeBase
 from openclean.models import FileFacts, Item, ScanResult
 from openclean.scanpoints import ScanPoint
+
+TEST_SF_DATALESS = 0x40000000
+
+
+def _with_dataless_flag(stat_result):
+    return SimpleNamespace(
+        st_mode=stat_result.st_mode,
+        st_size=stat_result.st_size,
+        st_blocks=stat_result.st_blocks,
+        st_mtime=stat_result.st_mtime,
+        st_dev=stat_result.st_dev,
+        st_ino=stat_result.st_ino,
+        st_nlink=stat_result.st_nlink,
+        st_uid=stat_result.st_uid,
+        st_flags=TEST_SF_DATALESS,
+    )
+
+
+def _with_zero_blocks(stat_result):
+    values = vars(_with_dataless_flag(stat_result)).copy()
+    values.update(st_blocks=0, st_flags=0)
+    return SimpleNamespace(**values)
 
 
 def _candidate(
@@ -113,22 +136,30 @@ class CleanupSelectionTests(unittest.TestCase):
                 selectors=[str(self.critical.path)],
             )
 
-        self.assertIn(
-            self.confirm,
+        self.assertEqual(
             select_cleanup_items(
                 self.items,
                 selectors=[str(self.confirm.path)],
                 include_confirm=True,
             ),
+            [self.confirm],
         )
-        self.assertIn(
-            self.critical,
+        self.assertEqual(
             select_cleanup_items(
                 self.items,
                 selectors=[str(self.critical.path)],
                 include_critical=True,
             ),
+            [self.critical],
         )
+
+    def test_exact_selection_rejects_batch_all(self) -> None:
+        with self.assertRaisesRegex(SelectionError, "不能与 --all"):
+            select_cleanup_items(
+                self.items,
+                selectors=[str(self.recent.path)],
+                select_all_safe=True,
+            )
 
     def test_environment_candidate_requires_exact_selection(self) -> None:
         environment = replace(
@@ -468,6 +499,188 @@ class CleanupExecutionTests(unittest.TestCase):
 
             self.assertFalse(report.complete)
             self.assertIn("云占位文件", report.outcomes[0].message)
+            self.assertTrue(cache.exists())
+
+    def test_candidate_that_becomes_dataless_blocks_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            cache = home / "cache"
+            cache.mkdir(parents=True)
+            (cache / "local.bin").write_bytes(b"local")
+            item = self._scan_directory(cache)
+            cache_stat = cache.lstat()
+            original_lstat = Path.lstat
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                return (
+                    _with_dataless_flag(cache_stat)
+                    if path == cache
+                    else stat_result
+                )
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+            ), mock.patch.object(Path, "lstat", new=fake_lstat):
+                report = execute_cleanup([item], IgnoreRules(), home=home)
+
+            self.assertFalse(report.complete)
+            self.assertIn("dataless", report.outcomes[0].message)
+            self.assertTrue(cache.exists())
+
+    def test_dataless_descendant_is_rejected_before_scandir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            cache = home / "cache"
+            child = cache / "remote"
+            child.mkdir(parents=True)
+            (child / "payload.bin").write_bytes(b"payload")
+            item = self._scan_directory(cache)
+            child_stat = child.lstat()
+            original_lstat = Path.lstat
+            original_scandir = os.scandir
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                return (
+                    _with_dataless_flag(child_stat)
+                    if path == child
+                    else stat_result
+                )
+
+            def guarded_scandir(path):
+                if not isinstance(path, int) and Path(path) == child:
+                    raise AssertionError("dataless descendant must not be enumerated")
+                return original_scandir(path)
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.cleanup.os.scandir", side_effect=guarded_scandir
+            ):
+                report = execute_cleanup([item], IgnoreRules(), home=home)
+
+            self.assertFalse(report.complete)
+            self.assertIn("dataless", report.outcomes[0].message)
+            self.assertTrue(cache.exists())
+
+    def test_descendant_changed_to_symlink_is_not_enumerated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            cache = home / "cache"
+            child = cache / "child"
+            outside = home / "outside"
+            child.mkdir(parents=True)
+            outside.mkdir()
+            (child / "cache.bin").write_bytes(b"cache")
+            protected = outside / "important.bin"
+            protected.write_bytes(b"important")
+            item = self._scan_directory(cache)
+            original_lstat = cleanup_module._lstat
+            original_scandir = os.scandir
+            outside_stat = outside.lstat()
+            saved_child = cache / "saved-child"
+            swapped = False
+            scanned_outside = False
+
+            def racing_lstat(path: Path):
+                nonlocal swapped
+                stat_result = original_lstat(path)
+                if path == child and not swapped:
+                    child.rename(saved_child)
+                    child.symlink_to(outside, target_is_directory=True)
+                    swapped = True
+                return stat_result
+
+            def guarded_scandir(path):
+                nonlocal scanned_outside
+                if isinstance(path, int):
+                    live = os.fstat(path)
+                    scanned_outside = scanned_outside or (
+                        live.st_dev == outside_stat.st_dev
+                        and live.st_ino == outside_stat.st_ino
+                    )
+                return original_scandir(path)
+
+            with mock.patch(
+                "openclean.cleanup._lstat", side_effect=racing_lstat
+            ), mock.patch(
+                "openclean.cleanup.os.scandir", side_effect=guarded_scandir
+            ):
+                report = execute_cleanup([item], IgnoreRules(), home=home)
+
+            self.assertFalse(report.complete)
+            self.assertIn("普通目录", report.outcomes[0].message)
+            self.assertFalse(scanned_outside)
+            self.assertEqual(protected.read_bytes(), b"important")
+
+    def test_final_fd_stat_dataless_check_prevents_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            cache = home / "cache"
+            trash = home / ".Trash"
+            cache.mkdir(parents=True)
+            trash.mkdir()
+            (cache / "local.bin").write_bytes(b"local")
+            item = self._scan_directory(cache)
+            original_stat_at = cleanup_module._stat_at
+
+            def dataless_source_stat(directory_fd: int, name: str, path: Path):
+                stat_result = original_stat_at(directory_fd, name, path)
+                if path == cache:
+                    return _with_dataless_flag(stat_result)
+                return stat_result
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+            ), mock.patch(
+                "openclean.cleanup._stat_at", side_effect=dataless_source_stat
+            ), mock.patch("openclean.cleanup.os.rename") as rename:
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    trash_resolver=lambda _: trash,
+                )
+
+            rename.assert_not_called()
+            self.assertFalse(report.complete)
+            self.assertIn("dataless", report.outcomes[0].message)
+            self.assertTrue(cache.exists())
+
+    def test_final_fd_stat_zero_block_fallback_prevents_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            cache = home / "cache.bin"
+            trash = home / ".Trash"
+            home.mkdir()
+            trash.mkdir()
+            cache.write_bytes(b"local")
+            item = self._scan_directory(cache)
+            original_stat_at = cleanup_module._stat_at
+
+            def zero_block_source_stat(
+                directory_fd: int, name: str, path: Path
+            ):
+                stat_result = original_stat_at(directory_fd, name, path)
+                if path == cache:
+                    return _with_zero_blocks(stat_result)
+                return stat_result
+
+            with mock.patch(
+                "openclean.cleanup._stat_at",
+                side_effect=zero_block_source_stat,
+            ), mock.patch("openclean.cleanup.os.rename") as rename:
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    trash_resolver=lambda _: trash,
+                )
+
+            rename.assert_not_called()
+            self.assertFalse(report.complete)
+            self.assertIn("疑似云占位", report.outcomes[0].message)
             self.assertTrue(cache.exists())
 
     def test_empty_trash_preserves_root_and_external_symlink_target(self) -> None:

@@ -104,6 +104,11 @@ def _draw_browser(
         )
     if analysis.local_snapshots_checked:
         volume += f" · TM 本地快照 {len(analysis.local_snapshots)}"
+    if len(entries) < len(analysis.entries):
+        volume += (
+            f" · 显示最大 {len(entries)}/{len(analysis.entries)} 项"
+            "（占比基于全部）"
+        )
     _safe_add(
         screen,
         1,

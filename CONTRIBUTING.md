@@ -1,5 +1,9 @@
 # Contributing
 
+[README](README.md) · [能力地图](docs/CAPABILITIES.md) ·
+[功能预览](docs/PREVIEW.md) · [架构](docs/ARCHITECTURE.md) ·
+[安全](SECURITY.md) · [规格索引](specs/_index.md)
+
 当前仓库是 private Alpha，尚未选择公共许可证。提交变更不代表获得复制、分发或公开发布
 本项目的许可；公开协作与许可证将在后续单独决定。
 

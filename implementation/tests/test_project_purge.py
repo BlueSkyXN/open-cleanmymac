@@ -8,16 +8,35 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
-from openclean.cli import main
+from openclean.cleanup import CleanupOutcome, CleanupReport
+from openclean.cli import _print_purge_report, main
 from openclean.engine import (
     IgnoreRules,
     default_project_search_roots,
     scan_project_artifacts,
 )
 from openclean.knowledge_base import KnowledgeBase
+from openclean.models import Item, ScanResult
 
 SECONDS_PER_DAY = 24 * 60 * 60
+TEST_SF_DATALESS = 0x40000000
+
+
+def _with_dataless_flag(stat_result):
+    return SimpleNamespace(
+        st_mode=stat_result.st_mode,
+        st_size=stat_result.st_size,
+        st_blocks=stat_result.st_blocks,
+        st_mtime=stat_result.st_mtime,
+        st_dev=stat_result.st_dev,
+        st_ino=stat_result.st_ino,
+        st_nlink=stat_result.st_nlink,
+        st_uid=stat_result.st_uid,
+        st_flags=TEST_SF_DATALESS,
+    )
 
 
 def _write_artifact(path: Path, mtime: float) -> None:
@@ -29,6 +48,111 @@ def _write_artifact(path: Path, mtime: float) -> None:
 
 
 class ProjectPurgeTests(unittest.TestCase):
+    def test_text_result_describes_exact_selection_without_default_claims(
+        self,
+    ) -> None:
+        project = Path("/Preview/Projects/demo")
+        item = Item(
+            path=project / "node_modules",
+            size=8192,
+            category="项目构建产物",
+            safety="safe",
+            domain="project",
+            project_root=project,
+            artifact_name="node_modules",
+            age_days=1,
+            preselected=True,
+        )
+        result = ScanResult(items=[item])
+        report = CleanupReport(
+            outcomes=[
+                CleanupOutcome(
+                    item=item,
+                    status="moved_to_trash",
+                    bytes_affected=item.size,
+                    destination=Path("/Preview/.Trash/node_modules"),
+                )
+            ]
+        )
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            _print_purge_report(result, False, report)
+
+        output = stdout.getvalue()
+        self.assertIn("项目清理执行结果", output)
+        self.assertIn("当前选择", output)
+        self.assertNotIn("只读预览", output)
+        self.assertNotIn("默认预选", output)
+        self.assertNotIn("超过 7 天", output)
+
+    def test_dataless_project_search_root_is_not_enumerated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            search_root = Path(tmp) / "Projects"
+            search_root.mkdir()
+            root_stat = search_root.lstat()
+            original_lstat = Path.lstat
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                return (
+                    _with_dataless_flag(root_stat)
+                    if path == search_root
+                    else stat_result
+                )
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.engine.os.scandir"
+            ) as scandir:
+                result = scan_project_artifacts([search_root])
+
+            scandir.assert_not_called()
+            self.assertEqual(result.items, [])
+            self.assertEqual(
+                result.issues[0].code, "dataless_directory_skipped"
+            )
+
+    def test_dataless_project_artifact_is_visible_but_not_measured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            artifact = project / "node_modules"
+            artifact.mkdir(parents=True)
+            (project / "package.json").write_text("{}", encoding="utf-8")
+            artifact_stat = artifact.lstat()
+            original_lstat = Path.lstat
+            original_scandir = os.scandir
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                return (
+                    _with_dataless_flag(artifact_stat)
+                    if path == artifact
+                    else stat_result
+                )
+
+            def guarded_scandir(path):
+                if Path(path) == artifact:
+                    raise AssertionError("dataless artifact must not be enumerated")
+                return original_scandir(path)
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.engine.os.scandir", side_effect=guarded_scandir
+            ):
+                result = scan_project_artifacts([project])
+
+            self.assertEqual(len(result.items), 1)
+            item = result.items[0]
+            self.assertEqual(item.path, artifact)
+            self.assertEqual(item.size, 0)
+            self.assertEqual(item.logical_size, 0)
+            self.assertEqual(item.cloud_file_count, 1)
+            self.assertFalse(item.actionable)
+            self.assertEqual(item.safety, "critical")
+
     def test_cli_reports_openclean_version(self) -> None:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:

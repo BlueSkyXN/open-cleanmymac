@@ -54,7 +54,7 @@ python3 -m venv .venv
 | 能力 | 扫描/预览 | 执行 | 当前边界 |
 |---|---:|---:|---|
 | system / developer / ai / trash / project 五域 | ✅ | — | `scan` 始终只读 |
-| `clean junk|dev|ai` | ✅ | ✅ 用户态 | 默认预览；显式 `--yes` 才执行当前选择 |
+| `clean junk\|dev\|ai` | ✅ | ✅ 用户态 | 默认预览；显式 `--yes` 才执行当前选择 |
 | `clean trash` | ✅ | ✅ | `confirm`；执行会永久清空内容 |
 | `purge [path]` | ✅ | ✅ 用户态 | 旧产物默认预选；普通项移到同卷 Trash |
 | `analyze [path]` | ✅ | ✅ 精确选择 | TUI/JSON/行式导航；不删除 Time Machine 快照 |
@@ -63,14 +63,38 @@ python3 -m venv .venv
 | Broken startup items | ✅ | ✅ 用户项 | 系统项需要尚未实现的特权帮助器 |
 | Time Machine 本地快照 | ✅ | ❌ | 只显示数量/名称；公开列表不提供精确大小 |
 | 签名托管知识库 | ✅ | ✅ 显式更新 | 需用户提供 HTTPS URL 和钉住的公钥；项目不内置服务端 |
-| `optimize ram|purgeable` | ✅ 命令面 | ❌ | `status=unavailable`，退出码 1 |
+| `optimize ram\|purgeable` | ✅ 命令面 | ❌ | `status=unavailable`，退出码 1 |
 | SMAppService/XPC 特权清理 | — | ❌ | 需要 native host/helper、签名、entitlements 和真实安装验收 |
 | universal binary thinning | — | ❌ | 未实现；不修改签名应用包 |
 
+扫描域的直观含义：
+
+| 域 | 典型内容 |
+|---|---|
+| system | 用户缓存/日志、诊断报告、Xcode、失效启动项、应用语言只读审计 |
+| developer | pip、uv、npm、Cargo、Homebrew、Docker daemon 报告 |
+| ai | Claude、Codex、Gemini、OpenCode、Cursor 缓存 |
+| project | `node_modules`、`.venv`、`target`、DerivedData 等可重建产物 |
+| trash | 当前用户与挂载卷的 Trash 根目录 |
+
+逐项能力来源、实现状态、验证证据和有意排除项见
+[docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
+
 这里的“全部功能可预览”指：所有非交互命令族、临时写路径和 guard 状态都能通过隔离
-脚本演示；curses TUI 由状态机测试覆盖，不做像素级录制。需要外部签名、真实 Docker
-daemon、正式知识库服务或不存在安全公开 API 的能力，会以结构化方式展示为
-guarded/unavailable，而不是伪造执行结果。
+脚本演示；curses TUI 同时有状态机测试和由生产绘制函数生成的确定性 SVG，但不冒充
+macOS Terminal 的像素级截图。需要外部签名、真实 Docker daemon、正式知识库服务或
+不存在安全公开 API 的能力，会以结构化方式展示为 guarded/unavailable，而不是伪造
+执行结果。
+
+## TUI 视觉预览
+
+下图直接调用当前 Clean TUI 的生产绘制函数，以固定合成候选生成；路径、容量和资源均为
+演示数据，不读取真实 `HOME`、Docker daemon 或云文件。
+
+![Clean TUI 候选审阅，使用固定合成数据](docs/assets/tui-clean-review.svg)
+
+只读汇总与 Analyze 空间浏览画面见
+[全功能隔离预览](docs/PREVIEW.md#合成-tui-视觉预览)。
 
 ## CLI 概览
 
@@ -85,8 +109,11 @@ openclean config [--analytics on|off]
 openclean cat [--json]
 ```
 
-连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 全屏界面；JSON、管道或
-`--no-interactive` 使用非交互输出。完整参数以 `openclean <command> --help` 为准。
+连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 全屏界面；JSON、管道、
+`--no-interactive` 或任何参数化选择 flag 使用非交互流程。`clean`/`purge --select`
+进入独立精确模式，不继承默认预选，也不会因 `--include-confirm` 或
+`--include-critical` 扩大到同等级其他候选。完整参数以
+`openclean <command> --help` 为准。
 
 JSON schema 当前为版本 `2`。扫描结果区分：
 
@@ -104,13 +131,16 @@ JSON 会包含绝对路径、项目名和本机目录结构。把输出附到 is
 |---|---:|---|
 | `scan`、不带 `--yes` 的 `clean`/`purge`/`analyze` | 否 | 不适用 |
 | 普通 `clean`/`purge`/`analyze --yes` | 是 | 通常移动到同卷 Trash，可手工恢复 |
-| `clean trash --include-confirm --yes` | 是 | 永久删除，不能从 Trash 恢复 |
+| `clean trash --select EXACT_ROOT --include-confirm --yes` | 是 | 永久删除所选 Trash 内容，不能恢复 |
 | Docker prune | 是 | 永久操作；不经过 Trash |
 | `ignore add/remove`、`config --analytics` | 是 | 修改本地 `0600` JSON 配置 |
 | `config --update-knowledge` | 网络 + 写入 | 验签、防回滚后原子安装规则 |
 
 执行链会在扫描时、批量预检时和最终移动前重复检查保护规则、inode、owner、挂载点、
-云占位、运行中进程和 symlink 边界。Poetry/uv 环境变量路径只允许落在受信缓存根下，
+云占位、运行中进程和 symlink 边界。macOS 上通过 Darwin `SF_DATALESS`，并辅以
+`st_blocks == 0 && st_size > 0` 的保守启发式，在目录枚举前阻止 dataless/疑似占位项；
+这不等于识别所有已经 materialized 的 cloud-synced 文件。Poetry/uv 环境变量路径只
+允许落在受信缓存根下，
 并强制降级为需要精确选择的 `confirm`。包含 symlink ancestor 的路径会被拒绝；普通
 移动使用逐组件 `O_NOFOLLOW` 的目录 fd 和 `renameat` 语义，降低路径替换竞态风险。
 
@@ -157,7 +187,7 @@ make package
 make release-check
 ```
 
-当前本地基线通过 244 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
+当前本地基线通过 278 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
 checkout 实际运行结果为准。CI 在 macOS/Python 3.11 上执行 lint、测试、预览、构建、
 归档审计和隔离 wheel 安装，不会发布 PyPI、Homebrew 或 GitHub Release。
 

@@ -3,11 +3,13 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import plistlib
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from openclean.application_languages import (
@@ -52,6 +54,20 @@ def _make_localization(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     return localization
+
+
+def _with_dataless_flag(stat_result):
+    return SimpleNamespace(
+        st_mode=stat_result.st_mode,
+        st_size=stat_result.st_size,
+        st_blocks=stat_result.st_blocks,
+        st_mtime=stat_result.st_mtime,
+        st_dev=stat_result.st_dev,
+        st_ino=stat_result.st_ino,
+        st_nlink=stat_result.st_nlink,
+        st_uid=stat_result.st_uid,
+        st_flags=0x40000000,
+    )
 
 
 class LanguagePreferencesTests(unittest.TestCase):
@@ -117,6 +133,112 @@ class LanguagePreferencesTests(unittest.TestCase):
 
 
 class ApplicationLanguagesScanTests(unittest.TestCase):
+    def test_dataless_application_and_info_plist_are_not_read(self) -> None:
+        for target_kind in ("application", "info"):
+            with self.subTest(target=target_kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "Applications"
+                application, resources = _make_application(root)
+                _make_localization(resources, "de")
+                info = application / "Contents" / "Info.plist"
+                target = application if target_kind == "application" else info
+                target_stat = target.lstat()
+                original_lstat = Path.lstat
+                original_read_bytes = Path.read_bytes
+
+                def fake_lstat(
+                    path: Path,
+                    *,
+                    original_lstat=original_lstat,
+                    target=target,
+                    target_stat=target_stat,
+                ):
+                    stat_result = original_lstat(path)
+                    return (
+                        _with_dataless_flag(target_stat)
+                        if path == target
+                        else stat_result
+                    )
+
+                def guarded_read_bytes(
+                    path: Path,
+                    *,
+                    info=info,
+                    original_read_bytes=original_read_bytes,
+                ):
+                    if path == info:
+                        raise AssertionError("dataless Info.plist must not be read")
+                    return original_read_bytes(path)
+
+                with mock.patch(
+                    "openclean.models.MACOS_SF_DATALESS", 0x40000000
+                ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch.object(
+                    Path, "read_bytes", new=guarded_read_bytes
+                ):
+                    result = scan_application_languages(
+                        [root],
+                        IgnoreRules(),
+                        preferred_languages=["en"],
+                    )
+
+                self.assertEqual(result.items, [])
+                self.assertIn(
+                    "dataless_object_skipped",
+                    {issue.code for issue in result.issues},
+                )
+
+    def test_dataless_resources_and_localization_are_not_enumerated(self) -> None:
+        for target_kind in ("resources", "localization"):
+            with self.subTest(target=target_kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "Applications"
+                _, resources = _make_application(root)
+                localization = _make_localization(resources, "de")
+                target = resources if target_kind == "resources" else localization
+                target_stat = target.lstat()
+                original_lstat = Path.lstat
+                original_scandir = os.scandir
+
+                def fake_lstat(
+                    path: Path,
+                    *,
+                    original_lstat=original_lstat,
+                    target=target,
+                    target_stat=target_stat,
+                ):
+                    stat_result = original_lstat(path)
+                    return (
+                        _with_dataless_flag(target_stat)
+                        if path == target
+                        else stat_result
+                    )
+
+                def guarded_scandir(
+                    path,
+                    *,
+                    target=target,
+                    original_scandir=original_scandir,
+                ):
+                    if Path(path) == target:
+                        raise AssertionError("dataless directory must not be enumerated")
+                    return original_scandir(path)
+
+                with mock.patch(
+                    "openclean.models.MACOS_SF_DATALESS", 0x40000000
+                ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                    "openclean.application_languages.os.scandir",
+                    side_effect=guarded_scandir,
+                ):
+                    result = scan_application_languages(
+                        [root],
+                        IgnoreRules(),
+                        preferred_languages=["en"],
+                    )
+
+                self.assertEqual(result.items, [])
+                self.assertIn(
+                    "dataless_object_skipped",
+                    {issue.code for issue in result.issues},
+                )
+
     def test_reports_only_unpreferred_string_only_localizations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "Applications"

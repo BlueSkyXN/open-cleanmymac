@@ -90,6 +90,12 @@ def _print_analysis(
             file=output,
         )
     print("─" * 88, file=output)
+    if len(entries) < len(analysis.entries):
+        print(
+            f"仅显示最大的 {len(entries)}/{len(analysis.entries)} 项；"
+            "容量与百分比基于当前层级全部项目。",
+            file=output,
+        )
     print(
         "输入编号进入目录；`..` 返回；`o N` 在 Finder 中显示；"
         "`r` 刷新；`q` 退出。",

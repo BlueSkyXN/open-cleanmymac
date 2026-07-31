@@ -25,15 +25,33 @@ class PreviewAllTests(unittest.TestCase):
         self.assertTrue(payload["passed"])
         self.assertFalse(payload["real_user_data_modified"])
         self.assertEqual(payload["workspace"], "TemporaryDirectory")
-        self.assertGreaterEqual(payload["scenario_count"], 18)
+        self.assertEqual(payload["scenario_count"], 19)
         self.assertTrue(all(item["passed"] for item in payload["scenarios"]))
         identifiers = {item["identifier"] for item in payload["scenarios"]}
-        self.assertIn("scan-all-domains", identifiers)
-        self.assertIn("clean-trash-temp-execution", identifiers)
-        self.assertIn("purge-temp-execution", identifiers)
-        self.assertIn("analyze-temp-execution", identifiers)
-        self.assertIn("optimize-ram-guard", identifiers)
-        self.assertIn("optimize-purgeable-guard", identifiers)
+        self.assertEqual(
+            identifiers,
+            {
+                "version",
+                "scan-all-domains",
+                "clean-junk-preview",
+                "clean-dev-preview",
+                "clean-ai-preview",
+                "clean-trash-preview",
+                "purge-preview",
+                "analyze-preview",
+                "ignore-lifecycle",
+                "config-lifecycle",
+                "cat",
+                "clean-junk-temp-execution",
+                "clean-dev-temp-execution",
+                "clean-ai-temp-execution",
+                "clean-trash-temp-execution",
+                "purge-temp-execution",
+                "analyze-temp-execution",
+                "optimize-ram-guard",
+                "optimize-purgeable-guard",
+            },
+        )
         statuses = {
             item["capability"]: item["status"]
             for item in payload["guarded_capabilities"]

@@ -166,7 +166,7 @@ def _draw_items(
         line = (
             f"{prefix} [{_marker(item, selected_keys)}] "
             f"{item.category:<24} {human(item.size):>10}  "
-            f"{item.safety:<8}{location}{blocked}{exact}"
+            f"{item.safety:<8} {location}{blocked}{exact}"
         )
         _safe_add(screen, row + index - offset, 0, line, width)
     footer = (

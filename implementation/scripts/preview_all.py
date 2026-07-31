@@ -96,6 +96,8 @@ def _prepare_fixtures(home: Path) -> dict[str, Path]:
 
     trash = home / ".Trash"
     _write_file(trash / "old.tmp")
+    trash_decoy = home / ".PreviewVolumeTrash"
+    _write_file(trash_decoy / "keep.tmp")
 
     project_root = home / "Projects" / "preview-project"
     _write_file(project_root / "pyproject.toml", b"[project]\nname='preview'\n")
@@ -124,6 +126,7 @@ def _prepare_fixtures(home: Path) -> dict[str, Path]:
     return {
         "rules": rules,
         "trash": trash,
+        "trash_decoy": trash_decoy,
         "projects": home / "Projects",
         "project_root": project_root,
         "artifact": artifact_file.parent,
@@ -190,7 +193,9 @@ def _run_preview() -> tuple[list[PreviewResult], list[dict[str, str]]]:
                 ),
                 mock.patch(
                     "openclean.engine.discover_trash_paths",
-                    return_value=TrashDiscovery(paths=(paths["trash"],)),
+                    return_value=TrashDiscovery(
+                        paths=(paths["trash"], paths["trash_decoy"])
+                    ),
                 ),
                 mock.patch(
                     "openclean.application_languages.discover_preferred_languages",
@@ -463,8 +468,9 @@ def _run_preview() -> tuple[list[PreviewResult], list[dict[str, str]]]:
                         and trash_cleanup.get("permanently_deleted_bytes", 0) > 0
                         and paths["trash"].is_dir()
                         and not any(paths["trash"].iterdir())
+                        and (paths["trash_decoy"] / "keep.tmp").is_file()
                     ),
-                    summary="仅清空临时 Trash，根目录保持存在",
+                    summary="精确清空一个临时 Trash；第二个 Trash 保持未选",
                 )
 
                 status, stdout, _ = _run_cli(

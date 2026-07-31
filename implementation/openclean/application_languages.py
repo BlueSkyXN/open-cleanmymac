@@ -149,6 +149,19 @@ def _issue_for_os_error(error: OSError, path: Path, task: str) -> ScanIssue:
     return ScanIssue(code=code, message=str(error), task=task, path=path)
 
 
+def _dataless_issue(path: Path, task: str) -> ScanIssue:
+    return ScanIssue(
+        code="dataless_object_skipped",
+        message=(
+            "检测到 macOS dataless/疑似云占位对象；"
+            "为避免触发云端 materialization，已跳过"
+        ),
+        task=task,
+        path=path,
+        blocking=False,
+    )
+
+
 def _facts(
     path: Path,
     issues: list[ScanIssue],
@@ -201,12 +214,31 @@ def _discover_applications(
             or not stat.S_ISDIR(root_facts.stat.st_mode)
         ):
             continue
+        if root_facts.is_dataless:
+            issues.append(_dataless_issue(root_facts.path, task))
+            continue
 
         # 允许一个普通容器目录（如 /Applications/Utilities），但绝不进入 .app。
         pending: list[tuple[Path, int]] = [(root, 0)]
         while pending:
             directory, depth = pending.pop()
             checkpoint()
+            directory_facts = _facts(
+                directory,
+                issues,
+                task,
+                missing_is_issue=True,
+            )
+            if (
+                directory_facts is None
+                or _is_ignored(protection, directory_facts)
+                or stat.S_ISLNK(directory_facts.stat.st_mode)
+                or not stat.S_ISDIR(directory_facts.stat.st_mode)
+            ):
+                continue
+            if directory_facts.is_dataless:
+                issues.append(_dataless_issue(directory_facts.path, task))
+                continue
             try:
                 with os.scandir(directory) as iterator:
                     entries = sorted(iterator, key=lambda entry: entry.name)
@@ -227,6 +259,9 @@ def _discover_applications(
                     or not stat.S_ISDIR(entry_facts.stat.st_mode)
                 ):
                     continue
+                if entry_facts.is_dataless:
+                    issues.append(_dataless_issue(entry_facts.path, task))
+                    continue
                 if path.name.casefold().endswith(".app"):
                     applications.add(path)
                 elif depth == 0:
@@ -239,7 +274,27 @@ def _development_region(
     issues: list[ScanIssue],
     task: str,
 ) -> str | None:
-    info_path = application / "Contents" / "Info.plist"
+    contents = application / "Contents"
+    contents_facts = _facts(contents, issues, task, missing_is_issue=False)
+    if (
+        contents_facts is None
+        or stat.S_ISLNK(contents_facts.stat.st_mode)
+        or not stat.S_ISDIR(contents_facts.stat.st_mode)
+    ):
+        issues.append(
+            ScanIssue(
+                code="application_metadata_invalid",
+                message="Contents 目录缺失或类型无效，已跳过应用语言审计",
+                task=task,
+                path=contents,
+            )
+        )
+        return None
+    if contents_facts.is_dataless:
+        issues.append(_dataless_issue(contents, task))
+        return None
+
+    info_path = contents / "Info.plist"
     info_facts = _facts(info_path, issues, task, missing_is_issue=False)
     if info_facts is None:
         issues.append(
@@ -264,6 +319,9 @@ def _development_region(
                 path=info_path,
             )
         )
+        return None
+    if info_facts.is_probable_cloud_placeholder:
+        issues.append(_dataless_issue(info_path, task))
         return None
     try:
         metadata = plistlib.loads(info_path.read_bytes())
@@ -325,8 +383,24 @@ def _measure_strings_only(
     on_progress: Callable[[], None],
     task: str,
 ) -> _LocalizationMeasurement | None:
+    latest = _facts(
+        localization.path,
+        issues,
+        task,
+        missing_is_issue=True,
+    )
+    if (
+        latest is None
+        or _is_ignored(protection, latest)
+        or stat.S_ISLNK(latest.stat.st_mode)
+        or not stat.S_ISDIR(latest.stat.st_mode)
+    ):
+        return None
+    if latest.is_dataless:
+        issues.append(_dataless_issue(latest.path, task))
+        return None
     try:
-        with os.scandir(localization.path) as iterator:
+        with os.scandir(latest.path) as iterator:
             entries = sorted(iterator, key=lambda entry: entry.name)
     except (PermissionError, FileNotFoundError, OSError) as exc:
         issues.append(_issue_for_os_error(exc, localization.path, task))
@@ -427,6 +501,9 @@ def scan_application_languages(
             or not stat.S_ISDIR(application_facts.stat.st_mode)
         ):
             continue
+        if application_facts.is_dataless:
+            result.issues.append(_dataless_issue(application_facts.path, category))
+            continue
         development_region = _development_region(
             application,
             result.issues,
@@ -448,6 +525,9 @@ def scan_application_languages(
             or stat.S_ISLNK(resources_facts.stat.st_mode)
             or not stat.S_ISDIR(resources_facts.stat.st_mode)
         ):
+            continue
+        if resources_facts.is_dataless:
+            result.issues.append(_dataless_issue(resources_facts.path, category))
             continue
         try:
             with os.scandir(resources) as iterator:
@@ -476,6 +556,9 @@ def scan_application_languages(
                 or not stat.S_ISDIR(localization.stat.st_mode)
                 or _language_is_kept(path.stem, kept_languages)
             ):
+                continue
+            if localization.is_dataless:
+                result.issues.append(_dataless_issue(localization.path, category))
                 continue
             measurement = _measure_strings_only(
                 localization,

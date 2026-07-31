@@ -14,9 +14,37 @@ from openclean.knowledge_base import (
     KnowledgeBaseError,
     RulesStore,
 )
+from openclean.models import normalize_path
 
 
 class RulesStoreTests(unittest.TestCase):
+    def test_cli_text_receipt_uses_the_persisted_normalized_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rules = root / "rules.json"
+            relative = Path("relative") / ".." / "target"
+            stdout = io.StringIO()
+
+            with contextlib.chdir(root), contextlib.redirect_stdout(stdout):
+                normalized = normalize_path(relative)
+                status = main(
+                    [
+                        "ignore",
+                        "add",
+                        str(relative),
+                        "--rules",
+                        str(rules),
+                    ]
+                )
+
+            self.assertEqual(status, 0)
+            self.assertIn(str(normalized), stdout.getvalue())
+            self.assertNotIn(str(relative), stdout.getvalue())
+            self.assertEqual(
+                RulesStore(rules).list_ignored_paths(),
+                (normalized,),
+            )
+
     def test_add_is_atomic_private_and_effective_for_descendants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

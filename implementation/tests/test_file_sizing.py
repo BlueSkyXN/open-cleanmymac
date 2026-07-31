@@ -3,6 +3,9 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
+import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,24 +14,74 @@ from unittest import mock
 
 from openclean.cli import main
 from openclean.engine import scan_points
-from openclean.models import FileFacts
+from openclean.models import MACOS_SF_DATALESS, FileFacts
 from openclean.scanpoints import DOMAINS, ScanPoint
 
+TEST_SF_DATALESS = 0x40000000
 
-def _stat_with_blocks(stat_result, blocks: int):
-    return SimpleNamespace(
-        st_mode=stat_result.st_mode,
-        st_size=stat_result.st_size,
-        st_blocks=blocks,
-        st_mtime=stat_result.st_mtime,
-        st_dev=stat_result.st_dev,
-        st_ino=stat_result.st_ino,
-        st_nlink=stat_result.st_nlink,
-        st_uid=stat_result.st_uid,
-    )
+
+def _stat_with_blocks(stat_result, blocks: int, *, flags: int | None = None):
+    values = {
+        "st_mode": stat_result.st_mode,
+        "st_size": stat_result.st_size,
+        "st_blocks": blocks,
+        "st_mtime": stat_result.st_mtime,
+        "st_dev": stat_result.st_dev,
+        "st_ino": stat_result.st_ino,
+        "st_nlink": stat_result.st_nlink,
+        "st_uid": stat_result.st_uid,
+    }
+    if flags is not None:
+        values["st_flags"] = flags
+    return SimpleNamespace(**values)
 
 
 class FileSizingTests(unittest.TestCase):
+    def test_python_runtime_uses_public_or_numeric_darwin_fallback(self) -> None:
+        if sys.platform != "darwin":
+            self.skipTest("SF_DATALESS fallback is Darwin-specific")
+        self.assertEqual(
+            MACOS_SF_DATALESS,
+            getattr(stat, "SF_DATALESS", TEST_SF_DATALESS),
+        )
+
+    def test_dataless_flag_covers_regular_files_and_directories(self) -> None:
+        path = Path("/tmp/dataless")
+        regular = FileFacts(
+            path,
+            SimpleNamespace(
+                st_mode=stat.S_IFREG,
+                st_size=10,
+                st_blocks=8,
+                st_flags=TEST_SF_DATALESS,
+            ),
+        )
+        directory = FileFacts(
+            path,
+            SimpleNamespace(
+                st_mode=stat.S_IFDIR,
+                st_size=0,
+                st_blocks=8,
+                st_flags=TEST_SF_DATALESS,
+            ),
+        )
+        compressed_only = FileFacts(
+            path,
+            SimpleNamespace(
+                st_mode=stat.S_IFREG,
+                st_size=10,
+                st_blocks=8,
+                st_flags=getattr(stat, "UF_COMPRESSED", 0x20),
+            ),
+        )
+
+        with mock.patch(
+            "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+        ):
+            self.assertTrue(regular.is_probable_cloud_placeholder)
+            self.assertTrue(directory.is_probable_cloud_placeholder)
+            self.assertFalse(compressed_only.is_probable_cloud_placeholder)
+
     def test_cloud_heuristic_requires_positive_logical_and_zero_blocks(self) -> None:
         path = Path("/tmp/cloud-placeholder")
         cloud = FileFacts(path, SimpleNamespace(st_size=10, st_blocks=0))
@@ -38,6 +91,157 @@ class FileSizingTests(unittest.TestCase):
         self.assertTrue(cloud.is_probable_cloud_placeholder)
         self.assertFalse(empty.is_probable_cloud_placeholder)
         self.assertFalse(unknown.is_probable_cloud_placeholder)
+
+    def test_dataless_scan_root_is_visible_without_directory_enumeration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "remote"
+            root.mkdir()
+            real_stat = root.lstat()
+            original_lstat = Path.lstat
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                if path == root:
+                    return _stat_with_blocks(
+                        real_stat,
+                        real_stat.st_blocks,
+                        flags=TEST_SF_DATALESS,
+                    )
+                return stat_result
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.engine.os.scandir"
+            ) as scandir:
+                result = scan_points(
+                    [ScanPoint("云目录测试", (str(root),))], workers=1
+                )
+
+            scandir.assert_not_called()
+            self.assertEqual(len(result.items), 1)
+            item = result.items[0]
+            self.assertEqual(item.size, 0)
+            self.assertEqual(item.cloud_file_count, 1)
+            self.assertTrue(item.is_cloud_file)
+            self.assertFalse(item.actionable)
+
+    def test_dataless_child_directory_is_not_recursed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "cache"
+            cloud = root / "remote"
+            cloud.mkdir(parents=True)
+            local = root / "local.bin"
+            local.write_bytes(b"local")
+            cloud_stat = cloud.lstat()
+            original_lstat = Path.lstat
+            original_scandir = os.scandir
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                if path == cloud:
+                    return _stat_with_blocks(
+                        cloud_stat,
+                        cloud_stat.st_blocks,
+                        flags=TEST_SF_DATALESS,
+                    )
+                return stat_result
+
+            def guarded_scandir(path):
+                if Path(path) == cloud:
+                    raise AssertionError("dataless child must not be enumerated")
+                return original_scandir(path)
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.engine.os.scandir", side_effect=guarded_scandir
+            ):
+                result = scan_points(
+                    [ScanPoint("混合目录测试", (str(root),))], workers=1
+                )
+
+            self.assertEqual(len(result.items), 1)
+            item = result.items[0]
+            self.assertEqual(item.cloud_file_count, 1)
+            self.assertEqual(item.size, local.stat().st_blocks * 512)
+            self.assertFalse(item.actionable)
+
+    def test_dataless_glob_prefix_is_reported_without_enumeration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp) / "remote"
+            prefix.mkdir()
+            prefix_stat = prefix.lstat()
+            original_lstat = Path.lstat
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                if path == prefix:
+                    return _stat_with_blocks(
+                        prefix_stat,
+                        prefix_stat.st_blocks,
+                        flags=TEST_SF_DATALESS,
+                    )
+                return stat_result
+
+            point = ScanPoint(
+                "云 glob",
+                (),
+                path_globs=(str(prefix / "*"),),
+            )
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.engine.os.scandir"
+            ) as scandir:
+                result = scan_points([point], workers=1)
+
+            scandir.assert_not_called()
+            self.assertEqual(result.items, [])
+            self.assertEqual(
+                result.issues[0].code, "dataless_directory_skipped"
+            )
+
+    def test_dataless_glob_intermediate_parent_is_not_recursed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            remote = root / "remote"
+            remote.mkdir(parents=True)
+            remote_stat = remote.lstat()
+            original_lstat = Path.lstat
+            original_scandir = os.scandir
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                if path == remote:
+                    return _stat_with_blocks(
+                        remote_stat,
+                        remote_stat.st_blocks,
+                        flags=TEST_SF_DATALESS,
+                    )
+                return stat_result
+
+            def guarded_scandir(path):
+                if Path(path) == remote:
+                    raise AssertionError("dataless glob parent must not be enumerated")
+                return original_scandir(path)
+
+            point = ScanPoint(
+                "云 glob",
+                (),
+                path_globs=(str(root / "*" / "cache"),),
+            )
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", TEST_SF_DATALESS
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.engine.os.scandir", side_effect=guarded_scandir
+            ):
+                result = scan_points([point], workers=1)
+
+            self.assertEqual(result.items, [])
+            self.assertEqual(
+                result.issues[0].code, "dataless_directory_skipped"
+            )
 
     def test_uses_allocated_blocks_and_keeps_logical_size(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

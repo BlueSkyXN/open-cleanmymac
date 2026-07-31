@@ -1,9 +1,40 @@
 # Changelog
 
+[README](README.md) · [能力地图](docs/CAPABILITIES.md) ·
+[功能预览](docs/PREVIEW.md) · [架构](docs/ARCHITECTURE.md) ·
+[安全](SECURITY.md) · [规格索引](specs/_index.md)
+
 本文件记录用户可见变化，格式参考 Keep a Changelog。项目尚未创建 tag、GitHub Release、
 PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公开发布。
 
 ## [Unreleased]
+
+### Changed
+
+- `clean`/`purge --select` 现在是独立精确模式：不继承默认预选，tier flag 只授权指定
+  confirm/critical 目标；`--select` 与 `--all` 被拒绝组合。
+- `scan` 按首次出现顺序去重 domain 和 project root；显式 project root 在扫描前校验
+  存在、目录类型和 symlink，错误使用稳定 JSON envelope。
+- 文本报告现在标明“需精确选择”“需要特权 helper”和具体不可执行原因。
+- 源码便捷入口在 Python `<3.11` 上返回 `unsupported_python` 错误，不再进入扫描后才
+  暴露 `zip(strict=True)` traceback；help/version 仍可读取。
+- `analyze --top` 在单层文本、行式浏览器和 curses TUI 中都明确显示截断数量，并说明
+  百分比基于全部候选。
+- 隔离 preview 用两个合成 Trash 根验证精确选择不会产生 collateral selection。
+- 文本清理报告现在准确区分只读预览和执行结果，并把精确选择统一标为“当前选择”。
+- `clean`/`purge`/`optimize` help 直接说明永久操作、同卷 Trash 和预期退出码；临时
+  `--ignore` 与持久 `ignore add` 的边界及规范化路径回执更加明确。
+- 文档新增由生产 TUI 绘制函数和固定合成数据生成的三张确定性 SVG，并由 `make check`
+  核对资产；能力矩阵和辅助文档导航同步优化。
+
+### Security
+
+- macOS 扫描优先使用 Darwin `SF_DATALESS`，并保留 zero-block 启发式；dataless 目录、
+  startup plist、应用 metadata/Resources/localization 会在枚举或读取前 fail-closed。
+- 清理后代审计改为 no-follow 目录 fd + `fstat` + `scandir(fd)`，并复核类型、owner、device
+  与 dataless 状态；不会跟随扫描后替换的后代 symlink。
+- startup item 在每次 plist 读取前后重新检查 identity 与占位状态；最终 path/fd source
+  stat 同时拒绝 `SF_DATALESS` 和 zero-block 疑似占位。
 
 ### Planned
 

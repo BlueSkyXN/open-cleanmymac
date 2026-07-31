@@ -22,7 +22,8 @@ ls specs/
 ```
 
 **当前状态**：扫描、谓词、JSON 知识库、Docker 动态容量与白名单 prune、物理大小/
-云占位、System Junk 一级候选、Darwin user cache、broken startup items、`clean`/`purge`
+Darwin `SF_DATALESS` 与 zero-block 占位保护、System Junk 一级候选、Darwin user cache、
+broken startup items、`clean`/`purge`
 及系统缓存/日志的只读特权分层、`clean`/`purge` 用户态安全执行，以及 `clean`、
 `purge`、`analyze` 的全屏交互、通用任务 DAG 和动态扫描并行调度均已实现；标准 Python
 包装、`openclean` console script、隔离升级验证和 Time Machine 本地快照只读提示也已
@@ -91,7 +92,7 @@ ls specs/
 | 谓词判定层 | `predicates.py` | ✅ 基础完成（组合谓词 + KB 最外层安全闸） |
 | 知识库 | `knowledge_base.py` | ✅ 本地 JSON 规则 + ignore 管理完成 |
 | `clean` / `purge` 执行 | `cleanup.py` / `tui.py` | 🟡 全屏复选、同卷 Trash、安全复核、Docker 白名单和报告完成；特权待做 |
-| 云文件感知 | `models.py` / `engine.py` | ✅ 云占位不计入可回收量且不可执行 |
+| 云文件感知 | `models.py` / `engine.py` | ✅ dataless/疑似占位不遍历、不计可回收量且不可执行；不承诺识别全部 materialized 云同步文件 |
 | Docker 资源扫描/执行 | `docker.py` | ✅ Build Cache/Images/Containers 白名单 prune；Local Volumes 硬拒绝 |
 | 特权操作 | — | ❌ **未做**（XPC，specs/04，优先级低） |
 

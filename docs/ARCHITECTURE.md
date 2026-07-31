@@ -1,5 +1,9 @@
 # 架构说明
 
+[README](../README.md) · [能力地图](CAPABILITIES.md) ·
+[功能预览](PREVIEW.md) · [安全](../SECURITY.md) ·
+[规格索引](../specs/_index.md) · [实现说明](../implementation/README.md)
+
 本文描述 `openclean 0.23.0` 的实际实现架构。参考软件的功能事实位于 `specs/`；本文件
 只描述本项目自己的模块、数据流和安全边界。
 
@@ -59,7 +63,7 @@ flowchart TD
 `Item` 同时描述“发现了什么”和“当前能否执行”。关键字段包括：
 
 - `path` 或资源 `identifier`；
-- 物理 `size`、逻辑大小、云占位计数；
+- 物理 `size`、逻辑大小、dataless/疑似云占位计数；
 - `safety`、`actionable`、`requires_privilege`、阻断原因；
 - `preselected`、`requires_explicit_selection`；
 - 扫描来源 `path_source`，例如 builtin/environment；
@@ -92,7 +96,8 @@ issue 使用稳定 code、message、task、path 和 `blocking`。`complete=true`
    `sum(task_progress * weight) / sum(weight)` 聚合。
 5. 目录遍历不跟随 symlink，硬链接按 `(device, inode)` 去重，物理大小用
    `st_blocks * 512` 计量。
-6. 云占位不计入可回收空间；重叠父子候选最终只归属一次容量。
+6. Darwin `SF_DATALESS` 与 zero-block 启发式会在目录枚举前阻止 dataless/疑似云占位；
+   它们不计入可回收空间，重叠父子候选最终只归属一次容量。
 7. 保护规则在读取候选细节前尽早短路，结果按声明顺序稳定汇总。
 
 ## 5. 写操作状态机
@@ -120,6 +125,10 @@ stateDiagram-v2
 批量预检采用 all-or-nothing 启动策略：任何选中项在执行前失败，整个批次不开始。每项
 实际操作前仍再次复核，防止扫描与执行之间状态变化。
 
+参数选择分为两种互斥语义：没有 `--select` 时应用默认预选和 tier 批量 flag；一旦出现
+`--select`，选择集从空开始，`--include-confirm`/`--include-critical` 只作为所选目标的
+风险授权，不再批量扩展到其他候选。`--select` 与 `--all` 因语义冲突直接返回用法错误。
+
 ## 6. 路径与竞态防护
 
 - 路径先做词法规范化，不用一次 `realpath()` 作为安全保证。
@@ -129,10 +138,15 @@ stateDiagram-v2
 - 普通 Trash 移动逐组件用 `O_NOFOLLOW | O_DIRECTORY` 打开目录 fd；最终使用
   `os.rename(..., src_dir_fd=..., dst_dir_fd=...)`。
 - 清空 Trash 使用 fd-relative `unlink/rmtree`，不删除 Trash 根目录。
+- 清理前的后代树复核同样使用 no-follow 目录 fd、`fstat` 和 `scandir(fd)`；每层重新检查
+  directory、owner、device 和 dataless 状态，并用父路径 + entry name 重建完整路径。
+- 每次目录枚举前检查 macOS `SF_DATALESS`；普通文件另保留 zero-block 保守兜底，防止
+  扫描本身触发 File Provider materialization。
 - 扫描、批量预检、最终移动均复核 inode、类型、owner、mount 和保护规则。
 
 这些措施降低 TOCTOU 风险，但 Python 用户态进程不是安全沙箱。工具只对当前用户明确
 授权的候选执行操作，不把当前实现描述为对恶意同 UID 进程的绝对隔离。
+`SF_DATALESS` 也不保证识别所有已 materialized、但仍由云服务同步的对象。
 
 ## 7. 外部边界
 

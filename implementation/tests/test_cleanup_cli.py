@@ -11,7 +11,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from openclean.cli import main
+from openclean.cleanup import CleanupOutcome, CleanupReport
+from openclean.cli import _print_clean_report, main
 from openclean.docker import DockerPruneResult
 from openclean.macos import TrashDiscovery
 from openclean.models import Item, ScanResult
@@ -31,6 +32,44 @@ def _rules(path: Path) -> Path:
 
 
 class CleanupCliTests(unittest.TestCase):
+    def test_text_report_distinguishes_preview_from_execution(self) -> None:
+        item = Item(
+            path=Path("/Preview/Library/Caches/pip"),
+            size=4096,
+            category="安全缓存",
+            safety="safe",
+            domain="developer",
+            preselected=True,
+        )
+        result = ScanResult(items=[item])
+
+        preview = io.StringIO()
+        with contextlib.redirect_stdout(preview):
+            _print_clean_report(result, False, "dev")
+
+        self.assertIn("清理扫描结果（只读预览，不会删除）", preview.getvalue())
+        self.assertIn("当前选择", preview.getvalue())
+
+        report = CleanupReport(
+            outcomes=[
+                CleanupOutcome(
+                    item=item,
+                    status="moved_to_trash",
+                    bytes_affected=item.size,
+                    destination=Path("/Preview/.Trash/pip"),
+                )
+            ]
+        )
+        execution = io.StringIO()
+        with contextlib.redirect_stdout(execution):
+            _print_clean_report(result, False, "dev", report)
+
+        output = execution.getvalue()
+        self.assertIn("清理执行结果", output)
+        self.assertIn("当前选择", output)
+        self.assertNotIn("只读预览", output)
+        self.assertNotIn("默认预选", output)
+
     def test_preview_never_mutates_even_with_selection_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
@@ -173,6 +212,82 @@ class CleanupCliTests(unittest.TestCase):
         self.assertEqual(conflicting, 2)
         self.assertIn("--yes", stderr.getvalue())
         scanner.assert_not_called()
+
+    def test_select_and_all_are_rejected_before_scan(self) -> None:
+        stderr = io.StringIO()
+        with mock.patch("openclean.cli.scan_domains") as scanner, \
+                contextlib.redirect_stderr(stderr):
+            status = main(
+                [
+                    "clean",
+                    "dev",
+                    "--select",
+                    "/tmp/exact",
+                    "--all",
+                ]
+            )
+
+        self.assertEqual(status, 2)
+        self.assertIn("精确选择模式", stderr.getvalue())
+        scanner.assert_not_called()
+
+    def test_exact_select_does_not_inherit_default_or_tier_selections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rules = _rules(root)
+            safe = Item(
+                path=root / "safe",
+                size=100,
+                category="安全缓存",
+                safety="safe",
+                domain="developer",
+                preselected=True,
+            )
+            other_confirm = Item(
+                path=root / "other-confirm",
+                size=200,
+                category="其他确认项",
+                safety="confirm",
+                domain="developer",
+            )
+            exact = Item(
+                path=root / "exact",
+                size=300,
+                category="精确确认项",
+                safety="confirm",
+                domain="developer",
+                requires_explicit_selection=True,
+            )
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "openclean.cli.scan_domains",
+                return_value=ScanResult(items=[safe, other_confirm, exact]),
+            ), contextlib.redirect_stdout(stdout):
+                status = main(
+                    [
+                        "clean",
+                        "dev",
+                        "--select",
+                        str(exact.path),
+                        "--include-confirm",
+                        "--rules",
+                        str(rules),
+                        "--json",
+                    ]
+                )
+
+            payload = json.loads(stdout.getvalue())
+            selected = {
+                item["path"]
+                for category in payload["categories"]
+                for item in category["items"]
+                if item["preselected"]
+            }
+            self.assertEqual(status, 0)
+            self.assertEqual(payload["mode"], "preview")
+            self.assertIsNone(payload["cleanup"])
+            self.assertEqual(selected, {str(exact.path)})
 
     def test_force_with_yes_executes_only_default_preselection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -364,7 +479,7 @@ class CleanupCliTests(unittest.TestCase):
             review.assert_called_once()
             self.assertTrue(cache.exists())
             self.assertFalse((home / ".Trash").exists())
-            self.assertIn("默认预选 0B", stdout.getvalue())
+            self.assertIn("当前选择 0B", stdout.getvalue())
 
     def test_tty_yes_executes_only_after_review_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

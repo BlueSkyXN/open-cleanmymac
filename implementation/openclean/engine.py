@@ -139,8 +139,26 @@ def _measure_dir(
     progress: TaskProgress | None = None,
 ) -> _DirectoryMeasurement:
     measurement = _DirectoryMeasurement()
+    root_facts = _inspect_path(
+        root,
+        issues,
+        task,
+        protection,
+        missing_is_issue=True,
+    )
+    if root_facts is None or protection.should_ignore(root_facts):
+        measurement.excluded_paths += 1
+        return measurement
+    if stat.S_ISLNK(root_facts.stat.st_mode) or not stat.S_ISDIR(
+        root_facts.stat.st_mode
+    ):
+        return measurement
+    if root_facts.is_dataless:
+        measurement.cloud_file_count = 1
+        measurement.latest_mtime = root_facts.stat.st_mtime
+        return measurement
     try:
-        with os.scandir(root) as it:
+        with os.scandir(root_facts.path) as it:
             for entry in it:
                 ctl.checkpoint()
                 if progress is not None:
@@ -169,7 +187,12 @@ def _measure_dir(
                 measurement.latest_mtime = max(
                     measurement.latest_mtime, facts.stat.st_mtime
                 )
-                if stat.S_ISDIR(facts.stat.st_mode):
+                if facts.is_probable_cloud_placeholder:
+                    measurement.cloud_file_count += 1
+                    if stat.S_ISREG(facts.stat.st_mode):
+                        measurement.logical_size += facts.logical_size
+                        measurement.cloud_logical_size += facts.logical_size
+                elif stat.S_ISDIR(facts.stat.st_mode):
                     child_measurement = _measure_dir(
                         facts.path,
                         ctl,
@@ -202,10 +225,6 @@ def _measure_dir(
                             continue
                         seen_inodes.add(key)
                     measurement.logical_size += facts.logical_size
-                    if facts.is_probable_cloud_placeholder:
-                        measurement.cloud_file_count += 1
-                        measurement.cloud_logical_size += facts.logical_size
-                        continue
                     measurement.allocated_size += facts.allocated_size
                     measurement.size += facts.allocated_size
     except (PermissionError, FileNotFoundError, OSError) as exc:
@@ -269,6 +288,24 @@ def _append_issue(
     )
 
 
+def _append_dataless_issue(
+    issues: list[ScanIssue],
+    path: Path,
+    task: str,
+) -> None:
+    issues.append(
+        ScanIssue(
+            code="dataless_directory_skipped",
+            message=(
+                "检测到 macOS dataless 目录；"
+                "为避免触发云端枚举或下载，已停止遍历"
+            ),
+            task=task,
+            path=path,
+        )
+    )
+
+
 _GLOB_MAGIC = frozenset("*?[")
 
 
@@ -324,6 +361,9 @@ def _safe_glob_paths(
         or not stat.S_ISDIR(prefix_facts.stat.st_mode)
     ):
         return
+    if prefix_facts.is_dataless:
+        _append_dataless_issue(issues, prefix_facts.path, task)
+        return
 
     candidates = [prefix_facts.path]
     final_index = len(parts) - 1
@@ -335,6 +375,23 @@ def _safe_glob_paths(
             if progress is not None:
                 progress.advance()
             if _has_glob_magic(component):
+                parent_facts = _inspect_path(
+                    parent,
+                    issues,
+                    task,
+                    protection,
+                    missing_is_issue=True,
+                )
+                if (
+                    parent_facts is None
+                    or protection.should_ignore(parent_facts)
+                    or stat.S_ISLNK(parent_facts.stat.st_mode)
+                    or not stat.S_ISDIR(parent_facts.stat.st_mode)
+                ):
+                    continue
+                if parent_facts.is_dataless:
+                    _append_dataless_issue(issues, parent_facts.path, task)
+                    continue
                 try:
                     with os.scandir(parent) as iterator:
                         entries = sorted(iterator, key=lambda entry: entry.name)
@@ -379,6 +436,9 @@ def _safe_glob_paths(
                     or stat.S_ISLNK(facts.stat.st_mode)
                     or not stat.S_ISDIR(facts.stat.st_mode)
                 ):
+                    continue
+                if facts.is_dataless:
+                    _append_dataless_issue(issues, facts.path, task)
                     continue
                 traversable.append(facts.path)
             candidates = traversable
@@ -514,6 +574,15 @@ def _scan_point_candidates(
                     path_source=scan_root.path_source,
                 )
             continue
+        if root_facts.is_dataless:
+            if root_facts.path not in seen_candidates:
+                seen_candidates.add(root_facts.path)
+                yield _ScanCandidate(
+                    facts=root_facts,
+                    root=root_facts,
+                    path_source=scan_root.path_source,
+                )
+            continue
         if not stat.S_ISDIR(root_facts.stat.st_mode):
             continue
         try:
@@ -585,7 +654,17 @@ def _scan_point(
         sp, ctl, protection, result.issues, progress
     ):
         facts = candidate.facts
-        if stat.S_ISDIR(facts.stat.st_mode):
+        is_cloud_file = facts.is_probable_cloud_placeholder
+        if is_cloud_file:
+            logical_size = (
+                facts.logical_size if stat.S_ISREG(facts.stat.st_mode) else 0
+            )
+            allocated_size = 0
+            size = 0
+            cloud_file_count = 1
+            cloud_logical_size = logical_size
+            excluded_paths = 0
+        elif stat.S_ISDIR(facts.stat.st_mode):
             measurement = _measure_dir(
                 facts.path,
                 ctl,
@@ -603,7 +682,7 @@ def _scan_point(
             is_cloud_file = False
             excluded_paths = measurement.excluded_paths
         else:
-            is_cloud_file = facts.is_probable_cloud_placeholder
+            is_cloud_file = False
             logical_size = facts.logical_size
             allocated_size = 0 if is_cloud_file else facts.allocated_size
             size = allocated_size
@@ -1166,7 +1245,24 @@ def _directory_entries(
     task: str,
 ) -> list[os.DirEntry[str]] | None:
     try:
-        with os.scandir(directory) as iterator:
+        directory_stat = directory.lstat()
+        directory_facts = FileFacts(path=directory, stat=directory_stat)
+        if directory_facts.is_dataless:
+            _append_dataless_issue(result.issues, directory, task)
+            return None
+        if stat.S_ISLNK(directory_stat.st_mode) or not stat.S_ISDIR(
+            directory_stat.st_mode
+        ):
+            result.issues.append(
+                ScanIssue(
+                    code="unsafe_directory_changed",
+                    message="待遍历路径已不再是普通目录，已停止遍历",
+                    task=task,
+                    path=directory,
+                )
+            )
+            return None
+        with os.scandir(directory_facts.path) as iterator:
             return list(iterator)
     except (PermissionError, FileNotFoundError, OSError) as exc:
         _append_issue(result.issues, exc, directory, task)
@@ -1202,6 +1298,11 @@ def _discover_project_roots(
             or protection.should_ignore(facts)
             or not stat.S_ISDIR(facts.stat.st_mode)
         ):
+            return
+        if facts.is_dataless:
+            _append_dataless_issue(
+                result.issues, facts.path, "project-discovery"
+            )
             return
 
         entries = _directory_entries(facts.path, result, "project-discovery")
@@ -1303,6 +1404,11 @@ def scan_project_artifacts(
             or not stat.S_ISDIR(facts.stat.st_mode)
         ):
             return
+        if facts.is_dataless:
+            _append_dataless_issue(
+                result.issues, facts.path, "project-artifacts"
+            )
+            return
 
         entries = _directory_entries(facts.path, result, "project-artifacts")
         if entries is None:
@@ -1325,15 +1431,21 @@ def scan_project_artifacts(
             if not stat.S_ISDIR(child_facts.stat.st_mode):
                 continue
             if _is_artifact_name(entry.name):
-                measurement = _measure_dir(
-                    child_facts.path,
-                    ctl,
-                    seen,
-                    ignore,
-                    result.issues,
-                    "project-artifacts",
-                    artifact_progress,
-                )
+                if child_facts.is_dataless:
+                    measurement = _DirectoryMeasurement(
+                        cloud_file_count=1,
+                        latest_mtime=child_facts.stat.st_mtime,
+                    )
+                else:
+                    measurement = _measure_dir(
+                        child_facts.path,
+                        ctl,
+                        seen,
+                        ignore,
+                        result.issues,
+                        "project-artifacts",
+                        artifact_progress,
+                    )
                 if measurement.size <= 0 and measurement.cloud_file_count == 0:
                     continue
                 latest_mtime = max(
@@ -1396,6 +1508,8 @@ def scan_project_artifacts(
                         domain="project",
                     )
                 )
+                continue
+            if child_facts.is_dataless:
                 continue
             if entry.name == ".git":
                 continue

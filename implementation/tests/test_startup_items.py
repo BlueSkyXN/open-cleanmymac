@@ -7,6 +7,7 @@ import plistlib
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from openclean.cleanup import execute_cleanup
@@ -28,6 +29,20 @@ def _write_plist(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as stream:
         plistlib.dump(payload, stream)
+
+
+def _with_dataless_flag(stat_result):
+    return SimpleNamespace(
+        st_mode=stat_result.st_mode,
+        st_size=stat_result.st_size,
+        st_blocks=stat_result.st_blocks,
+        st_mtime=stat_result.st_mtime,
+        st_dev=stat_result.st_dev,
+        st_ino=stat_result.st_ino,
+        st_nlink=stat_result.st_nlink,
+        st_uid=stat_result.st_uid,
+        st_flags=0x40000000,
+    )
 
 
 class StartupProgramTests(unittest.TestCase):
@@ -110,6 +125,74 @@ class StartupProgramTests(unittest.TestCase):
 
 
 class BrokenStartupItemScanTests(unittest.TestCase):
+    def test_dataless_plist_is_not_opened(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            agents = home / "Library" / "LaunchAgents"
+            plist = agents / "remote.plist"
+            _write_plist(plist, {"Program": "/missing/tool"})
+            real_stat = plist.lstat()
+            original_lstat = Path.lstat
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                return _with_dataless_flag(real_stat) if path == plist else stat_result
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", 0x40000000
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.startup_items.read_startup_program"
+            ) as reader:
+                result = scan_broken_startup_items(
+                    [agents],
+                    IgnoreRules(),
+                    home=home,
+                )
+
+            reader.assert_not_called()
+            self.assertEqual(result.items, [])
+            self.assertEqual(result.issues[0].code, "dataless_object_skipped")
+            self.assertFalse(result.issues[0].blocking)
+
+    def test_plist_that_becomes_dataless_while_reading_is_not_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            agents = home / "Library" / "LaunchAgents"
+            plist = agents / "transition.plist"
+            _write_plist(plist, {"Program": "/missing/tool"})
+            plist_stat = plist.lstat()
+            original_lstat = Path.lstat
+            original_reader = read_startup_program
+            became_dataless = False
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                if path == plist and became_dataless:
+                    return _with_dataless_flag(plist_stat)
+                return stat_result
+
+            def transitioning_reader(path):
+                nonlocal became_dataless
+                program = original_reader(path)
+                became_dataless = True
+                return program
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", 0x40000000
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.startup_items.read_startup_program",
+                side_effect=transitioning_reader,
+            ) as reader:
+                result = scan_broken_startup_items(
+                    [agents],
+                    IgnoreRules(),
+                    home=home,
+                )
+
+            reader.assert_called_once()
+            self.assertEqual(result.items, [])
+            self.assertEqual(result.issues[0].code, "dataless_object_skipped")
+
     def test_reports_only_programs_confirmed_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
@@ -305,6 +388,41 @@ class BrokenStartupItemCleanupTests(unittest.TestCase):
             self.assertIn("已恢复", report.outcomes[0].message)
             self.assertTrue(plist.is_file())
             self.assertFalse((home / ".Trash").exists())
+
+    def test_plist_becoming_dataless_is_not_read_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            plist, item = self._scanned_item(home, Path(tmp) / "missing")
+            plist_stat = plist.lstat()
+            original_lstat = Path.lstat
+            original_reader = read_startup_program
+            became_dataless = False
+
+            def fake_lstat(path: Path):
+                stat_result = original_lstat(path)
+                if path == plist and became_dataless:
+                    return _with_dataless_flag(plist_stat)
+                return stat_result
+
+            def transitioning_reader(path):
+                nonlocal became_dataless
+                program = original_reader(path)
+                became_dataless = True
+                return program
+
+            with mock.patch(
+                "openclean.models.MACOS_SF_DATALESS", 0x40000000
+            ), mock.patch.object(Path, "lstat", new=fake_lstat), mock.patch(
+                "openclean.startup_items.read_startup_program",
+                side_effect=transitioning_reader,
+            ) as reader:
+                report = execute_cleanup([item], IgnoreRules(), home=home)
+
+            reader.assert_called_once()
+            self.assertFalse(report.complete)
+            self.assertIn("dataless", report.outcomes[0].message)
+            self.assertTrue(plist.is_file())
 
     def test_program_reference_changed_after_scan_blocks_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
