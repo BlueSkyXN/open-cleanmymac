@@ -184,6 +184,44 @@ class KnowledgeUpdateTests(unittest.TestCase):
                 ["knowledge.json", "knowledge.json.lock"],
             )
 
+    def test_install_never_reports_failure_after_sequence_is_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            public_key = root / "public.pem"
+            public_key.write_text("test public key", encoding="utf-8")
+            destination = root / "knowledge.json"
+            reported_error: KnowledgeUpdateError | None = None
+            result: KnowledgeUpdateResult | None = None
+
+            with mock.patch(
+                "openclean.knowledge_update.os.chmod",
+                side_effect=PermissionError("injected post-replace chmod failure"),
+            ) as chmod:
+                try:
+                    result = update_knowledge_base(
+                        "https://updates.example.test/knowledge.json",
+                        public_key,
+                        destination=destination,
+                        fetcher=lambda *_: _unsigned_envelope(1),
+                        verifier=lambda *_: None,
+                    )
+                except KnowledgeUpdateError as exc:
+                    reported_error = exc
+
+            installed = json.loads(destination.read_text(encoding="utf-8"))
+            installed_sequence = installed["_managed"]["sequence"]
+            self.assertIsNone(
+                reported_error,
+                "更新不得在已安装 sequence "
+                f"{installed_sequence} 后报告失败：{reported_error}",
+            )
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result.sequence, installed_sequence)
+            self.assertEqual(installed_sequence, 1)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+            chmod.assert_not_called()
+
     def test_tampered_signed_payload_is_rejected_without_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

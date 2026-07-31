@@ -830,12 +830,16 @@ def _scan_dynamic_point_with_progress(
                 ]
             )
         ctl.checkpoint()
-        return result
     except Cancelled:
+        progress.cancel()
         ctl.cancel()
         raise
-    finally:
+    except Exception:
+        progress.fail()
+        raise
+    else:
         progress.complete()
+        return result
 
 
 def scan_domains(domains: list[str], ctl: Control | None = None,
@@ -1000,14 +1004,19 @@ def _scan_point_with_progress(
     process_snapshot: ProcessSnapshot | None,
 ) -> ScanResult:
     try:
-        return _scan_point(
+        result = _scan_point(
             point, ctl, ignore, progress, process_snapshot
         )
     except Cancelled:
+        progress.cancel()
         ctl.cancel()
         raise
-    finally:
+    except Exception:
+        progress.fail()
+        raise
+    else:
         progress.complete()
+        return result
 
 
 def _scan_points_with_progress(
@@ -1381,9 +1390,13 @@ def scan_project_artifacts(
         )
     except Cancelled:
         result.cancelled = True
+        discovery_progress.cancel()
         progress.cancel()
         return result
-    finally:
+    except Exception:
+        discovery_progress.fail()
+        raise
+    else:
         discovery_progress.complete()
 
     def walk_project(project_root: Path, directory: Path, depth: int) -> None:
@@ -1520,8 +1533,12 @@ def scan_project_artifacts(
             walk_project(project_root, project_root, 0)
     except Cancelled:
         result.cancelled = True
+        artifact_progress.cancel()
         progress.cancel()
-    finally:
+    except Exception:
+        artifact_progress.fail()
+        raise
+    else:
         artifact_progress.complete()
     result.items.sort(key=lambda item: (str(item.project_root), str(item.path)))
     return result

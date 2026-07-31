@@ -73,7 +73,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 ## 验证边界
 
-当前自动化基线覆盖 286 个 `unittest` 和 19 个 `TemporaryDirectory` 隔离预览场景。
+当前自动化基线覆盖 296 个 `unittest` 和 19 个 `TemporaryDirectory` 隔离预览场景。
 这能证明当前 checkout 的本地逻辑、归档和合成写路径，但不能替代以下验收：
 
 - 真实 iCloud Drive/第三方 File Provider 的 dataless 状态保持；

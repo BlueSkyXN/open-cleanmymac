@@ -5,7 +5,7 @@
 [安全](SECURITY.md) · [规格索引](specs/_index.md) ·
 [实现说明](implementation/README.md)
 
-> 版本：`0.23.0` · 日期：2026-07-30 · 状态：private GitHub Alpha 基线
+> 版本：`0.23.0` · 日期：2026-07-31 · 状态：private GitHub Alpha 基线
 
 ## 立即上手
 
@@ -37,7 +37,7 @@ make release-check
 - 任务 DAG、加权进度、运行中进程保护；
 - JSON schema v2、机器错误 envelope、标准 Python 包装和 release archive audit。
 
-最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，286 个单元测试通过，
+最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，296 个单元测试通过，
 19/19 隔离预览通过且 `real_user_data_modified=false`。这是本地快照；远端状态必须读取
 GitHub exact commit 的 Actions 结果后另行确认。
 

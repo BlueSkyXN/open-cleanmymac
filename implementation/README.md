@@ -193,7 +193,10 @@ OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence；
   和 dataless 状态；
 - 普通移动逐组件打开 no-follow 目录 fd，并使用 Darwin
   `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)` 原子拒绝覆盖；
+- Trash 目标目录必须属于当前用户并使用私有权限，打开后再次复核
+  device/inode/owner/mode；
 - Trash 永久清空只删除最终审计快照；审计后新增项保留，部分删除返回 `partial`；
+- Docker prune 启动后的 timeout/非零退出返回副作用未知的 `partial`；
 - 任一批量预检失败时整个批次不启动。
 
 详见
@@ -246,5 +249,5 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 
 剩余工作见 [TODO.md](TODO.md)。
 
-当前本地验证基线为 286 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+当前本地验证基线为 296 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
 checkout 的 `make check` 输出为准。

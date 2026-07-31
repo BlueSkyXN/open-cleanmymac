@@ -109,6 +109,13 @@ universal binary thinning 未实现。若未来仅做审计，需要结构化记
 文档已明确 JSON 含绝对路径。可评估新增不破坏 schema 的 `--redact-paths` 或路径 hash
 模式；实现时必须保证同一结果中的路径引用仍可稳定关联，且错误消息也被处理。
 
+### 9. Countable 进度与任务控制聚合
+
+当前已实现固定权重百分比、不可变快照、任务成功/失败/取消终态和共享三态协作控制；
+`processed_items` 仍是启发式进度输入，不是已知总量的 Countable 完成数/总数。后续若 UI
+需要完整对齐规格 01，还需为可计数任务建模 total，并提供每任务 Control、引擎级聚合和
+Control 状态 observer；不能把进度 callback 当作 Control observer。
+
 ## 当前已完成的交付门
 
 - 五域扫描、物理/逻辑大小、硬链接去重、Darwin `SF_DATALESS`/zero-block 占位保护、

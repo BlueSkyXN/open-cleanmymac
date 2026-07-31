@@ -371,7 +371,6 @@ def _atomic_install(destination: Path, payload: dict[str, Any]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
-        os.chmod(destination, 0o600)
         try:
             directory_descriptor = os.open(parent, os.O_RDONLY)
         except OSError:

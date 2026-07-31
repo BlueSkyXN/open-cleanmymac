@@ -14,6 +14,9 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
 - Docker Build Cache、Images、Containers 现在都要求用资源 identifier 精确选择；不会再由
   默认选择、`--all` 或 tier 批量参数带入不可恢复的 prune。CLI exit 0 后即使容量文本
   无法解析，也会报告“prune 已完成、释放量未知”，不再把已发生的操作伪报为失败。
+- Docker prune 启动后的 timeout 或非零退出现在返回 `partial`，明确说明 daemon 侧删除
+  可能已经发生且释放量未知；CLI 启动前失败仍保持普通 `failed`。
+- 扫描任务异常或取消不再被进度模型伪装为成功的 `100% complete` 终态。
 - ApplicationLanguages 只读候选统一计入 unsupported 容量，不再把签名应用修改误分类为
   “安装特权 helper 后即可执行”。
 - `clean`/`purge --select` 现在是独立精确模式：不继承默认预选，tier flag 只授权指定
@@ -36,10 +39,14 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
 
 - 普通 Trash 移动改用 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`，目标名
   发生竞态时原子拒绝覆盖；API 或文件系统能力不足时 fail-closed。
+- 普通 Trash 目标必须属于当前用户并使用私有权限；最终打开的目录 fd 会复核
+  device/inode/owner/mode，第二次打开失败也不会泄漏源目录 fd。
 - Trash 永久清空只删除最终保护审计生成的 inode 快照；审计后新增项保留，部分永久删除
   使用 `partial` 明确报告已经发生但无法精确计量的副作用。
 - 托管知识库使用稳定的 `0600` 目标锁，把 sequence/key 检查和原子安装放在同一个跨进程
   临界区，避免并发更新产生 sequence 回退。
+- 托管知识库不再在原子替换成功后执行冗余路径 `chmod`，避免 sequence 已安装却向调用方
+  返回失败；替换前的临时文件仍固定为 `0600`。
 - macOS 扫描优先使用 Darwin `SF_DATALESS`，并保留 zero-block 启发式；dataless 目录、
   startup plist、应用 metadata/Resources/localization 会在枚举或读取前 fail-closed。
 - 清理后代审计改为 no-follow 目录 fd + `fstat` + `scandir(fd)`，并复核类型、owner、device

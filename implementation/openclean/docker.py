@@ -22,7 +22,14 @@ DEFAULT_DOCKER_PRUNE_TIMEOUT = 60.0
 
 
 class DockerPruneError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        side_effect_unknown: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.side_effect_unknown = side_effect_unknown
 
 
 @dataclass(frozen=True)
@@ -248,7 +255,8 @@ def prune_docker_resource(
             _bounded_message(
                 exc.stderr,
                 f"Docker prune 在 {timeout:g} 秒内未完成",
-            )
+            ),
+            side_effect_unknown=True,
         ) from exc
     except OSError as exc:
         raise DockerPruneError(
@@ -259,7 +267,8 @@ def prune_docker_resource(
             _bounded_message(
                 completed.stderr,
                 f"Docker prune 退出码 {completed.returncode}",
-            )
+            ),
+            side_effect_unknown=True,
         )
 
     match = _RECLAIMED_PATTERN.search(completed.stdout)

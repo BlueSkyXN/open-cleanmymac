@@ -193,13 +193,18 @@ class DockerScannerTests(unittest.TestCase):
             prune_docker_resource("docker:unknown")
 
     def test_prune_failure_modes_are_explicit_and_never_guess_reclaimed_size(self) -> None:
-        with self.assertRaisesRegex(DockerPruneError, "未找到 Docker CLI"):
+        with self.assertRaisesRegex(
+            DockerPruneError, "未找到 Docker CLI"
+        ) as missing:
             prune_docker_resource(
                 "docker:build-cache",
                 finder=lambda _: None,
             )
+        self.assertFalse(missing.exception.side_effect_unknown)
 
-        with self.assertRaisesRegex(DockerPruneError, "daemon unavailable"):
+        with self.assertRaisesRegex(
+            DockerPruneError, "daemon unavailable"
+        ) as nonzero:
             prune_docker_resource(
                 "docker:build-cache",
                 finder=lambda _: "/usr/local/bin/docker",
@@ -207,6 +212,19 @@ class DockerScannerTests(unittest.TestCase):
                     command, 1, "", "daemon unavailable"
                 ),
             )
+        self.assertTrue(nonzero.exception.side_effect_unknown)
+
+        def timeout(command, **_):
+            raise subprocess.TimeoutExpired(command, 0.01)
+
+        with self.assertRaisesRegex(DockerPruneError, "0.01 秒") as timed_out:
+            prune_docker_resource(
+                "docker:build-cache",
+                finder=lambda _: "/usr/local/bin/docker",
+                runner=timeout,
+                timeout=0.01,
+            )
+        self.assertTrue(timed_out.exception.side_effect_unknown)
 
         result = prune_docker_resource(
             "docker:build-cache",

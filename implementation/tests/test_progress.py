@@ -10,7 +10,13 @@ from pathlib import Path
 from unittest import mock
 
 from openclean.cli import main
-from openclean.engine import scan_domains, scan_points, scan_project_artifacts
+from openclean.engine import (
+    Cancelled,
+    Control,
+    scan_domains,
+    scan_points,
+    scan_project_artifacts,
+)
 from openclean.models import ScanResult
 from openclean.progress import (
     ProgressTaskSpec,
@@ -209,6 +215,73 @@ class EngineProgressTests(unittest.TestCase):
         self.assertEqual(snapshots[0].total_tasks, 2)
         self.assertEqual(snapshots[-1].completed_tasks, 2)
         self.assertEqual(snapshots[-1].fraction, 1.0)
+
+    def test_failed_dynamic_scanner_never_reports_successful_progress(self) -> None:
+        points = [ScanPoint("Docker", (), scanner="docker")]
+        snapshots = []
+
+        with mock.patch.dict(DOMAINS, {"developer": points}), mock.patch(
+            "openclean.engine.scan_docker_resources",
+            side_effect=RuntimeError("daemon failed"),
+        ):
+            result = scan_domains(
+                ["developer"], workers=1, on_progress=snapshots.append
+            )
+
+        final = snapshots[-1]
+        task = final.tasks[0]
+        self.assertFalse(result.complete)
+        self.assertFalse(task.complete)
+        self.assertTrue(task.failed)
+        self.assertFalse(task.cancelled)
+        self.assertLess(final.fraction, 1.0)
+        self.assertLess(final.percent, 100)
+        self.assertEqual(final.active_label, "失败")
+
+    def test_cancelled_filesystem_scanner_never_reports_successful_progress(
+        self,
+    ) -> None:
+        points = [ScanPoint("Filesystem", ())]
+        snapshots = []
+
+        with mock.patch.dict(DOMAINS, {"system": points}), mock.patch(
+            "openclean.engine._scan_point",
+            side_effect=Cancelled,
+        ):
+            result = scan_domains(
+                ["system"], workers=1, on_progress=snapshots.append
+            )
+
+        final = snapshots[-1]
+        task = final.tasks[0]
+        self.assertTrue(result.cancelled)
+        self.assertTrue(final.cancelled)
+        self.assertFalse(task.complete)
+        self.assertFalse(task.failed)
+        self.assertTrue(task.cancelled)
+        self.assertLess(final.fraction, 1.0)
+        self.assertLess(final.percent, 100)
+        self.assertEqual(final.active_label, "已取消")
+
+    def test_cancelled_project_scan_marks_unfinished_tasks_cancelled(self) -> None:
+        control = Control()
+        control.cancel()
+        snapshots = []
+
+        result = scan_project_artifacts(
+            [Path("/cancelled-before-discovery")],
+            ctl=control,
+            on_progress=snapshots.append,
+        )
+
+        final = snapshots[-1]
+        self.assertTrue(result.cancelled)
+        self.assertTrue(final.cancelled)
+        self.assertEqual(final.completed_tasks, 0)
+        self.assertTrue(all(task.cancelled for task in final.tasks))
+        self.assertTrue(all(not task.complete for task in final.tasks))
+        self.assertLess(final.percent, 100)
+        self.assertEqual(final.active_label, "已取消")
 
     def test_cli_progress_is_tty_only_and_never_pollutes_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

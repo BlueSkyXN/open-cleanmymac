@@ -13,7 +13,7 @@ from unittest import mock
 
 from openclean.cleanup import CleanupOutcome, CleanupReport
 from openclean.cli import _print_clean_report, main
-from openclean.docker import DockerPruneResult
+from openclean.docker import DockerPruneError, DockerPruneResult
 from openclean.macos import TrashDiscovery
 from openclean.models import Item, ScanResult
 from openclean.scanpoints import DOMAINS, ScanPoint
@@ -451,6 +451,61 @@ class CleanupCliTests(unittest.TestCase):
                 1_500_000,
             )
             prune.assert_called_once()
+
+    def test_clean_dev_reports_started_docker_prune_as_partial(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            rules = _rules(home)
+            docker_item = Item(
+                path=None,
+                size=2_000_000,
+                category="Docker 构建缓存",
+                preselected=False,
+                domain="developer",
+                requires_explicit_selection=True,
+                resource_kind="docker",
+                identifier="docker:build-cache",
+            )
+            stdout = io.StringIO()
+
+            with mock.patch.dict(os.environ, {"HOME": str(home)}), mock.patch.dict(
+                DOMAINS,
+                {
+                    "developer": [
+                        ScanPoint("Docker 资源", (), scanner="docker")
+                    ]
+                },
+            ), mock.patch(
+                "openclean.engine.scan_docker_resources",
+                return_value=ScanResult(items=[docker_item]),
+            ), mock.patch(
+                "openclean.cleanup.prune_docker_resource",
+                side_effect=DockerPruneError(
+                    "Docker prune timed out",
+                    side_effect_unknown=True,
+                ),
+            ), contextlib.redirect_stdout(stdout):
+                status = main(
+                    [
+                        "clean",
+                        "dev",
+                        "--select",
+                        "docker:build-cache",
+                        "--yes",
+                        "--rules",
+                        str(rules),
+                        "--json",
+                    ]
+                )
+
+            payload = json.loads(stdout.getvalue())
+            cleanup = payload["cleanup"]
+            self.assertEqual(status, 1)
+            self.assertFalse(cleanup["complete"])
+            self.assertEqual(cleanup["outcomes"][0]["status"], "partial")
+            self.assertEqual(cleanup["permanently_deleted_bytes"], 0)
+            self.assertIn("可能已经发生", cleanup["outcomes"][0]["message"])
 
     def test_tty_review_changes_preview_selection_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -96,6 +96,7 @@ def _prepare_fixtures(home: Path) -> dict[str, Path]:
 
     trash = home / ".Trash"
     _write_file(trash / "old.tmp")
+    trash.chmod(0o700)
     trash_decoy = home / ".PreviewVolumeTrash"
     _write_file(trash_decoy / "keep.tmp")
 

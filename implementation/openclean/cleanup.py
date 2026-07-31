@@ -556,10 +556,12 @@ def trash_directory_for(
             trash.chmod(0o700)
 
     trash_stat = _lstat(trash)
-    if stat.S_ISLNK(trash_stat.st_mode) or not stat.S_ISDIR(trash_stat.st_mode):
-        raise CleanupSafetyError(f"Trash 路径无效：{trash}")
-    if trash_stat.st_dev != candidate_stat.st_dev:
-        raise CleanupSafetyError(f"Trash 与候选不在同一文件系统：{trash}")
+    _validate_trash_directory_stat(
+        trash,
+        trash_stat,
+        expected_device=candidate_stat.st_dev,
+        uid=uid,
+    )
     return trash
 
 
@@ -576,6 +578,31 @@ def _identity_matches(path: Path, item: Item) -> bool:
     if item.identity is None:
         return True
     return FileFacts(path=path, stat=_lstat(path)).identity == item.identity
+
+
+def _validate_trash_directory_stat(
+    path: Path,
+    stat_result: os.stat_result,
+    *,
+    expected_device: int,
+    uid: int,
+    expected_identity: FileIdentity | None = None,
+) -> None:
+    if stat.S_ISLNK(stat_result.st_mode) or not stat.S_ISDIR(
+        stat_result.st_mode
+    ):
+        raise CleanupSafetyError(f"Trash 路径无效：{path}")
+    if stat_result.st_dev != expected_device:
+        raise CleanupSafetyError(f"Trash 与候选不在同一文件系统：{path}")
+    if stat_result.st_uid != uid:
+        raise CleanupSafetyError(f"Trash 目录不属于当前用户：{path}")
+    if stat.S_IMODE(stat_result.st_mode) & 0o077:
+        raise CleanupSafetyError(f"Trash 目录必须使用私有权限：{path}")
+    if (
+        expected_identity is not None
+        and FileIdentity.from_stat(stat_result) != expected_identity
+    ):
+        raise CleanupSafetyError(f"Trash 目录 inode 已变化：{path}")
 
 
 def _open_directory_no_follow(path: Path, *, anchor: Path) -> int:
@@ -735,12 +762,13 @@ def _move_to_trash(
             f"候选变成了 macOS dataless/疑似云占位文件：{path}"
         )
     trash_stat = _lstat(trash)
-    if stat.S_ISLNK(trash_stat.st_mode) or not stat.S_ISDIR(
-        trash_stat.st_mode
-    ):
-        raise CleanupSafetyError(f"Trash 路径无效：{trash}")
-    if path_stat.st_dev != trash_stat.st_dev:
-        raise CleanupSafetyError(f"Trash 与候选不在同一文件系统：{trash}")
+    _validate_trash_directory_stat(
+        trash,
+        trash_stat,
+        expected_device=path_stat.st_dev,
+        uid=uid,
+    )
+    trash_identity = FileIdentity.from_stat(trash_stat)
     if _same_or_descendant(path, trash):
         raise CleanupSafetyError(f"候选已经位于 Trash：{path}")
     destination = _unique_destination(trash, path)
@@ -760,7 +788,11 @@ def _move_to_trash(
         path.parent,
         anchor=source_anchor,
     )
-    trash_fd = _open_directory_no_follow(trash, anchor=trash_anchor)
+    try:
+        trash_fd = _open_directory_no_follow(trash, anchor=trash_anchor)
+    except Exception:
+        os.close(source_parent_fd)
+        raise
     try:
         source_stat = _stat_at(source_parent_fd, path.name, path)
         if stat.S_ISLNK(source_stat.st_mode):
@@ -773,8 +805,13 @@ def _move_to_trash(
         source_identity = source_facts.identity
         if item.identity is not None and source_identity != item.identity:
             raise CleanupSafetyError(f"移动前 inode 已变化：{path}")
-        if source_stat.st_dev != os.fstat(trash_fd).st_dev:
-            raise CleanupSafetyError(f"Trash 与候选不在同一文件系统：{trash}")
+        _validate_trash_directory_stat(
+            trash,
+            os.fstat(trash_fd),
+            expected_device=source_stat.st_dev,
+            uid=uid,
+            expected_identity=trash_identity,
+        )
         try:
             os.stat(destination.name, dir_fd=trash_fd, follow_symlinks=False)
         except FileNotFoundError:
@@ -1091,7 +1128,19 @@ def execute_cleanup(
                     uid,
                     home,
                 )
-        except (CleanupSafetyError, DockerPruneError, OSError) as exc:
+        except DockerPruneError as exc:
+            unknown_note = (
+                "；Docker prune 的不可逆副作用可能已经发生；"
+                "实际释放容量未知"
+                if exc.side_effect_unknown
+                else ""
+            )
+            outcome = CleanupOutcome(
+                item=item,
+                status=("partial" if exc.side_effect_unknown else "failed"),
+                message=f"{exc}{unknown_note}",
+            )
+        except (CleanupSafetyError, OSError) as exc:
             outcome = CleanupOutcome(
                 item=item,
                 status="failed",

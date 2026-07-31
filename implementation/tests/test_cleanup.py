@@ -10,12 +10,14 @@ from unittest import mock
 
 from openclean import cleanup as cleanup_module
 from openclean.cleanup import (
+    CleanupSafetyError,
     SelectionError,
     execute_cleanup,
     select_cleanup_items,
+    trash_directory_for,
     with_cleanup_selection,
 )
-from openclean.docker import DockerPruneResult
+from openclean.docker import DockerPruneError, DockerPruneResult
 from openclean.engine import IgnoreRules, scan_points
 from openclean.knowledge_base import KnowledgeBase
 from openclean.models import FileFacts, Item, ScanResult
@@ -41,6 +43,12 @@ def _with_dataless_flag(stat_result):
 def _with_zero_blocks(stat_result):
     values = vars(_with_dataless_flag(stat_result)).copy()
     values.update(st_blocks=0, st_flags=0)
+    return SimpleNamespace(**values)
+
+
+def _with_owner(stat_result, owner: int):
+    values = vars(_with_dataless_flag(stat_result)).copy()
+    values.update(st_uid=owner, st_flags=0)
     return SimpleNamespace(**values)
 
 
@@ -246,6 +254,7 @@ class CleanupExecutionTests(unittest.TestCase):
             trash = home / ".Trash"
             existing = trash / "cache"
             existing.mkdir(parents=True)
+            trash.chmod(0o700)
             (existing / "old.bin").write_bytes(b"old")
             item = self._scan_directory(source)
 
@@ -256,6 +265,142 @@ class CleanupExecutionTests(unittest.TestCase):
             self.assertTrue((existing / "old.bin").exists())
             self.assertTrue((destination / "new.bin").exists())
 
+    def test_trash_destination_must_be_private_and_owned_by_current_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            source = home / "payload.bin"
+            trash = home / ".Trash"
+            trash.mkdir(parents=True)
+            source.write_bytes(b"source")
+            item = self._scan_directory(source)
+
+            trash.chmod(0o777)
+            permissive = execute_cleanup(
+                [item],
+                IgnoreRules(),
+                home=home,
+                trash_resolver=lambda _: trash,
+            )
+
+            self.assertFalse(permissive.complete)
+            self.assertIn("私有权限", permissive.outcomes[0].message)
+            self.assertEqual(source.read_bytes(), b"source")
+
+            trash.chmod(0o700)
+            original_lstat = cleanup_module._lstat
+
+            def wrong_owner(path: Path):
+                stat_result = original_lstat(path)
+                if Path(path) == trash:
+                    return _with_owner(stat_result, os.getuid() + 1)
+                return stat_result
+
+            with mock.patch(
+                "openclean.cleanup._lstat", side_effect=wrong_owner
+            ):
+                foreign = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    trash_resolver=lambda _: trash,
+                )
+
+            self.assertFalse(foreign.complete)
+            self.assertIn("不属于当前用户", foreign.outcomes[0].message)
+            self.assertEqual(source.read_bytes(), b"source")
+
+    def test_opened_trash_fd_must_match_validated_directory_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            source = home / "payload.bin"
+            trash = home / ".Trash"
+            replacement = home / "replacement-trash"
+            trash.mkdir(parents=True)
+            replacement.mkdir()
+            trash.chmod(0o700)
+            replacement.chmod(0o700)
+            source.write_bytes(b"source")
+            item = self._scan_directory(source)
+            original_open = cleanup_module._open_directory_no_follow
+
+            def swapped_open(path: Path, *, anchor: Path) -> int:
+                if Path(path) == trash:
+                    return original_open(replacement, anchor=home)
+                return original_open(path, anchor=anchor)
+
+            with mock.patch(
+                "openclean.cleanup._open_directory_no_follow",
+                side_effect=swapped_open,
+            ):
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    trash_resolver=lambda _: trash,
+                )
+
+            self.assertFalse(report.complete)
+            self.assertIn("inode 已变化", report.outcomes[0].message)
+            self.assertEqual(source.read_bytes(), b"source")
+            self.assertEqual(list(trash.iterdir()), [])
+            self.assertEqual(list(replacement.iterdir()), [])
+
+    def test_source_parent_fd_is_closed_when_trash_open_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            source = home / "payload.bin"
+            trash = home / ".Trash"
+            trash.mkdir(parents=True)
+            trash.chmod(0o700)
+            source.write_bytes(b"source")
+            item = self._scan_directory(source)
+            opened: list[int] = []
+
+            def failing_open(path: Path, *, anchor: Path) -> int:
+                if Path(path) == source.parent:
+                    descriptor = os.open(
+                        path,
+                        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+                    )
+                    opened.append(descriptor)
+                    return descriptor
+                raise CleanupSafetyError("synthetic Trash open failure")
+
+            with mock.patch(
+                "openclean.cleanup._open_directory_no_follow",
+                side_effect=failing_open,
+            ):
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    trash_resolver=lambda _: trash,
+                )
+
+            self.assertEqual(len(opened), 1)
+            try:
+                os.fstat(opened[0])
+            except OSError:
+                closed = True
+            else:
+                closed = False
+                os.close(opened[0])
+            self.assertTrue(closed)
+            self.assertFalse(report.complete)
+            self.assertEqual(source.read_bytes(), b"source")
+
+    def test_trash_directory_for_rejects_permissive_existing_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            source = home / "payload.bin"
+            trash = home / ".Trash"
+            trash.mkdir(parents=True)
+            source.write_bytes(b"source")
+            trash.chmod(0o777)
+
+            with self.assertRaisesRegex(CleanupSafetyError, "私有权限"):
+                trash_directory_for(source, home=home, uid=os.getuid())
+
     def test_trash_name_created_after_check_is_never_overwritten(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
@@ -263,6 +408,7 @@ class CleanupExecutionTests(unittest.TestCase):
             trash = home / ".Trash"
             home.mkdir()
             trash.mkdir()
+            trash.chmod(0o700)
             source.write_bytes(b"source")
             item = self._scan_directory(source)
             original_stat = os.stat
@@ -311,6 +457,7 @@ class CleanupExecutionTests(unittest.TestCase):
             trash = home / ".Trash"
             home.mkdir()
             trash.mkdir()
+            trash.chmod(0o700)
             source.write_bytes(b"original")
             item = self._scan_directory(source)
             original_stat = os.stat
@@ -409,6 +556,7 @@ class CleanupExecutionTests(unittest.TestCase):
             first.mkdir(parents=True)
             second.mkdir()
             trash.mkdir()
+            trash.chmod(0o700)
             (first / "a.bin").write_bytes(b"a")
             (second / "b.bin").write_bytes(b"b")
             first_item = self._scan_directory(first)
@@ -447,6 +595,7 @@ class CleanupExecutionTests(unittest.TestCase):
             trash = home / ".Trash"
             cache.mkdir(parents=True)
             trash.mkdir()
+            trash.chmod(0o700)
             (cache / "original.bin").write_bytes(b"original")
             item = self._scan_directory(cache)
             protected = cache / "protected.bin"
@@ -729,6 +878,7 @@ class CleanupExecutionTests(unittest.TestCase):
             trash = home / ".Trash"
             cache.mkdir(parents=True)
             trash.mkdir()
+            trash.chmod(0o700)
             (cache / "local.bin").write_bytes(b"local")
             item = self._scan_directory(cache)
             original_stat_at = cleanup_module._stat_at
@@ -763,6 +913,7 @@ class CleanupExecutionTests(unittest.TestCase):
             trash = home / ".Trash"
             home.mkdir()
             trash.mkdir()
+            trash.chmod(0o700)
             cache.write_bytes(b"local")
             item = self._scan_directory(cache)
             original_stat_at = cleanup_module._stat_at
@@ -911,6 +1062,7 @@ class CleanupExecutionTests(unittest.TestCase):
             trash = home / ".Trash"
             home.mkdir()
             trash.mkdir()
+            trash.chmod(0o700)
             source.write_bytes(b"source")
             item = self._scan_directory(source)
 
@@ -1025,6 +1177,31 @@ class CleanupExecutionTests(unittest.TestCase):
             runner=None,
             finder=None,
         )
+
+    def test_docker_started_but_unconfirmed_prune_is_partial(self) -> None:
+        item = Item(
+            path=None,
+            size=2_000_000,
+            category="Docker 构建缓存",
+            preselected=True,
+            domain="developer",
+            resource_kind="docker",
+            identifier="docker:build-cache",
+        )
+
+        with mock.patch(
+            "openclean.cleanup.prune_docker_resource",
+            side_effect=DockerPruneError(
+                "Docker prune timed out",
+                side_effect_unknown=True,
+            ),
+        ):
+            report = execute_cleanup([item], IgnoreRules())
+
+        self.assertFalse(report.complete)
+        self.assertEqual(report.outcomes[0].status, "partial")
+        self.assertEqual(report.outcomes[0].bytes_affected, 0)
+        self.assertIn("可能已经发生", report.outcomes[0].message)
 
     def test_docker_local_volumes_remain_hard_blocked(self) -> None:
         item = Item(

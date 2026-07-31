@@ -40,6 +40,8 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 - 扫描和执行拒绝 symlink 目标与 symlink ancestor，并复核 device/inode/owner/mount。
 - fd-relative `O_NOFOLLOW` 和 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`
   用于普通 Trash 移动；目标竞态时拒绝覆盖，批量预检失败时不开始整批执行。
+- 普通 Trash 目标目录必须属于当前用户并使用私有权限；打开后的目录 fd 会再次复核
+  device/inode/owner/mode，拒绝外置卷共享 `.Trashes` 下预先放置或并发替换的用户目录。
 - Trash 永久清空只处理最终审计得到的 inode 快照；审计后新增项保留，部分删除以
   `partial` 明确报告不可逆副作用。
 - 后代目录审计使用 no-follow fd + `fstat` + `scandir(fd)`，拒绝扫描后替换的 symlink、
@@ -51,6 +53,8 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
   fail-closed。
 - 托管知识库只接受显式 HTTPS、钉住公钥、递增 sequence 和有效签名；sequence/key 检查
   与安装由稳定 `0600` 目标锁跨进程序列化。
+- Docker prune 一旦启动，timeout 或非零退出按副作用未知的 `partial` 报告，不会假定
+  daemon 尚未删除任何资源。
 
 ## 已知边界
 

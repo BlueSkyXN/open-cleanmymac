@@ -94,6 +94,7 @@ issue 使用稳定 code、message、task、path 和 `blocking`。`complete=true`
 3. 就绪任务在线程池并发运行；依赖失败只阻断下游，独立任务继续。
 4. 每个任务在启动前获得固定权重，进度按
    `sum(task_progress * weight) / sum(weight)` 聚合。
+   任务终态区分成功、失败和取消；只有成功任务进入 `complete + 100%`。
 5. 目录遍历不跟随 symlink，硬链接按 `(device, inode)` 去重，物理大小用
    `st_blocks * 512` 计量。
 6. Darwin `SF_DATALESS` 与 zero-block 启发式会在目录枚举前阻止 dataless/疑似云占位；
@@ -136,7 +137,9 @@ stateDiagram-v2
 - 环境变量扫描根只允许位于 `~/Library/Caches` 或 `~/.cache`，并标记为
   `environment + confirm + requires_explicit_selection`。
 - 普通 Trash 移动逐组件用 `O_NOFOLLOW | O_DIRECTORY` 打开目录 fd；最终使用
-  `os.rename(..., src_dir_fd=..., dst_dir_fd=...)`。
+  Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)` 原子拒绝覆盖。
+- per-user Trash 必须由当前 uid 所有且使用私有权限；打开目录 fd 后重新复核
+  device/inode/owner/mode，避免把文件移入外置卷上预先放置或并发替换的目录。
 - 清空 Trash 使用最终审计快照和 fd-relative `unlink/rmdir`，不删除 Trash 根目录，也不
   删除审计后新到达的项。
 - 清理前的后代树复核同样使用 no-follow 目录 fd、`fstat` 和 `scandir(fd)`；每层重新检查
@@ -155,7 +158,7 @@ stateDiagram-v2
 
 扫描只调用 `docker system df --format json`。执行器不接受用户提供的任意命令，只能映射
 到代码内固定的 builder/image/container prune；Local Volumes 始终不可执行。Docker
-prune 不经过 Trash。
+prune 不经过 Trash；启动后的 timeout 或非零退出按副作用未知的 `partial` 报告。
 
 ### 托管知识库
 

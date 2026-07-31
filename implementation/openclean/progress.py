@@ -31,6 +31,12 @@ class TaskProgressSnapshot:
     fraction: float
     processed_items: int
     complete: bool
+    failed: bool = False
+    cancelled: bool = False
+
+    @property
+    def terminal(self) -> bool:
+        return self.complete or self.failed or self.cancelled
 
 
 @dataclass(frozen=True)
@@ -45,14 +51,21 @@ class ProgressSnapshot:
 
     @property
     def percent(self) -> int:
-        return min(100, max(0, round(self.fraction * 100)))
+        maximum = 100 if self.fraction >= 1.0 else 99
+        return min(maximum, max(0, round(self.fraction * 100)))
 
     @property
     def active_label(self) -> str:
         active = next(
-            (task.label for task in self.tasks if not task.complete), ""
+            (task.label for task in self.tasks if not task.terminal), ""
         )
-        return active
+        if active:
+            return active
+        if self.cancelled or any(task.cancelled for task in self.tasks):
+            return "已取消"
+        if any(task.failed for task in self.tasks):
+            return "失败"
+        return ""
 
 
 @dataclass
@@ -61,6 +74,12 @@ class _TaskState:
     fraction: float = 0.0
     processed_items: int = 0
     complete: bool = False
+    failed: bool = False
+    cancelled: bool = False
+
+    @property
+    def terminal(self) -> bool:
+        return self.complete or self.failed or self.cancelled
 
 
 class TaskProgress:
@@ -80,6 +99,12 @@ class TaskProgress:
 
     def complete(self) -> None:
         self._owner._complete(self.identifier)
+
+    def fail(self) -> None:
+        self._owner._fail(self.identifier)
+
+    def cancel(self) -> None:
+        self._owner._cancel_task(self.identifier)
 
 
 class WeightedProgress:
@@ -119,7 +144,12 @@ class WeightedProgress:
 
     def cancel(self) -> None:
         with self._lock:
+            if self._cancelled and all(state.terminal for state in self._states.values()):
+                return
             self._cancelled = True
+            for state in self._states.values():
+                if not state.terminal:
+                    state.cancelled = True
             self._sequence += 1
             snapshot = self._snapshot_locked()
         self._emit(snapshot)
@@ -131,7 +161,7 @@ class WeightedProgress:
     def _advance(self, identifier: str, count: int) -> None:
         with self._lock:
             state = self._states[identifier]
-            if state.complete:
+            if state.terminal:
                 return
             state.processed_items += count
             heuristic = min(
@@ -149,9 +179,9 @@ class WeightedProgress:
             raise ValueError("fraction 必须位于 0..1")
         with self._lock:
             state = self._states[identifier]
-            if state.complete:
+            if state.terminal:
                 return
-            state.fraction = max(state.fraction, fraction)
+            state.fraction = max(state.fraction, min(fraction, 0.99))
             self._sequence += 1
             snapshot = self._snapshot_locked()
         self._emit(snapshot)
@@ -159,10 +189,27 @@ class WeightedProgress:
     def _complete(self, identifier: str) -> None:
         with self._lock:
             state = self._states[identifier]
-            if state.complete:
+            if state.terminal:
                 return
             state.fraction = 1.0
             state.complete = True
+            self._sequence += 1
+            snapshot = self._snapshot_locked()
+        self._emit(snapshot)
+
+    def _fail(self, identifier: str) -> None:
+        self._finish_unsuccessfully(identifier, failed=True)
+
+    def _cancel_task(self, identifier: str) -> None:
+        self._finish_unsuccessfully(identifier, failed=False)
+
+    def _finish_unsuccessfully(self, identifier: str, *, failed: bool) -> None:
+        with self._lock:
+            state = self._states[identifier]
+            if state.terminal:
+                return
+            state.failed = failed
+            state.cancelled = not failed
             self._sequence += 1
             snapshot = self._snapshot_locked()
         self._emit(snapshot)
@@ -176,6 +223,8 @@ class WeightedProgress:
                 fraction=state.fraction,
                 processed_items=state.processed_items,
                 complete=state.complete,
+                failed=state.failed,
+                cancelled=state.cancelled,
             )
             for state in self._states.values()
         )

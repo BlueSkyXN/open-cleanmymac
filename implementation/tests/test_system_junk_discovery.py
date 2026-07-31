@@ -217,6 +217,7 @@ class DarwinUserCacheScanTests(unittest.TestCase):
             selected.mkdir(parents=True)
             sibling.mkdir()
             trash.mkdir()
+            trash.chmod(0o700)
             (selected / "data.bin").write_bytes(b"selected")
             (sibling / "data.bin").write_bytes(b"sibling")
             discovery = DarwinUserCacheDiscovery(paths=(cache_root,))
