@@ -281,7 +281,8 @@ class TerminalProgressRenderer:
             if self._finished:
                 return
             if (
-                snapshot.fraction < 1.0
+                not all(task.terminal for task in snapshot.tasks)
+                and snapshot.fraction < 1.0
                 and now - self._last_render < self.min_interval
             ):
                 return

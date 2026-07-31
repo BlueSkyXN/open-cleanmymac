@@ -138,8 +138,11 @@ stateDiagram-v2
   `environment + confirm + requires_explicit_selection`。
 - 普通 Trash 移动逐组件用 `O_NOFOLLOW | O_DIRECTORY` 打开目录 fd；最终使用
   Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)` 原子拒绝覆盖。
-- per-user Trash 必须由当前 uid 所有且使用私有权限；打开目录 fd 后重新复核
-  device/inode/owner/mode，避免把文件移入外置卷上预先放置或并发替换的目录。
+- per-user Trash 必须由当前 uid 所有且使用私有权限；新建目录通过可信父目录 fd 相对
+  创建，no-follow 打开并绑定 path/fd identity 后才执行 `fchmod`，最终再次复核
+  device/inode/owner/mode。
+- rename 成功是 Trash 移动提交边界；后置 fd close 错误返回 `partial` 并保留 destination，
+  源目录和 Trash 目录 fd 始终独立尝试关闭。
 - 清空 Trash 使用最终审计快照和 fd-relative `unlink/rmdir`，不删除 Trash 根目录，也不
   删除审计后新到达的项。
 - 清理前的后代树复核同样使用 no-follow 目录 fd、`fstat` 和 `scandir(fd)`；每层重新检查
@@ -164,7 +167,8 @@ prune 不经过 Trash；启动后的 timeout 或非零退出按副作用未知�
 
 网络更新不是后台行为，只由显式 `config --update-knowledge HTTPS_URL` 触发。客户端限制
 大小、拒绝 URL 凭据和 HTTPS 降级，验证规范 JSON 的 SHA-256 签名，钉住公钥指纹和
-sequence，再以 `0600 + fsync + os.replace` 安装。项目不内置第三方规则和未知 trust root。
+sequence，再以 `0600 + fsync + os.replace` 安装。`os.replace` 是提交边界；后置目录同步和
+fd 清理为 best effort，不会覆盖已安装结果。项目不内置第三方规则和未知 trust root。
 
 ### 特权 XPC
 

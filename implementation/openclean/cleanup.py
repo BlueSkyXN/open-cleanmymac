@@ -526,13 +526,9 @@ def trash_directory_for(
 
     if candidate_stat.st_dev == home_stat.st_dev:
         trash = home / ".Trash"
-        created = not os.path.lexists(trash)
-        try:
-            trash.mkdir(mode=0o700, exist_ok=True)
-        except (PermissionError, OSError) as exc:
-            raise CleanupSafetyError(f"无法准备用户 Trash {trash}：{exc}") from exc
-        if created:
-            trash.chmod(0o700)
+        trash_parent = home
+        parent_anchor = home
+        parent_identity = FileIdentity.from_stat(home_stat)
     else:
         mount_root = candidate if stat.S_ISDIR(candidate_stat.st_mode) else candidate.parent
         while mount_root.parent != mount_root:
@@ -547,18 +543,15 @@ def trash_directory_for(
         ):
             raise CleanupSafetyError(f"外置卷 Trash 根目录无效：{trashes_root}")
         trash = trashes_root / str(uid)
-        created = not os.path.lexists(trash)
-        try:
-            trash.mkdir(mode=0o700, exist_ok=True)
-        except (PermissionError, OSError) as exc:
-            raise CleanupSafetyError(f"无法准备卷 Trash {trash}：{exc}") from exc
-        if created:
-            trash.chmod(0o700)
+        trash_parent = trashes_root
+        parent_anchor = mount_root
+        parent_identity = FileIdentity.from_stat(trashes_stat)
 
-    trash_stat = _lstat(trash)
-    _validate_trash_directory_stat(
+    _prepare_trash_directory(
         trash,
-        trash_stat,
+        parent=trash_parent,
+        parent_anchor=parent_anchor,
+        expected_parent_identity=parent_identity,
         expected_device=candidate_stat.st_dev,
         uid=uid,
     )
@@ -603,6 +596,89 @@ def _validate_trash_directory_stat(
         and FileIdentity.from_stat(stat_result) != expected_identity
     ):
         raise CleanupSafetyError(f"Trash 目录 inode 已变化：{path}")
+
+
+def _prepare_trash_directory(
+    trash: Path,
+    *,
+    parent: Path,
+    parent_anchor: Path,
+    expected_parent_identity: FileIdentity,
+    expected_device: int,
+    uid: int,
+) -> None:
+    """在可信父目录 fd 下创建或打开 per-user Trash，并绑定最终身份。"""
+    parent_fd = _open_directory_no_follow(parent, anchor=parent_anchor)
+    trash_fd: int | None = None
+    try:
+        if FileIdentity.from_stat(os.fstat(parent_fd)) != expected_parent_identity:
+            raise CleanupSafetyError(f"Trash 父目录 inode 已变化：{parent}")
+        try:
+            os.mkdir(trash.name, mode=0o700, dir_fd=parent_fd)
+            created = True
+        except FileExistsError:
+            created = False
+        except (PermissionError, OSError) as exc:
+            raise CleanupSafetyError(f"无法准备 Trash {trash}：{exc}") from exc
+
+        try:
+            path_stat = os.stat(
+                trash.name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            raise CleanupSafetyError(f"无法安全检查 Trash {trash}：{exc}") from exc
+        _validate_trash_directory_stat(
+            trash,
+            path_stat,
+            expected_device=expected_device,
+            uid=uid,
+        )
+        trash_identity = FileIdentity.from_stat(path_stat)
+
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        directory_flag = getattr(os, "O_DIRECTORY", 0)
+        if not no_follow or not directory_flag:
+            raise CleanupSafetyError("当前平台缺少 O_NOFOLLOW/O_DIRECTORY")
+        flags = os.O_RDONLY | no_follow | directory_flag
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        try:
+            trash_fd = os.open(trash.name, flags, dir_fd=parent_fd)
+        except OSError as exc:
+            raise CleanupSafetyError(f"无法无跟随打开 Trash {trash}：{exc}") from exc
+
+        _validate_trash_directory_stat(
+            trash,
+            os.fstat(trash_fd),
+            expected_device=expected_device,
+            uid=uid,
+            expected_identity=trash_identity,
+        )
+        if created:
+            try:
+                os.fchmod(trash_fd, 0o700)
+            except OSError as exc:
+                raise CleanupSafetyError(
+                    f"无法设置 Trash 私有权限 {trash}：{exc}"
+                ) from exc
+            _validate_trash_directory_stat(
+                trash,
+                os.fstat(trash_fd),
+                expected_device=expected_device,
+                uid=uid,
+                expected_identity=trash_identity,
+            )
+    finally:
+        if trash_fd is not None:
+            try:
+                os.close(trash_fd)
+            except OSError:
+                pass
+        try:
+            os.close(parent_fd)
+        except OSError:
+            pass
 
 
 def _open_directory_no_follow(path: Path, *, anchor: Path) -> int:
@@ -791,8 +867,13 @@ def _move_to_trash(
     try:
         trash_fd = _open_directory_no_follow(trash, anchor=trash_anchor)
     except Exception:
-        os.close(source_parent_fd)
+        try:
+            os.close(source_parent_fd)
+        except OSError:
+            pass
         raise
+    close_errors: list[str] = []
+    rename_succeeded = False
     try:
         source_stat = _stat_at(source_parent_fd, path.name, path)
         if stat.S_ISLNK(source_stat.st_mode):
@@ -825,6 +906,7 @@ def _move_to_trash(
                 trash_fd,
                 destination.name,
             )
+            rename_succeeded = True
         except (PermissionError, OSError) as exc:
             raise CleanupSafetyError(f"移动到 Trash 失败 {path}：{exc}") from exc
         try:
@@ -869,8 +951,24 @@ def _move_to_trash(
             kind = "原 inode 的新链接" if recreated_identity == item.identity else "新对象"
             source_note = f"；源路径已出现{kind}，未对其执行清理"
     finally:
-        os.close(source_parent_fd)
-        os.close(trash_fd)
+        for label, descriptor in (
+            ("源目录", source_parent_fd),
+            ("Trash 目录", trash_fd),
+        ):
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                close_errors.append(f"{label}: {exc}")
+    if close_errors and rename_succeeded:
+        return CleanupOutcome(
+            item=item,
+            status="partial",
+            destination=destination,
+            message=(
+                "Trash rename 已成功，但关闭目录描述符失败；"
+                f"原操作已经发生：{'；'.join(close_errors)}"
+            ),
+        )
     return CleanupOutcome(
         item=item,
         status="moved_to_trash",

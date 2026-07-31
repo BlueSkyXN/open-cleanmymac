@@ -34,7 +34,7 @@
 | 规格 | 对应实现文件 | 缺口 |
 |---|---|---|
 | 02 扫描点 | `openclean/scanpoints.py`、`application_languages.py`、`startup_items.py` | System Junk 为公开 CLI 保守子集；项目内 `.Trash` 未启用；ApplicationLanguages 写入与 lipo 有意不提供 |
-| 01 引擎 / 05 算法 | `openclean/engine.py`、`progress.py`、`task_graph.py`、`models.py` | lipo 未实现；DAG/进度已完成 |
+| 01 引擎 / 05 算法 | `openclean/engine.py`、`progress.py`、`task_graph.py`、`models.py` | lipo 未实现；DAG、加权百分比进度和终态快照已完成，Countable/Control 聚合与 observer 未完成 |
 | 00 命令树 / 06 流程 | `openclean/cli.py`、`cleanup.py`、`tui.py`、`space_tui.py` | `optimize`、特权 XPC |
 | 07 谓词 / 03 知识库 | `openclean/predicates.py`、`knowledge_base.py`、`knowledge_update.py` | Reachability/FileAccess、application fields 生产接线、正式自建规则 channel |
 

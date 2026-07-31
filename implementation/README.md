@@ -179,8 +179,9 @@ issue；仍应检查 `issues` 中的安全跳过和动态来源提示。
 客户端限制 2 MiB、只接受 HTTPS、拒绝 URL 凭据，使用用户提供的 PEM 公钥调用系统
 OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence；稳定的 `0600`
 `<destination>.lock` 把 sequence/key 重判与 `os.replace` 安装放进同一个跨进程临界区，
-临时文件同时使用 `fsync`。托管 `knowledge.json` 与用户 `rules.json` 分层合并，远程
-更新不覆盖用户 ignore。
+临时文件同时使用 `fsync`。`os.replace` 是安装提交边界，后置目录同步和 fd 清理只做
+best effort，不会把已经安装的 sequence 报成失败。托管 `knowledge.json` 与用户
+`rules.json` 分层合并，远程更新不覆盖用户 ignore。
 
 ## 路径安全
 
@@ -193,8 +194,10 @@ OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence；
   和 dataless 状态；
 - 普通移动逐组件打开 no-follow 目录 fd，并使用 Darwin
   `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)` 原子拒绝覆盖；
-- Trash 目标目录必须属于当前用户并使用私有权限，打开后再次复核
-  device/inode/owner/mode；
+- Trash 目标目录必须属于当前用户并使用私有权限；新建目录在可信父目录 fd 下相对创建，
+  no-follow 打开并绑定 identity 后才在 fd 上设置权限；
+- Trash rename 后的源/目标目录 fd 独立关闭；后置 close 失败保留已移动事实并返回
+  `partial`；
 - Trash 永久清空只删除最终审计快照；审计后新增项保留，部分删除返回 `partial`；
 - Docker prune 启动后的 timeout/非零退出返回副作用未知的 `partial`；
 - 任一批量预检失败时整个批次不启动。
@@ -249,5 +252,5 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 
 剩余工作见 [TODO.md](TODO.md)。
 
-当前本地验证基线为 296 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+当前本地验证基线为 301 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
 checkout 的 `make check` 输出为准。

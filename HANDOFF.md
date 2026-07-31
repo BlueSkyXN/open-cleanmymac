@@ -30,14 +30,15 @@ make release-check
 - Predicate 组合、JSON KnowledgeBase、ignore、签名更新客户端；
 - clean/purge/analyze 的文本、JSON、curses 审阅和用户态执行；精确 `--select` 不继承
   默认或同等级批量选择；
-- 同卷 Trash、Trash 永久清空、Docker 三类固定 prune；
+- 同卷 Trash、Trash 永久清空、Docker 三类固定 prune；Trash 创建使用可信父目录 fd，
+  rename/replace 后的清理错误不会覆盖已发生副作用；
 - 项目分组和 7 天预选、Time Machine 只读提示；
 - System Junk 精细候选、Darwin cache、broken startup items；
 - ApplicationLanguages 保守只读审计；
 - 任务 DAG、加权进度、运行中进程保护；
 - JSON schema v2、机器错误 envelope、标准 Python 包装和 release archive audit。
 
-最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，296 个单元测试通过，
+最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，301 个单元测试通过，
 19/19 隔离预览通过且 `real_user_data_modified=false`。这是本地快照；远端状态必须读取
 GitHub exact commit 的 Actions 结果后另行确认。
 

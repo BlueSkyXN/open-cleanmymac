@@ -517,6 +517,97 @@ class KnowledgeUpdateTests(unittest.TestCase):
                 [],
             )
 
+    def test_directory_close_failure_after_replace_does_not_report_install_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            public_key = root / "public.pem"
+            public_key.write_text("test public key", encoding="utf-8")
+            destination = root / "knowledge.json"
+            real_open = os.open
+            real_close = os.close
+            directory_descriptor = None
+            close_failed = False
+
+            def tracking_open(path, flags, mode=0o777, *, dir_fd=None):
+                nonlocal directory_descriptor
+                descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                if Path(path) == root and flags == os.O_RDONLY:
+                    directory_descriptor = descriptor
+                return descriptor
+
+            def close_then_fail(descriptor: int) -> None:
+                nonlocal close_failed
+                real_close(descriptor)
+                if descriptor == directory_descriptor and not close_failed:
+                    close_failed = True
+                    raise OSError("directory close failed after replace")
+
+            with mock.patch(
+                "openclean.knowledge_update.os.open", side_effect=tracking_open
+            ), mock.patch(
+                "openclean.knowledge_update.os.close", side_effect=close_then_fail
+            ):
+                result = update_knowledge_base(
+                    "https://updates.example.test/knowledge.json",
+                    public_key,
+                    destination=destination,
+                    fetcher=lambda *_: _unsigned_envelope(1),
+                    verifier=lambda *_: None,
+                )
+
+            self.assertTrue(close_failed)
+            self.assertEqual(result.sequence, 1)
+            installed = json.loads(destination.read_text(encoding="utf-8"))
+            self.assertEqual(installed["_managed"]["sequence"], 1)
+
+    def test_lock_close_failure_after_replace_does_not_report_install_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            public_key = root / "public.pem"
+            public_key.write_text("test public key", encoding="utf-8")
+            destination = root / "knowledge.json"
+            lock_path = destination.with_name(f"{destination.name}.lock")
+            real_open = os.open
+            real_close = os.close
+            lock_descriptor = None
+            close_failed = False
+
+            def tracking_open(path, flags, mode=0o777, *, dir_fd=None):
+                nonlocal lock_descriptor
+                descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                if Path(path) == lock_path:
+                    lock_descriptor = descriptor
+                return descriptor
+
+            def close_then_fail(descriptor: int) -> None:
+                nonlocal close_failed
+                real_close(descriptor)
+                if descriptor == lock_descriptor and not close_failed:
+                    close_failed = True
+                    raise OSError("lock close failed after replace")
+
+            with mock.patch(
+                "openclean.knowledge_update.os.open", side_effect=tracking_open
+            ), mock.patch(
+                "openclean.knowledge_update.os.close", side_effect=close_then_fail
+            ):
+                result = update_knowledge_base(
+                    "https://updates.example.test/knowledge.json",
+                    public_key,
+                    destination=destination,
+                    fetcher=lambda *_: _unsigned_envelope(1),
+                    verifier=lambda *_: None,
+                )
+
+            self.assertTrue(close_failed)
+            self.assertEqual(result.sequence, 1)
+            installed = json.loads(destination.read_text(encoding="utf-8"))
+            self.assertEqual(installed["_managed"]["sequence"], 1)
+
     def test_symlink_lock_file_fails_closed_without_installing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

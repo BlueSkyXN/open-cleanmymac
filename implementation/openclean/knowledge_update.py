@@ -308,6 +308,13 @@ def _installed_metadata(destination: Path) -> dict[str, Any] | None:
     return metadata
 
 
+def _close_descriptor_best_effort(descriptor: int) -> None:
+    try:
+        os.close(descriptor)
+    except OSError:
+        pass
+
+
 @contextmanager
 def _destination_lock(destination: Path) -> Iterator[None]:
     """对单个托管目标串行化 metadata 检查与原子替换。"""
@@ -336,16 +343,30 @@ def _destination_lock(destination: Path) -> Iterator[None]:
         os.fchmod(descriptor, 0o600)
         fcntl.flock(descriptor, fcntl.LOCK_EX)
     except KnowledgeUpdateError:
-        os.close(descriptor)
+        _close_descriptor_best_effort(descriptor)
         raise
     except OSError as exc:
-        os.close(descriptor)
+        _close_descriptor_best_effort(descriptor)
         raise KnowledgeUpdateError(f"无法获取托管知识库锁 {lock_path}：{exc}") from exc
 
     try:
         yield
     finally:
-        os.close(descriptor)
+        _close_descriptor_best_effort(descriptor)
+
+
+def _sync_directory_best_effort(directory: Path) -> None:
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        try:
+            os.fsync(descriptor)
+        except OSError:
+            pass
+    finally:
+        _close_descriptor_best_effort(descriptor)
 
 
 def _atomic_install(destination: Path, payload: dict[str, Any]) -> None:
@@ -371,32 +392,20 @@ def _atomic_install(destination: Path, payload: dict[str, Any]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
-        try:
-            directory_descriptor = os.open(parent, os.O_RDONLY)
-        except OSError:
-            directory_descriptor = None
-        if directory_descriptor is not None:
-            try:
-                os.fsync(directory_descriptor)
-            except OSError:
-                pass
-            finally:
-                os.close(directory_descriptor)
     except OSError as exc:
         raise KnowledgeUpdateError(
             f"无法写入托管知识库 {destination}：{exc}"
         ) from exc
     finally:
         if descriptor_open:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-        if temporary.exists():
-            try:
-                temporary.unlink()
-            except OSError:
-                pass
+            _close_descriptor_best_effort(descriptor)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    # os.replace 是安装提交边界；提交后的持久化与关闭失败不能改写安装结果。
+    _sync_directory_best_effort(parent)
 
 
 def update_knowledge_base(

@@ -143,6 +143,31 @@ class WeightedProgressTests(unittest.TestCase):
         self.assertIn("100%", output)
         self.assertEqual(output.count("\n"), 1)
 
+    def test_terminal_renderer_never_throttles_unsuccessful_terminal_state(
+        self,
+    ) -> None:
+        for terminal_state, expected_label in (
+            ("fail", "失败"),
+            ("cancel", "已取消"),
+        ):
+            with self.subTest(terminal_state=terminal_state):
+                stream = io.StringIO()
+                renderer = TerminalProgressRenderer(stream=stream)
+                progress = WeightedProgress(
+                    (ProgressTaskSpec("task", "Scanning"),),
+                    callback=renderer,
+                )
+
+                with mock.patch(
+                    "openclean.progress.time.monotonic",
+                    side_effect=(1.0, 1.01),
+                ):
+                    progress.start()
+                    getattr(progress.task("task"), terminal_state)()
+                renderer.finish()
+
+                self.assertIn(expected_label, stream.getvalue())
+
 
 class EngineProgressTests(unittest.TestCase):
     def test_scan_points_reports_fixed_task_count_and_final_completion(self) -> None:

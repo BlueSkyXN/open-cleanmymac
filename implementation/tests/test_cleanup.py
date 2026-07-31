@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 import unittest
 from dataclasses import replace
@@ -389,6 +390,90 @@ class CleanupExecutionTests(unittest.TestCase):
             self.assertFalse(report.complete)
             self.assertEqual(source.read_bytes(), b"source")
 
+    def test_post_rename_close_failure_is_partial_and_closes_both_fds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            source = home / "payload.bin"
+            trash = home / ".Trash"
+            home.mkdir()
+            trash.mkdir(mode=0o700)
+            source.write_bytes(b"source")
+            item = self._scan_directory(source)
+            original_open = cleanup_module._open_directory_no_follow
+            original_close = os.close
+            opened: list[int] = []
+            rename_completed = False
+            close_failed = False
+
+            def tracking_open(path: Path, *, anchor: Path) -> int:
+                descriptor = original_open(path, anchor=anchor)
+                opened.append(descriptor)
+                return descriptor
+
+            def real_rename(
+                source_parent_fd: int,
+                source_name: str,
+                destination_parent_fd: int,
+                destination_name: str,
+            ) -> None:
+                nonlocal rename_completed
+                os.rename(
+                    source_name,
+                    destination_name,
+                    src_dir_fd=source_parent_fd,
+                    dst_dir_fd=destination_parent_fd,
+                )
+                rename_completed = True
+
+            def failing_close(descriptor: int) -> None:
+                nonlocal close_failed
+                if (
+                    rename_completed
+                    and opened
+                    and descriptor == opened[0]
+                    and not close_failed
+                ):
+                    original_close(descriptor)
+                    close_failed = True
+                    raise OSError("synthetic source fd close failure")
+                original_close(descriptor)
+
+            with mock.patch(
+                "openclean.cleanup._open_directory_no_follow",
+                side_effect=tracking_open,
+            ), mock.patch(
+                "openclean.cleanup._rename_no_replace",
+                side_effect=real_rename,
+            ), mock.patch(
+                "openclean.cleanup.os.close",
+                side_effect=failing_close,
+            ):
+                report = execute_cleanup(
+                    [item],
+                    IgnoreRules(),
+                    home=home,
+                    trash_resolver=lambda _: trash,
+                )
+
+            closed: list[bool] = []
+            for descriptor in opened:
+                try:
+                    os.fstat(descriptor)
+                except OSError:
+                    closed.append(True)
+                else:
+                    closed.append(False)
+                    original_close(descriptor)
+
+            outcome = report.outcomes[0]
+            self.assertTrue(rename_completed)
+            self.assertEqual(closed, [True, True])
+            self.assertEqual(outcome.status, "partial")
+            self.assertFalse(source.exists())
+            self.assertEqual((trash / source.name).read_bytes(), b"source")
+            self.assertIn("关闭目录描述符失败", outcome.message)
+            self.assertIn("原操作已经发生", outcome.message)
+
     def test_trash_directory_for_rejects_permissive_existing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
@@ -400,6 +485,36 @@ class CleanupExecutionTests(unittest.TestCase):
 
             with self.assertRaisesRegex(CleanupSafetyError, "私有权限"):
                 trash_directory_for(source, home=home, uid=os.getuid())
+
+    def test_trash_creation_race_never_chmods_symlink_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            source = home / "payload.bin"
+            target = home / "shared-target"
+            trash = home / ".Trash"
+            home.mkdir()
+            target.mkdir(mode=0o755)
+            source.write_bytes(b"source")
+            original_mkdir = os.mkdir
+            raced = False
+
+            def racing_mkdir(path, mode=0o777, *, dir_fd=None):
+                nonlocal raced
+                if not raced and Path(path).name == trash.name:
+                    raced = True
+                    trash.symlink_to(target, target_is_directory=True)
+                    raise FileExistsError("synthetic competing Trash creator")
+                return original_mkdir(path, mode, dir_fd=dir_fd)
+
+            with mock.patch(
+                "openclean.cleanup.os.mkdir",
+                side_effect=racing_mkdir,
+            ), self.assertRaises(CleanupSafetyError):
+                trash_directory_for(source, home=home, uid=os.getuid())
+
+            self.assertTrue(raced)
+            self.assertTrue(trash.is_symlink())
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
 
     def test_trash_name_created_after_check_is_never_overwritten(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

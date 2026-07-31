@@ -145,8 +145,10 @@ JSON 会包含绝对路径、项目名和本机目录结构。把输出附到 is
 包含 symlink ancestor 的路径会被拒绝；普通移动使用逐组件 `O_NOFOLLOW` 的目录 fd 和
 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`，原子拒绝覆盖 Trash 中并发出现
 的目标。Trash 目标还必须属于当前用户、使用私有权限，并在打开后复核目录身份。
-Trash 永久清空只处理最终审计快照，审计后新增项会保留。Docker prune 启动后的 timeout
-或非零退出会标记为 `partial`，因为 daemon 侧不可逆副作用可能已经发生。
+新建 Trash 会在可信父目录 fd 下相对创建，完成 no-follow identity 校验后才在 fd 上设置
+权限；rename 已完成但 fd 清理失败时会保留已移动事实并返回 `partial`。Trash 永久清空
+只处理最终审计快照，审计后新增项会保留。Docker prune 启动后的 timeout 或非零退出会
+标记为 `partial`，因为 daemon 侧不可逆副作用可能已经发生。
 
 `safe`、`confirm`、`critical` 是候选风险级别，不是数据价值保证。用户规则中的
 `ignore`/`protect` 是额外保护层，不能代替备份和人工审阅。安全政策见
@@ -191,7 +193,7 @@ make package
 make release-check
 ```
 
-当前本地基线通过 296 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
+当前本地基线通过 301 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
 checkout 实际运行结果为准。CI 在 macOS/Python 3.11 上执行 lint、测试、预览、构建、
 归档审计和隔离 wheel 安装，不会发布 PyPI、Homebrew 或 GitHub Release。
 
