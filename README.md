@@ -58,7 +58,7 @@ python3 -m venv .venv
 | `clean trash` | ✅ | ✅ | `confirm`；执行会永久清空内容 |
 | `purge [path]` | ✅ | ✅ 用户态 | 旧产物默认预选；普通项移到同卷 Trash |
 | `analyze [path]` | ✅ | ✅ 精确选择 | TUI/JSON/行式导航；不删除 Time Machine 快照 |
-| Docker daemon 容量 | ✅ | ✅ 受限 | 三类官方 prune 均需 identifier 精确选择；Volumes 拒绝 |
+| Docker daemon 容量 | ✅ | ✅ 受限 | 三类 prune 需精确选择和 scan-time target binding；Volumes 拒绝；真实 daemon 待验收 |
 | ApplicationLanguages | ✅ | ❌ | 只读审计；修改签名 app 风险过高 |
 | Broken startup items | ✅ | ✅ 用户项 | 系统项需要尚未实现的特权帮助器 |
 | Time Machine 本地快照 | ✅ | ❌ | 只显示数量/名称；公开列表不提供精确大小 |
@@ -99,7 +99,7 @@ macOS Terminal 的像素级截图。需要外部签名、真实 Docker daemon、
 ## CLI 概览
 
 ```text
-openclean scan [--domain DOMAIN] [--json]
+openclean scan [--domain DOMAIN] [--json [--redact-paths]]
 openclean clean [junk|dev|ai|trash] [selection options] [--yes]
 openclean purge [PATH] [selection options] [--yes]
 openclean analyze [PATH] [--top N] [--select PATH] [--yes]
@@ -108,6 +108,9 @@ openclean ignore {list,add,remove}
 openclean config [--analytics on|off]
 openclean cat [--json]
 ```
+
+所有提供 `--json` 的子命令同时提供可选 `--redact-paths`；该 flag 只影响最终 JSON
+序列化，不改变扫描、选择或执行目标。
 
 连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 全屏界面；JSON、管道、
 `--no-interactive` 或任何参数化选择 flag 使用非交互流程。`clean`/`purge --select`
@@ -122,8 +125,10 @@ JSON schema 当前为版本 `2`。扫描结果区分：
 - `requires_privilege_bytes`：需要尚未实现的特权能力；
 - `unsupported_bytes`：当前明确不支持执行的候选。
 
-JSON 会包含绝对路径、项目名和本机目录结构。把输出附到 issue、日志或工单前应先脱敏。
-参数、规则或路径错误在 `--json` 模式下也返回稳定的 JSON error envelope。
+默认 JSON 保留精确绝对路径，以支持 `--select`、恢复审计和配置 readback。分享输出时可
+显式增加 `--redact-paths`：同一文档内的路径会映射为稳定的 `path:0001` opaque ref，
+自由文本和解析前错误也会处理，并增加 `selection_replayable=false` 元数据。脱敏输出不能
+直接作为后续 selector；URL、snapshot name 和 process marker 不属于路径脱敏范围。
 
 ## 安全边界
 
@@ -147,8 +152,10 @@ Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`，原子拒绝覆盖 Tr
 的目标。Trash 目标还必须属于当前用户、使用私有权限，并在打开后复核目录身份。
 新建 Trash 会在可信父目录 fd 下相对创建，完成 no-follow identity 校验后才在 fd 上设置
 权限；rename 已完成但 fd 清理失败时会保留已移动事实并返回 `partial`。Trash 永久清空
-只处理最终审计快照，审计后新增项会保留。Docker prune 启动后的 timeout 或非零退出会
-标记为 `partial`，因为 daemon 侧不可逆副作用可能已经发生。
+只处理最终审计快照，审计后新增项会保留。Docker 候选内部绑定扫描时的 context/host、
+endpoint TLS mode 和 Engine ID；prune 前即时复核发现不一致时会 fail-closed 并要求重扫。
+prune 启动后的 timeout 或非零退出仍标记为 `partial`，因为 daemon 侧不可逆副作用可能
+已经发生。
 
 `safe`、`confirm`、`critical` 是候选风险级别，不是数据价值保证。用户规则中的
 `ignore`/`protect` 是额外保护层，不能代替备份和人工审阅。安全政策见
@@ -193,7 +200,7 @@ make package
 make release-check
 ```
 
-当前本地基线通过 301 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
+当前本地基线通过 316 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
 checkout 实际运行结果为准。CI 在 macOS/Python 3.11 上执行 lint、测试、预览、构建、
 归档审计和隔离 wheel 安装，不会发布 PyPI、Homebrew 或 GitHub Release。
 

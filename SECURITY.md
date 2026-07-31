@@ -35,7 +35,11 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
   指定目标，不批量扩大选择范围。`--select` 与 `--all` 被拒绝组合。
 - 用户态文件通常移动到同卷 Trash；清空 Trash 和 Docker prune 是永久操作。
 - Docker Build Cache、Images、Containers 均要求 identifier 精确选择，不参与默认或批量
-  选择；当前仍不宣称扫描与执行已经绑定同一个 daemon/context。
+  选择。actionable 候选还必须携带内部 scan-time binding；容量读取和 prune 使用明确
+  context 或 effective host，执行前重新复核 endpoint、`SkipTLSVerify` 和 Engine ID。
+  binding 缺失、畸形，或执行前即时复核发现不一致时均 fail-closed。
+- `--redact-paths` 只在最终 JSON 序列化边界替换绝对路径和相关自由文本；默认精确路径
+  合同保持不变，脱敏输出明确标记为不可用于 selector replay。
 - KnowledgeBase 保护闸在扫描和执行前重复运行。
 - 扫描和执行拒绝 symlink 目标与 symlink ancestor，并复核 device/inode/owner/mount。
 - fd-relative `O_NOFOLLOW` 和 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`
@@ -65,11 +69,14 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 
 - 当前没有 SMAppService/XPC helper，不能清理需要 admin helper 的系统项。
 - Full Disk Access、admin helper 和 SIP 是不同能力；本项目不把其中一个当成另一个。
+- Docker 标准 CLI 的 identity probe 与 prune 是不同进程；显式 target 和即时复核会缩小
+  context metadata TOCTOU 窗口，但不宣称具有同一 API connection 的原子绑定保证。
 - Python 用户态进程无法对同 UID 恶意进程提供绝对竞态隔离。
 - `SF_DATALESS` 和 zero-block 启发式不能识别所有已经 materialized 的 cloud-synced 文件；
   当前只承诺 dataless/疑似占位保护，不承诺完整云同步来源识别。
 - `complete=true` 只表示没有 blocking issue；调用方还应检查所有 `issues`。
-- JSON 输出含完整绝对路径，可能暴露用户名、项目名和目录结构。
+- 默认 JSON 输出含完整绝对路径，可能暴露用户名、项目名和目录结构；分享时应显式使用
+  `--redact-paths`，并注意 URL、snapshot name 和 process marker 不属于该 profile。
 - Docker prune、Trash 永久清空和未来任何特权操作都需要独立风险评估。
 
 ## 安全测试要求

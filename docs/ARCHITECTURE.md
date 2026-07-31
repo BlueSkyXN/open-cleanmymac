@@ -39,6 +39,7 @@ flowchart TD
 | 模块 | 职责 | 不负责 |
 |---|---|---|
 | `cli.py` | 参数契约、命令编排、文本/JSON 输出、退出码 | 文件删除细节 |
+| `redaction.py` | JSON 单文档 opaque path refs 与自由文本路径收口 | 改写扫描/选择/执行对象 |
 | `models.py` | `Item`、身份快照、issue 和聚合指标 | 扫描策略 |
 | `scanpoints.py` | 五域静态扫描点和安全元数据 | 文件系统访问 |
 | `engine.py` | 根展开、并发扫描、计量、重叠归属、项目发现 | 用户交互 |
@@ -49,7 +50,7 @@ flowchart TD
 | `knowledge_update.py` | HTTPS、OpenSSL 验签、跨进程防回滚、公钥钉扎、原子安装 | 内置服务 URL/公钥 |
 | `cleanup.py` | 选择、预检、原子 no-replace Trash 操作、审计快照、执行报告 | 特权提升 |
 | `macos.py` | Trash、Darwin cache、mount、Time Machine 发现和路径边界 | 通用业务编排 |
-| `docker.py` | 只读容量解析和三条固定 prune 映射 | 任意 Docker 命令或 volume 删除 |
+| `docker.py` | 只读容量、target binding 和三条固定 prune 映射 | 任意 Docker 命令或 volume 删除 |
 | `tui.py` | clean/purge 分组复选与确认 | 直接执行文件操作 |
 | `space_tui.py` | analyze 导航、跨层选择、Finder reveal | 绕过 `cleanup.py` |
 
@@ -159,9 +160,14 @@ stateDiagram-v2
 
 ### Docker
 
-扫描只调用 `docker system df --format json`。执行器不接受用户提供的任意命令，只能映射
-到代码内固定的 builder/image/container prune；Local Volumes 始终不可执行。Docker
-prune 不经过 Trash；启动后的 timeout 或非零退出按副作用未知的 `partial` 报告。
+扫描先解析当前 context 与 endpoint，并用明确 `--context` 或 `--host` 取得 Engine ID 和
+`docker system df --format json`；内部 canonical binding 随 actionable Item 传到 cleanup，
+但不进入 JSON 或日志。prune 前重新 inspect endpoint/TLS mode 和 Engine ID，即时复核发现
+不一致时拒绝执行。执行器仍只映射固定 builder/image/container prune，Local Volumes
+始终不可执行；启动后的 timeout 或非零退出按副作用未知的 `partial` 报告。
+
+probe 与 prune 是多个 Docker CLI 进程，不能提供同一 Engine API connection 的原子
+precondition；当前实现是 fail-closed 的即时复核，真实 daemon/context/TLS 仍需单独验收。
 
 ### 托管知识库
 

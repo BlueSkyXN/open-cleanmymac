@@ -18,13 +18,28 @@ from openclean.cleanup import (
     trash_directory_for,
     with_cleanup_selection,
 )
-from openclean.docker import DockerPruneError, DockerPruneResult
+from openclean.docker import (
+    DockerPruneError,
+    DockerPruneResult,
+    DockerTargetIdentity,
+    encode_docker_resource_binding,
+)
 from openclean.engine import IgnoreRules, scan_points
 from openclean.knowledge_base import KnowledgeBase
 from openclean.models import FileFacts, Item, ScanResult
 from openclean.scanpoints import ScanPoint
 
 TEST_SF_DATALESS = 0x40000000
+DOCKER_BINDING = encode_docker_resource_binding(
+    DockerTargetIdentity(
+        context_name="desktop-linux",
+        target_kind="context",
+        target_value="desktop-linux",
+        endpoint_host="unix:///Users/example/.docker/run/docker.sock",
+        skip_tls_verify=False,
+        daemon_id="DAEMON:A",
+    )
+)
 
 
 def _with_dataless_flag(stat_result):
@@ -1274,6 +1289,7 @@ class CleanupExecutionTests(unittest.TestCase):
             domain="developer",
             resource_kind="docker",
             identifier="docker:build-cache",
+            resource_binding=DOCKER_BINDING,
         )
 
         with mock.patch(
@@ -1288,10 +1304,34 @@ class CleanupExecutionTests(unittest.TestCase):
         self.assertEqual(report.moved_bytes, 0)
         prune.assert_called_once_with(
             "docker:build-cache",
+            resource_binding=DOCKER_BINDING,
             docker_path=None,
             runner=None,
             finder=None,
         )
+
+    def test_docker_candidate_without_scan_binding_is_blocked_before_prune(
+        self,
+    ) -> None:
+        item = Item(
+            path=None,
+            size=2_000_000,
+            category="Docker 构建缓存",
+            preselected=True,
+            domain="developer",
+            resource_kind="docker",
+            identifier="docker:build-cache",
+        )
+
+        with mock.patch(
+            "openclean.cleanup.prune_docker_resource"
+        ) as prune:
+            report = execute_cleanup([item], IgnoreRules())
+
+        self.assertFalse(report.complete)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertIn("binding", report.outcomes[0].message)
+        prune.assert_not_called()
 
     def test_docker_started_but_unconfirmed_prune_is_partial(self) -> None:
         item = Item(
@@ -1302,6 +1342,7 @@ class CleanupExecutionTests(unittest.TestCase):
             domain="developer",
             resource_kind="docker",
             identifier="docker:build-cache",
+            resource_binding=DOCKER_BINDING,
         )
 
         with mock.patch(

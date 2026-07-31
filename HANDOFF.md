@@ -36,9 +36,12 @@ make release-check
 - System Junk 精细候选、Darwin cache、broken startup items；
 - ApplicationLanguages 保守只读审计；
 - 任务 DAG、加权进度、运行中进程保护；
-- JSON schema v2、机器错误 envelope、标准 Python 包装和 release archive audit。
+- JSON schema v2、机器错误 envelope、显式 `--redact-paths` 单文档脱敏、标准 Python 包装
+  和 release archive audit；
+- Docker scan-time context/host、endpoint 和 Engine ID binding；执行前即时复核发现不一致会
+  fail-closed，多 CLI 进程间仍有已记录的 TOCTOU 边界。
 
-最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，301 个单元测试通过，
+最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，316 个单元测试通过，
 19/19 隔离预览通过且 `real_user_data_modified=false`。这是本地快照；远端状态必须读取
 GitHub exact commit 的 Actions 结果后另行确认。
 
@@ -51,7 +54,7 @@ GitHub exact commit 的 Actions 结果后另行确认。
 | 正式知识库 channel | 客户端完成，服务端未配置 | 项目还没有正式 URL/signing key/public key |
 | ApplicationLanguages 删除 | 永久锁定于当前版本 | 可能破坏签名 app；通用 executor 不适用 |
 | universal binary thinning | 未实现 | 签名、恢复和兼容性风险 |
-| Docker 真实 daemon | 待单独验收 | prune 不可恢复，preview 不连接真实 daemon |
+| Docker 真实 daemon | binding 客户端完成，待单独验收 | prune 不可恢复，preview 不连接真实 daemon；多 CLI 进程不是原子 API 事务 |
 
 不能把这些状态改写成“已完成”。正确结果是显式拒绝、结构化 guard 或 external prerequisite。
 

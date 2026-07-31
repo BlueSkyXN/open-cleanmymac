@@ -16,6 +16,8 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
   无法解析，也会报告“prune 已完成、释放量未知”，不再把已发生的操作伪报为失败。
 - Docker prune 启动后的 timeout 或非零退出现在返回 `partial`，明确说明 daemon 侧删除
   可能已经发生且释放量未知；CLI 启动前失败仍保持普通 `failed`。
+- 所有 JSON 子命令新增显式 `--redact-paths` profile；默认 schema v2 精确路径保持兼容，
+  脱敏输出使用单文档 opaque refs，并处理 message/note 与 argparse 解析前错误。
 - 扫描任务异常或取消不再被进度模型伪装为成功的 `100% complete` 终态；TTY renderer
   对成功、失败和取消的整体终态统一绕过节流，快速结束也会显示最终状态。
 - ApplicationLanguages 只读候选统一计入 unsupported 容量，不再把签名应用修改误分类为
@@ -37,6 +39,10 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
   核对资产；能力矩阵和辅助文档导航同步优化。
 
 ### Security
+
+- Docker actionable 候选现在携带不序列化的 scan-time target binding；容量读取和 prune
+  使用明确 context/effective host，执行前复核 endpoint TLS mode 与 Engine ID。缺失、
+  畸形或即时复核发现不一致会在破坏性命令启动前拒绝并要求重新扫描。
 
 - 普通 Trash 移动改用 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`，目标名
   发生竞态时原子拒绝覆盖；API 或文件系统能力不足时 fail-closed。

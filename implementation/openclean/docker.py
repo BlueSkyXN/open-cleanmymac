@@ -1,8 +1,9 @@
 """Docker daemon 磁盘占用扫描。
 
-只调用 Docker 官方 CLI 的只读 ``docker system df --format json``，不读取或
-猜测 Docker Desktop 的内部存储路径。返回值中的 ``Item.size`` 表示 daemon
-报告的可回收估算，而不是资源总占用。
+通过 Docker 官方 CLI 的只读 context inspect、daemon info 和
+``docker system df --format json`` 绑定扫描目标，不读取或猜测 Docker Desktop
+的内部存储路径。返回值中的 ``Item.size`` 表示 daemon 报告的可回收估算，
+而不是资源总占用。
 """
 from __future__ import annotations
 
@@ -11,14 +12,20 @@ import re
 import shutil
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 
 from .models import Item, ScanIssue, ScanResult
 
 DOCKER_SCAN_TASK = "docker-system-df"
+DOCKER_TARGET_TASK = "docker-target-identity"
 DEFAULT_DOCKER_TIMEOUT = 20.0
 DEFAULT_DOCKER_PRUNE_TIMEOUT = 60.0
+DOCKER_BINDING_VERSION = 1
+
+
+class DockerTargetError(RuntimeError):
+    pass
 
 
 class DockerPruneError(RuntimeError):
@@ -36,6 +43,107 @@ class DockerPruneError(RuntimeError):
 class DockerPruneResult:
     reclaimed_bytes: int
     message: str
+
+
+@dataclass(frozen=True)
+class DockerTargetIdentity:
+    context_name: str
+    target_kind: str
+    target_value: str
+    endpoint_host: str
+    skip_tls_verify: bool
+    daemon_id: str
+
+    def __post_init__(self) -> None:
+        _validated_target_text(self.context_name, "context_name", 256)
+        _validated_target_text(self.target_value, "target.value", 2048)
+        _validated_target_text(self.endpoint_host, "endpoint_host", 2048)
+        _validated_target_text(self.daemon_id, "daemon_id", 512)
+        if (
+            not isinstance(self.target_kind, str)
+            or self.target_kind not in {"context", "host"}
+        ):
+            raise DockerTargetError("Docker binding target.kind 无效")
+        if type(self.skip_tls_verify) is not bool:
+            raise DockerTargetError("Docker binding skip_tls_verify 无效")
+        if self.target_kind == "host":
+            if self.context_name != "default":
+                raise DockerTargetError("Docker host binding 必须使用 default context")
+            if self.target_value != self.endpoint_host:
+                raise DockerTargetError("Docker host binding 与 endpoint 不一致")
+        elif self.target_value != self.context_name:
+            raise DockerTargetError("Docker context binding 与 context_name 不一致")
+
+    @property
+    def command_prefix(self) -> tuple[str, str]:
+        option = "--context" if self.target_kind == "context" else "--host"
+        return option, self.target_value
+
+
+def _validated_target_text(value: object, field: str, maximum: int) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise DockerTargetError(f"Docker binding {field} 无效")
+    if len(value) > maximum or any(ord(char) < 32 for char in value):
+        raise DockerTargetError(f"Docker binding {field} 无效")
+    return value
+
+
+def encode_docker_resource_binding(target: DockerTargetIdentity) -> str:
+    return json.dumps(
+        {
+            "v": DOCKER_BINDING_VERSION,
+            "kind": "docker",
+            "context_name": target.context_name,
+            "target": {
+                "kind": target.target_kind,
+                "value": target.target_value,
+            },
+            "endpoint_host": target.endpoint_host,
+            "skip_tls_verify": target.skip_tls_verify,
+            "daemon_id": target.daemon_id,
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def parse_docker_resource_binding(binding: str) -> DockerTargetIdentity:
+    if not binding:
+        raise DockerTargetError("Docker 候选缺少扫描时 resource binding")
+    try:
+        payload = json.loads(binding)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise DockerTargetError("Docker 候选 resource binding 无效") from exc
+    expected_keys = {
+        "v",
+        "kind",
+        "context_name",
+        "target",
+        "endpoint_host",
+        "skip_tls_verify",
+        "daemon_id",
+    }
+    if not isinstance(payload, dict) or set(payload) != expected_keys:
+        raise DockerTargetError("Docker 候选 resource binding 字段无效")
+    if type(payload["v"]) is not int or payload["v"] != DOCKER_BINDING_VERSION:
+        raise DockerTargetError("Docker 候选 resource binding 版本无效")
+    if payload["kind"] != "docker":
+        raise DockerTargetError("Docker 候选 resource binding 类型无效")
+    target = payload["target"]
+    if not isinstance(target, dict) or set(target) != {"kind", "value"}:
+        raise DockerTargetError("Docker 候选 resource binding target 无效")
+    parsed = DockerTargetIdentity(
+        context_name=payload["context_name"],
+        target_kind=target["kind"],
+        target_value=target["value"],
+        endpoint_host=payload["endpoint_host"],
+        skip_tls_verify=payload["skip_tls_verify"],
+        daemon_id=payload["daemon_id"],
+    )
+    if binding != encode_docker_resource_binding(parsed):
+        raise DockerTargetError("Docker 候选 resource binding 非规范格式")
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -130,15 +238,6 @@ def _parse_count(value: object, field: str) -> int:
     return parsed
 
 
-def _bounded_message(value: object, fallback: str) -> str:
-    if isinstance(value, bytes):
-        message = value.decode("utf-8", errors="replace")
-    else:
-        message = str(value or "")
-    message = " ".join(message.strip().split())
-    return (message or fallback)[:500]
-
-
 def _invalid_output_issue(message: str) -> ScanIssue:
     return ScanIssue(
         code="tool_output_invalid",
@@ -147,7 +246,143 @@ def _invalid_output_issue(message: str) -> ScanIssue:
     )
 
 
-def _item_from_row(row: object) -> Item | None:
+def _run_target_probe_command(
+    command: list[str],
+    *,
+    stage: str,
+    timeout: float,
+    runner: Callable[..., subprocess.CompletedProcess[str]],
+) -> str:
+    try:
+        completed = runner(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DockerTargetError(
+            f"Docker target {stage} 在 {timeout:g} 秒内未完成"
+        ) from exc
+    except OSError as exc:
+        raise DockerTargetError(f"无法执行 Docker target {stage}") from exc
+    if completed.returncode != 0:
+        raise DockerTargetError(
+            f"Docker target {stage} 失败，退出码 {completed.returncode}"
+        )
+    return completed.stdout
+
+
+def _current_context_name(
+    binary: str,
+    *,
+    timeout: float,
+    runner: Callable[..., subprocess.CompletedProcess[str]],
+) -> str:
+    stdout = _run_target_probe_command(
+        [binary, "context", "show"],
+        stage="context show",
+        timeout=timeout,
+        runner=runner,
+    )
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise DockerTargetError("Docker target context show 输出无效")
+    return _validated_target_text(lines[0], "context_name", 256)
+
+
+def _inspect_context_endpoint(
+    binary: str,
+    context_name: str,
+    *,
+    timeout: float,
+    runner: Callable[..., subprocess.CompletedProcess[str]],
+) -> tuple[str, bool]:
+    stdout = _run_target_probe_command(
+        [binary, "context", "inspect", context_name],
+        stage="context inspect",
+        timeout=timeout,
+        runner=runner,
+    )
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise DockerTargetError("Docker target context inspect 输出无效") from exc
+    if not isinstance(payload, list) or len(payload) != 1:
+        raise DockerTargetError("Docker target context inspect 输出无效")
+    context = payload[0]
+    if not isinstance(context, dict) or context.get("Name") != context_name:
+        raise DockerTargetError("Docker target context identity 无效")
+    endpoints = context.get("Endpoints")
+    docker_endpoint = (
+        endpoints.get("docker") if isinstance(endpoints, dict) else None
+    )
+    if not isinstance(docker_endpoint, dict):
+        raise DockerTargetError("Docker target endpoint 缺失")
+    host = _validated_target_text(
+        docker_endpoint.get("Host"), "endpoint_host", 2048
+    )
+    skip_tls_verify = docker_endpoint.get("SkipTLSVerify")
+    if type(skip_tls_verify) is not bool:
+        raise DockerTargetError("Docker target SkipTLSVerify 无效")
+    return host, skip_tls_verify
+
+
+def probe_docker_target(
+    binary: str,
+    *,
+    timeout: float,
+    runner: Callable[..., subprocess.CompletedProcess[str]],
+    expected: DockerTargetIdentity | None = None,
+) -> DockerTargetIdentity:
+    """只读解析有效 Docker target，并取得 Engine ID。"""
+    context_name = (
+        expected.context_name
+        if expected is not None
+        else _current_context_name(binary, timeout=timeout, runner=runner)
+    )
+    endpoint_host, skip_tls_verify = _inspect_context_endpoint(
+        binary,
+        context_name,
+        timeout=timeout,
+        runner=runner,
+    )
+    target_kind = "host" if context_name == "default" else "context"
+    target_value = endpoint_host if target_kind == "host" else context_name
+    option = "--host" if target_kind == "host" else "--context"
+    stdout = _run_target_probe_command(
+        [
+            binary,
+            option,
+            target_value,
+            "info",
+            "--format",
+            "{{json .ID}}",
+        ],
+        stage="daemon info",
+        timeout=timeout,
+        runner=runner,
+    )
+    try:
+        daemon_id = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise DockerTargetError("Docker target daemon ID 输出无效") from exc
+    return DockerTargetIdentity(
+        context_name=context_name,
+        target_kind=target_kind,
+        target_value=target_value,
+        endpoint_host=endpoint_host,
+        skip_tls_verify=skip_tls_verify,
+        daemon_id=daemon_id,
+    )
+
+
+def _item_from_row(
+    row: object,
+    *,
+    resource_binding: str = "",
+) -> Item | None:
     if not isinstance(row, dict):
         raise TypeError("JSON 行必须是对象")
     resource_type = row.get("Type")
@@ -178,6 +413,8 @@ def _item_from_row(row: object) -> Item | None:
         f"{policy.note}；共 {total_count} 项，活跃 {active_count} 项；"
         "容量来自 docker system df 的可回收估算"
     )
+    prune_supported = policy.prune_command is not None
+    binding_verified = bool(resource_binding)
     return Item(
         path=None,
         size=reclaimable_size,
@@ -186,18 +423,21 @@ def _item_from_row(row: object) -> Item | None:
         note=note,
         preselected=False,
         domain="developer",
-        requires_explicit_selection=policy.prune_command is not None,
+        requires_explicit_selection=prune_supported,
         resource_kind="docker",
         identifier=policy.identifier,
         resource_total_size=total_size,
         total_count=total_count,
         active_count=active_count,
-        actionable=policy.prune_command is not None,
+        actionable=prune_supported and binding_verified,
         action_block_reason=(
             "Docker 本地卷或未知资源不支持自动清理"
-            if policy.prune_command is None
+            if not prune_supported
+            else "Docker target 身份无法验证；请重新扫描后再执行"
+            if not binding_verified
             else ""
         ),
+        resource_binding=resource_binding,
     )
 
 
@@ -226,6 +466,7 @@ _RECLAIMED_PATTERN = re.compile(
 def prune_docker_resource(
     identifier: str,
     *,
+    resource_binding: str = "",
     docker_path: str | None = None,
     timeout: float = DEFAULT_DOCKER_PRUNE_TIMEOUT,
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
@@ -235,13 +476,36 @@ def prune_docker_resource(
     policy = _policy_for_identifier(identifier)
     if policy is None or policy.prune_command is None:
         raise DockerPruneError(f"不支持自动清理 Docker 资源：{identifier}")
+    try:
+        expected_target = parse_docker_resource_binding(resource_binding)
+    except DockerTargetError as exc:
+        raise DockerPruneError(str(exc)) from exc
 
     find_binary = finder or shutil.which
     binary = docker_path if docker_path is not None else find_binary("docker")
     if binary is None:
         raise DockerPruneError("未找到 Docker CLI")
-    command = [binary, *policy.prune_command]
     run = runner or subprocess.run
+    try:
+        current_target = probe_docker_target(
+            binary,
+            timeout=timeout,
+            runner=run,
+            expected=expected_target,
+        )
+    except DockerTargetError as exc:
+        raise DockerPruneError(
+            "无法复核 Docker target；请重新扫描后再执行"
+        ) from exc
+    if current_target != expected_target:
+        raise DockerPruneError(
+            "Docker target 身份已变化；请重新扫描后再执行"
+        )
+    command = [
+        binary,
+        *expected_target.command_prefix,
+        *policy.prune_command,
+    ]
     try:
         completed = run(
             command,
@@ -252,22 +516,14 @@ def prune_docker_resource(
         )
     except subprocess.TimeoutExpired as exc:
         raise DockerPruneError(
-            _bounded_message(
-                exc.stderr,
-                f"Docker prune 在 {timeout:g} 秒内未完成",
-            ),
+            f"Docker prune 在 {timeout:g} 秒内未完成",
             side_effect_unknown=True,
         ) from exc
     except OSError as exc:
-        raise DockerPruneError(
-            _bounded_message(exc, "无法启动 Docker CLI")
-        ) from exc
+        raise DockerPruneError("无法启动 Docker CLI") from exc
     if completed.returncode != 0:
         raise DockerPruneError(
-            _bounded_message(
-                completed.stderr,
-                f"Docker prune 退出码 {completed.returncode}",
-            ),
+            f"Docker prune 失败，退出码 {completed.returncode}",
             side_effect_unknown=True,
         )
 
@@ -279,13 +535,10 @@ def prune_docker_resource(
         )
     try:
         reclaimed = parse_docker_size(match.group(1))
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError):
         return DockerPruneResult(
             reclaimed_bytes=0,
-            message=(
-                "Docker 官方 prune 已完成，但释放容量输出无法解析："
-                f"{_bounded_message(exc, '未知格式')}"
-            ),
+            message="Docker 官方 prune 已完成，但释放容量输出无法解析",
         )
     return DockerPruneResult(
         reclaimed_bytes=reclaimed,
@@ -308,7 +561,20 @@ def scan_docker_resources(
         return result
 
     run = runner or subprocess.run
-    command = [binary, "system", "df", "--format", "json"]
+    target: DockerTargetIdentity | None = None
+    target_error: DockerTargetError | None = None
+    try:
+        target = probe_docker_target(
+            binary,
+            timeout=timeout,
+            runner=run,
+        )
+    except DockerTargetError as exc:
+        target_error = exc
+    command = [binary]
+    if target is not None:
+        command.extend(target.command_prefix)
+    command.extend(("system", "df", "--format", "json"))
     try:
         completed = run(
             command,
@@ -317,23 +583,20 @@ def scan_docker_resources(
             check=False,
             timeout=timeout,
         )
-    except subprocess.TimeoutExpired as exc:
+    except subprocess.TimeoutExpired:
         result.issues.append(
             ScanIssue(
                 code="tool_unavailable",
-                message=_bounded_message(
-                    exc.stderr,
-                    f"Docker daemon 在 {timeout:g} 秒内未响应",
-                ),
+                message=f"Docker daemon 在 {timeout:g} 秒内未响应",
                 task=DOCKER_SCAN_TASK,
             )
         )
         return result
-    except OSError as exc:
+    except OSError:
         result.issues.append(
             ScanIssue(
                 code="tool_unavailable",
-                message=_bounded_message(exc, "无法启动 Docker CLI"),
+                message="无法启动 Docker CLI",
                 task=DOCKER_SCAN_TASK,
             )
         )
@@ -343,10 +606,7 @@ def scan_docker_resources(
         result.issues.append(
             ScanIssue(
                 code="tool_unavailable",
-                message=_bounded_message(
-                    completed.stderr,
-                    f"Docker CLI 退出码 {completed.returncode}",
-                ),
+                message=f"Docker CLI 执行失败，退出码 {completed.returncode}",
                 task=DOCKER_SCAN_TASK,
             )
         )
@@ -357,10 +617,13 @@ def scan_docker_resources(
         result.issues.append(_invalid_output_issue("Docker CLI 返回了空输出"))
         return result
 
+    resource_binding = (
+        encode_docker_resource_binding(target) if target is not None else ""
+    )
     for line_number, line in enumerate(lines, start=1):
         try:
             row = json.loads(line)
-            item = _item_from_row(row)
+            item = _item_from_row(row, resource_binding=resource_binding)
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             result.issues.append(
                 _invalid_output_issue(f"第 {line_number} 行：{exc}")
@@ -368,4 +631,50 @@ def scan_docker_resources(
             continue
         if item is not None:
             result.items.append(item)
+    if target_error is not None:
+        result.issues.append(
+            ScanIssue(
+                code="docker_target_unverified",
+                message=(
+                    "Docker 容量可读取，但 target 身份无法验证；"
+                    "相关候选保持不可执行"
+                ),
+                task=DOCKER_TARGET_TASK,
+            )
+        )
+        return result
+    assert target is not None
+    try:
+        final_target = probe_docker_target(
+            binary,
+            timeout=timeout,
+            runner=run,
+            expected=target,
+        )
+    except DockerTargetError:
+        final_target = None
+    if final_target != target:
+        result.items = [
+            replace(
+                item,
+                actionable=False,
+                action_block_reason=(
+                    "Docker target 在扫描期间发生变化；请重新扫描"
+                    if docker_prune_supported(item.identifier)
+                    else item.action_block_reason
+                ),
+                resource_binding="",
+            )
+            for item in result.items
+        ]
+        result.issues.append(
+            ScanIssue(
+                code="docker_binding_changed",
+                message=(
+                    "Docker target 在容量读取期间发生变化；"
+                    "相关候选保持不可执行"
+                ),
+                task=DOCKER_TARGET_TASK,
+            )
+        )
     return result

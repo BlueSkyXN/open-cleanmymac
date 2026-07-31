@@ -18,7 +18,9 @@ from pathlib import Path
 
 from .docker import (
     DockerPruneError,
+    DockerTargetError,
     docker_prune_supported,
+    parse_docker_resource_binding,
     prune_docker_resource,
 )
 from .macos import (
@@ -463,6 +465,10 @@ def _audit_item(
             raise CleanupSafetyError(
                 f"不支持自动清理 Docker 资源：{item.identifier}"
             )
+        try:
+            parse_docker_resource_binding(item.resource_binding)
+        except DockerTargetError as exc:
+            raise CleanupSafetyError(str(exc)) from exc
         return None
     if item.running_process_markers:
         if process_error:
@@ -1128,6 +1134,7 @@ def _prune_docker_item(
 ) -> CleanupOutcome:
     result = prune_docker_resource(
         item.identifier,
+        resource_binding=item.resource_binding,
         docker_path=docker_path,
         runner=docker_runner,
         finder=docker_finder,

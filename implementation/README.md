@@ -128,8 +128,10 @@ TUI 的选择只是选择；实际执行仍要求启动命令带 `--yes`，并�
 }
 ```
 
-JSON 包含绝对路径，进入日志或 issue 前必须脱敏。`complete=true` 只表示没有 blocking
-issue；仍应检查 `issues` 中的安全跳过和动态来源提示。
+默认 JSON 包含精确绝对路径。所有 JSON 子命令可显式增加 `--redact-paths`，在最终
+序列化阶段把同一文档内路径映射成稳定 opaque ref，并处理 message/note 和解析前错误；
+输出会声明 `selection_replayable=false`，不能直接用于后续 `--select`。`complete=true`
+只表示没有 blocking issue；仍应检查 `issues` 中的安全跳过和动态来源提示。
 
 ## 自建规则
 
@@ -199,6 +201,8 @@ best effort，不会把已经安装的 sequence 报成失败。托管 `knowledge
 - Trash rename 后的源/目标目录 fd 独立关闭；后置 close 失败保留已移动事实并返回
   `partial`；
 - Trash 永久清空只删除最终审计快照；审计后新增项保留，部分删除返回 `partial`；
+- Docker 候选携带不进入 JSON 的 scan-time resource binding；执行前重新复核明确
+  context/host、endpoint TLS mode 和 Engine ID，即时复核发现不一致时拒绝执行；
 - Docker prune 启动后的 timeout/非零退出返回副作用未知的 `partial`；
 - 任一批量预检失败时整个批次不启动。
 
@@ -252,5 +256,5 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 
 剩余工作见 [TODO.md](TODO.md)。
 
-当前本地验证基线为 301 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+当前本地验证基线为 316 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
 checkout 的 `make check` 输出为准。

@@ -39,6 +39,7 @@ from .knowledge_update import KnowledgeUpdateError, update_knowledge_base
 from .models import Item, ScanResult, normalize_path
 from .navigator import run_space_browser
 from .progress import TerminalProgressRenderer
+from .redaction import redact_json_payload
 from .scanpoints import DOMAINS
 from .space_tui import SpaceTUIUnavailable, review_space
 from .tui import ReviewGroup, TUIUnavailable, review_cleanup
@@ -72,6 +73,10 @@ class CliUsageError(Exception):
 class CliArgumentParser(argparse.ArgumentParser):
     """保留 argparse help 行为，但不让用法错误提前终止进程。"""
 
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs.setdefault("allow_abbrev", False)
+        super().__init__(*args, **kwargs)
+
     def error(self, message: str) -> None:
         raise CliUsageError(message, self.format_usage())
 
@@ -104,8 +109,10 @@ def _print_json_error(
     message: str,
     *,
     exit_code: int,
+    redact_paths: bool = False,
+    path_seeds: tuple[str, ...] = (),
 ) -> None:
-    print(json.dumps({
+    _print_json({
         "schema_version": CLI_SCHEMA_VERSION,
         "command": command,
         "status": "error",
@@ -115,7 +122,21 @@ def _print_json_error(
             "code": code,
             "message": message,
         },
-    }, ensure_ascii=False, indent=2))
+    }, redact_paths=redact_paths, path_seeds=path_seeds)
+
+
+def _print_json(
+    payload: dict[str, object],
+    *,
+    redact_paths: bool = False,
+    path_seeds: tuple[str, ...] = (),
+) -> None:
+    output = (
+        redact_json_payload(payload, path_seeds=path_seeds)
+        if redact_paths
+        else payload
+    )
+    print(json.dumps(output, ensure_ascii=False, indent=2))
 
 
 def _fail(
@@ -132,6 +153,8 @@ def _fail(
             code,
             message,
             exit_code=exit_code,
+            redact_paths=getattr(args, "redact_paths", False),
+            path_seeds=getattr(args, "_raw_argv", ()),
         )
     else:
         print(message, file=sys.stderr)
@@ -163,6 +186,18 @@ def _add_rule_options(parser: argparse.ArgumentParser) -> None:
         ),
     )
     _add_rules_path_option(parser)
+
+
+def _add_json_output_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--json", action="store_true", help="输出 JSON")
+    parser.add_argument(
+        "--redact-paths",
+        action="store_true",
+        help=(
+            "仅与 --json 配合；把绝对路径替换为单份文档内的 opaque ref，"
+            "输出不能直接用于后续 --select"
+        ),
+    )
 
 
 def _add_rules_path_option(parser: argparse.ArgumentParser) -> None:
@@ -549,9 +584,12 @@ def _print_report(
     result: ScanResult,
     as_json: bool,
     requested_domains: list[str],
+    *,
+    redact_paths: bool = False,
+    path_seeds: tuple[str, ...] = (),
 ) -> None:
     if as_json:
-        print(json.dumps({
+        _print_json({
             "schema_version": CLI_SCHEMA_VERSION,
             "command": "scan",
             "mode": "report",
@@ -570,7 +608,7 @@ def _print_report(
                 for i in sorted(result.items, key=lambda x: -x.size)
             ],
             "issues": [_issue_payload(issue) for issue in result.issues],
-        }, ensure_ascii=False, indent=2))
+        }, redact_paths=redact_paths, path_seeds=path_seeds)
         return
 
     cats = result.by_category()
@@ -595,6 +633,9 @@ def _print_purge_report(
     result: ScanResult,
     as_json: bool,
     cleanup: CleanupReport | None = None,
+    *,
+    redact_paths: bool = False,
+    path_seeds: tuple[str, ...] = (),
 ) -> None:
     projects = result.by_project()
     if as_json:
@@ -612,7 +653,7 @@ def _print_purge_report(
                 ),
                 "artifacts": [_item_payload(item) for item in items],
             })
-        print(json.dumps({
+        _print_json({
             "schema_version": CLI_SCHEMA_VERSION,
             "command": "purge",
             "mode": "result" if cleanup is not None else "preview",
@@ -632,7 +673,7 @@ def _print_purge_report(
             "cleanup": (
                 _cleanup_payload(cleanup) if cleanup is not None else None
             ),
-        }, ensure_ascii=False, indent=2))
+        }, redact_paths=redact_paths, path_seeds=path_seeds)
         return
 
     if not projects:
@@ -679,6 +720,9 @@ def _print_clean_report(
     as_json: bool,
     requested_category: str | None,
     cleanup: CleanupReport | None = None,
+    *,
+    redact_paths: bool = False,
+    path_seeds: tuple[str, ...] = (),
 ) -> None:
     grouped = result.by_domain()
     domains = [
@@ -702,7 +746,7 @@ def _print_clean_report(
                 ),
                 "items": [_item_payload(item) for item in items],
             })
-        print(json.dumps({
+        _print_json({
             "schema_version": CLI_SCHEMA_VERSION,
             "command": "clean",
             "category": requested_category or "all",
@@ -723,7 +767,7 @@ def _print_clean_report(
             "cleanup": (
                 _cleanup_payload(cleanup) if cleanup is not None else None
             ),
-        }, ensure_ascii=False, indent=2))
+        }, redact_paths=redact_paths, path_seeds=path_seeds)
         return
 
     if not domains:
@@ -771,6 +815,9 @@ def _print_analyze_report(
     top: int,
     selected: list[Item] | None = None,
     cleanup: CleanupReport | None = None,
+    *,
+    redact_paths: bool = False,
+    path_seeds: tuple[str, ...] = (),
 ) -> None:
     selected = selected or []
     selected_paths = {item.path for item in selected}
@@ -778,7 +825,7 @@ def _print_analyze_report(
     if as_json:
         entry_count_total = len(analysis.entries)
         entry_count_returned = len(entries)
-        print(json.dumps({
+        _print_json({
             "schema_version": CLI_SCHEMA_VERSION,
             "command": "analyze",
             "mode": (
@@ -839,7 +886,7 @@ def _print_analyze_report(
                 _cleanup_payload(cleanup) if cleanup is not None else None
             ),
             "issues": [_issue_payload(issue) for issue in analysis.issues],
-        }, ensure_ascii=False, indent=2))
+        }, redact_paths=redact_paths, path_seeds=path_seeds)
         return
 
     print(f"\n空间分析：{analysis.root}")
@@ -955,7 +1002,7 @@ def main(argv: list[str] | None = None) -> int:
         default=8,
         help="并发扫描 worker 数；默认 8",
     )
-    sp.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(sp)
 
     clean = sub.add_parser(
         "clean",
@@ -979,7 +1026,7 @@ def main(argv: list[str] | None = None) -> int:
         default=8,
         help="并发扫描 worker 数；默认 8",
     )
-    clean.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(clean)
 
     analyze = sub.add_parser(
         "analyze",
@@ -1022,7 +1069,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help="非交互模式精确选择当前层级路径，可多次指定",
     )
-    analyze.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(analyze)
 
     purge = sub.add_parser(
         "purge",
@@ -1046,7 +1093,7 @@ def main(argv: list[str] | None = None) -> int:
         help="从扫描根向下识别项目的最大目录层数；默认 6",
     )
     _add_rule_options(purge)
-    purge.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(purge)
 
     optimize = sub.add_parser(
         "optimize",
@@ -1064,7 +1111,7 @@ def main(argv: list[str] | None = None) -> int:
             "释放接口；命令返回 unavailable、预期退出码 1，且不执行操作。"
         ),
     )
-    optimize_ram.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(optimize_ram)
     optimize_purgeable = optimize_sub.add_parser(
         "purgeable",
         help="释放 purgeable disk space（当前安全拒绝执行）",
@@ -1073,9 +1120,7 @@ def main(argv: list[str] | None = None) -> int:
             "space 释放接口；命令返回 unavailable、预期退出码 1，且不执行操作。"
         ),
     )
-    optimize_purgeable.add_argument(
-        "--json", action="store_true", help="输出 JSON"
-    )
+    _add_json_output_options(optimize_purgeable)
 
     ignore_command = sub.add_parser(
         "ignore",
@@ -1089,7 +1134,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     ignore_list = ignore_sub.add_parser("list", help="列出忽略路径")
     _add_rules_path_option(ignore_list)
-    ignore_list.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(ignore_list)
     ignore_add = ignore_sub.add_parser("add", help="添加忽略路径")
     ignore_add.add_argument(
         "path",
@@ -1097,7 +1142,7 @@ def main(argv: list[str] | None = None) -> int:
         help="要持久忽略的路径；保存为规范化绝对路径",
     )
     _add_rules_path_option(ignore_add)
-    ignore_add.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(ignore_add)
     ignore_remove = ignore_sub.add_parser("remove", help="移除精确匹配的忽略路径")
     ignore_remove.add_argument(
         "path",
@@ -1105,7 +1150,7 @@ def main(argv: list[str] | None = None) -> int:
         help="要移除的路径；必须与持久规则精确匹配",
     )
     _add_rules_path_option(ignore_remove)
-    ignore_remove.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(ignore_remove)
 
     config_command = sub.add_parser(
         "config", help="查看或更新 CLI 偏好设置"
@@ -1142,10 +1187,10 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help=argparse.SUPPRESS,
     )
-    config_command.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(config_command)
 
     cat_command = sub.add_parser("cat", help="召唤一位终端朋友")
-    cat_command.add_argument("--json", action="store_true", help="输出 JSON")
+    _add_json_output_options(cat_command)
     try:
         args = ap.parse_args(raw_argv)
     except CliUsageError as exc:
@@ -1155,17 +1200,29 @@ def main(argv: list[str] | None = None) -> int:
                 "usage_error",
                 str(exc),
                 exit_code=2,
+                redact_paths="--redact-paths" in raw_argv,
+                path_seeds=tuple(raw_argv),
             )
         else:
             print(exc.usage, end="", file=sys.stderr)
             print(f"openclean: error: {exc}", file=sys.stderr)
         return 2
 
+    args._raw_argv = tuple(raw_argv)
+
     if args.cmd is None:
         if sys.stdin.isatty() and sys.stdout.isatty():
             return _run_root_menu()
         ap.print_help()
         return 0
+
+    if getattr(args, "redact_paths", False) and not args.json:
+        return _fail(
+            args,
+            _command_from_argv(raw_argv),
+            "invalid_output_options",
+            "--redact-paths 必须与 --json 同时使用。",
+        )
 
     if tuple(sys.version_info[:2]) < MINIMUM_PYTHON:
         running = ".".join(str(part) for part in sys.version_info[:3])
@@ -1184,14 +1241,14 @@ def main(argv: list[str] | None = None) -> int:
             else "尚未找到可验证且安全的公开 purgeable space 释放接口"
         )
         if args.json:
-            print(json.dumps({
+            _print_json({
                 "schema_version": CLI_SCHEMA_VERSION,
                 "command": f"optimize {args.optimize_cmd}",
                 "mode": "guard",
                 "status": "unavailable",
                 "executed": False,
                 "reason": reason,
-            }, ensure_ascii=False, indent=2))
+            }, redact_paths=args.redact_paths, path_seeds=tuple(raw_argv))
         else:
             print(
                 f"optimize {args.optimize_cmd}：{reason}；未执行任何操作。",
@@ -1287,7 +1344,13 @@ def main(argv: list[str] | None = None) -> int:
             print("未发现可清理项。")
             _print_issues(items_result)
         else:
-            _print_report(items_result, args.json, domains)
+            _print_report(
+                items_result,
+                args.json,
+                domains,
+                redact_paths=args.redact_paths,
+                path_seeds=tuple(raw_argv),
+            )
         return 0 if items_result.complete else 1
 
     if args.cmd == "clean":
@@ -1359,7 +1422,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.yes and execution_confirmed
             else None
         )
-        _print_clean_report(result, args.json, args.category, cleanup)
+        _print_clean_report(
+            result,
+            args.json,
+            args.category,
+            cleanup,
+            redact_paths=args.redact_paths,
+            path_seeds=tuple(raw_argv),
+        )
         return 0 if (
             result.complete and (cleanup is None or cleanup.complete)
         ) else 1
@@ -1481,6 +1551,8 @@ def main(argv: list[str] | None = None) -> int:
             args.top,
             selected=selected,
             cleanup=cleanup,
+            redact_paths=args.redact_paths,
+            path_seeds=tuple(raw_argv),
         )
         return 0 if (
             analysis.complete and (cleanup is None or cleanup.complete)
@@ -1563,7 +1635,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.yes and execution_confirmed
             else None
         )
-        _print_purge_report(result, args.json, cleanup)
+        _print_purge_report(
+            result,
+            args.json,
+            cleanup,
+            redact_paths=args.redact_paths,
+            path_seeds=tuple(raw_argv),
+        )
         return 0 if (
             result.complete and (cleanup is None or cleanup.complete)
         ) else 1
@@ -1597,7 +1675,11 @@ def main(argv: list[str] | None = None) -> int:
             }
             if changed is not None:
                 payload["changed"] = changed
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            _print_json(
+                payload,
+                redact_paths=args.redact_paths,
+                path_seeds=tuple(raw_argv),
+            )
         elif args.ignore_cmd == "list":
             if paths:
                 print("\n".join(str(path) for path in paths))
@@ -1638,7 +1720,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"知识库更新失败：{exc}",
                 )
             if args.json:
-                print(json.dumps({
+                _print_json({
                     "schema_version": CLI_SCHEMA_VERSION,
                     "command": "config update-knowledge",
                     "destination": str(update.destination),
@@ -1646,7 +1728,7 @@ def main(argv: list[str] | None = None) -> int:
                     "source_url": update.source_url,
                     "public_key_sha256": update.public_key_sha256,
                     "rules_sha256": update.rules_sha256,
-                }, ensure_ascii=False, indent=2))
+                }, redact_paths=args.redact_paths, path_seeds=tuple(raw_argv))
             else:
                 print(
                     f"托管知识库已更新到 sequence {update.sequence}："
@@ -1682,14 +1764,14 @@ def main(argv: list[str] | None = None) -> int:
             )
         changed = config != before
         if args.json:
-            print(json.dumps({
+            _print_json({
                 "schema_version": CLI_SCHEMA_VERSION,
                 "command": "config",
                 "changed": changed,
                 "config_path": str(store.path),
                 "analytics_enabled": config.analytics_enabled,
                 "analytics_implemented": False,
-            }, ensure_ascii=False, indent=2))
+            }, redact_paths=args.redact_paths, path_seeds=tuple(raw_argv))
         else:
             state = "on" if config.analytics_enabled else "off"
             print(f"Analytics 偏好：{state}")
@@ -1698,11 +1780,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "cat":
         if args.json:
-            print(json.dumps({
+            _print_json({
                 "schema_version": CLI_SCHEMA_VERSION,
                 "command": "cat",
                 "cat": CAT_ART,
-            }, ensure_ascii=False, indent=2))
+            }, redact_paths=args.redact_paths, path_seeds=tuple(raw_argv))
         else:
             print(CAT_ART)
         return 0

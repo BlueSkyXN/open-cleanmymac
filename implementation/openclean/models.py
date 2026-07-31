@@ -146,6 +146,7 @@ class Item:
     cleanup_root_identity: FileIdentity | None = None
     startup_program: str = ""
     startup_program_uses_path: bool = False
+    resource_binding: str = ""
 
     def __post_init__(self) -> None:
         if self.safety not in SAFETY_LEVELS:
@@ -188,6 +189,8 @@ class Item:
             raise ValueError("PATH 启动程序引用不能为空")
         if self.startup_program and self.resource_kind != "filesystem":
             raise ValueError("启动项程序引用只能用于文件系统资源")
+        if self.resource_binding and self.resource_kind == "filesystem":
+            raise ValueError("文件系统资源不能携带外部资源 binding")
 
 
 @dataclass(frozen=True)

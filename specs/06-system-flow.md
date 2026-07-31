@@ -77,6 +77,7 @@ confirm 项 ──需显式开启(--include-confirm)──▶ 删除
 critical 项 ──默认不动
    │
    ├─ 用户态普通项 → 同卷 Trash（清空 Trash 除外）
+   ├─ Docker 虚拟项 → scan-time target binding → 执行前 identity 复核 → 固定 prune
    └─ 受保护/系统项 → XPC 请求特权帮助器
                          │  消息(JSON): {version, operationKind, rootKind,
                          │               relativeComponents, expectedIdentity}
@@ -123,6 +124,6 @@ sequence 防回滚和公钥钉扎后原子安装，不解析或复用 `.cmmkb`�
 - [x] 判定：KB 优先保护闸 + 可组合谓词；兼容子串 `--ignore`
 - [x] 知识库：自建明文 JSON（忽略/保护/应用附加文件）+ 用户 ignore 管理
 - [x] 知识库：显式 HTTPS 签名更新、sequence 防回滚、公钥钉扎与原子安装
-- [x] 删除：安全分级、显式确认、同卷 Trash、Docker 白名单和执行前复核
+- [x] 删除：安全分级、显式确认、同卷 Trash、Docker 白名单、target binding 和执行前复核
 - [ ] 删除：特权帮助器/XPC
-- [x] 输出：文本/JSON、TTY 加权进度和 curses 审阅
+- [x] 输出：文本/JSON、显式单文档路径脱敏、TTY 加权进度和 curses 审阅

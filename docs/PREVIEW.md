@@ -187,5 +187,6 @@ JSON、管道、`--no-interactive` 以及 `--all`、`--include-confirm`、
 - `2`：参数、规则、路径或选择错误；
 - `130`：用户中断。
 
-`--json` 模式下，参数和运行时错误也会输出可解析 envelope。所有结果可能含绝对路径；
-保存或分享前应脱敏。
+`--json` 模式下，参数和运行时错误也会输出可解析 envelope。默认结果保留精确绝对路径；
+保存或分享时可加 `--redact-paths`，输出单文档 opaque refs 并声明不可用于 selector replay。
+preview 仍使用精确临时路径做内部断言，不把脱敏输出当作真实 selector。

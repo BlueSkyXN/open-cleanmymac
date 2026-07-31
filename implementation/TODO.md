@@ -64,8 +64,9 @@ notarization 和真实安装/升级/回滚验收。Python wheel 本身不能安�
 
 - `docker system df --format json` 不同版本输出；
 - Build Cache、Images、Containers 三条 prune 的 before/after 和错误报告；
-- 扫描与执行绑定同一 Docker context、endpoint 和 daemon identity，拒绝静默切换到远端或
-  其他 daemon；当前三类 prune 仅以“必须精确选择”作为临时收紧，不能替代身份绑定；
+- 当前客户端已把扫描与执行绑定到明确 context/effective host、endpoint TLS mode 和
+  Engine ID，并在 prune 前复核；仍需用真实 context、`DOCKER_HOST`、TLS 和 Engine reset
+  验证行为。标准 CLI 多进程无法提供同一 API connection 的原子 precondition；
 - 运行中 container、并发 daemon 变化和超时；
 - Local Volumes 永远不可执行。
 
@@ -104,12 +105,7 @@ ApplicationLanguages 只读审计已经完成，并故意固定 `critical + acti
 universal binary thinning 未实现。若未来仅做审计，需要结构化记录 Mach-O slices、父 app、
 签名状态和兼容性；任何写入必须另有原子输出、恢复、签名和 Rosetta/plugin 验收方案。
 
-### 8. 输出隐私
-
-文档已明确 JSON 含绝对路径。可评估新增不破坏 schema 的 `--redact-paths` 或路径 hash
-模式；实现时必须保证同一结果中的路径引用仍可稳定关联，且错误消息也被处理。
-
-### 9. Countable 进度与任务控制聚合
+### 8. Countable 进度与任务控制聚合
 
 当前已实现固定权重百分比、不可变快照、任务成功/失败/取消终态和共享三态协作控制；
 `processed_items` 仍是启发式进度输入，不是已知总量的 Countable 完成数/总数。后续若 UI
@@ -128,6 +124,8 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
 - System Junk、Darwin cache、broken startup items、Time Machine、ApplicationLanguages；
 - JSON schema v2 和统一机器错误 envelope；重复 domain/root 去重，显式 project root
   做存在性、目录类型和 symlink 参数校验；
+- 显式 `--redact-paths` 单文档 opaque refs，覆盖成功/失败 JSON 和解析前错误；
+- Docker scan-time target binding 与 prune 前 context/host、endpoint、Engine ID 复核；
 - 19 场景隔离预览、macOS CI、wheel/sdist 和归档审计。
 
 ## 提交前验证

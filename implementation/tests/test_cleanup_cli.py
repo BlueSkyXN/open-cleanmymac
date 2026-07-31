@@ -13,11 +13,27 @@ from unittest import mock
 
 from openclean.cleanup import CleanupOutcome, CleanupReport
 from openclean.cli import _print_clean_report, main
-from openclean.docker import DockerPruneError, DockerPruneResult
+from openclean.docker import (
+    DockerPruneError,
+    DockerPruneResult,
+    DockerTargetIdentity,
+    encode_docker_resource_binding,
+)
 from openclean.macos import TrashDiscovery
 from openclean.models import Item, ScanResult
 from openclean.scanpoints import DOMAINS, ScanPoint
 from openclean.tui import ReviewResult, TUIUnavailable
+
+DOCKER_BINDING = encode_docker_resource_binding(
+    DockerTargetIdentity(
+        context_name="desktop-linux",
+        target_kind="context",
+        target_value="desktop-linux",
+        endpoint_host="unix:///Users/example/.docker/run/docker.sock",
+        skip_tls_verify=False,
+        daemon_id="DAEMON:A",
+    )
+)
 
 
 class _TTYBuffer(io.StringIO):
@@ -413,6 +429,7 @@ class CleanupCliTests(unittest.TestCase):
                 domain="developer",
                 resource_kind="docker",
                 identifier="docker:build-cache",
+                resource_binding=DOCKER_BINDING,
             )
             stdout = io.StringIO()
 
@@ -466,6 +483,7 @@ class CleanupCliTests(unittest.TestCase):
                 requires_explicit_selection=True,
                 resource_kind="docker",
                 identifier="docker:build-cache",
+                resource_binding=DOCKER_BINDING,
             )
             stdout = io.StringIO()
 
