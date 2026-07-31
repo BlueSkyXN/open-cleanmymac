@@ -77,7 +77,7 @@ confirm 项 ──需显式开启(--include-confirm)──▶ 删除
 critical 项 ──默认不动
    │
    ├─ 用户态普通项 → 同卷 Trash（清空 Trash 除外）
-   ├─ Docker 虚拟项 → scan-time target binding → 执行前 identity 复核 → 固定 prune
+   ├─ Docker 虚拟项 → CLI realpath/target binding → 执行前 identity 复核 → 固定 prune
    └─ 受保护/系统项 → XPC 请求特权帮助器
                          │  消息(JSON): {version, operationKind, rootKind,
                          │               relativeComponents, expectedIdentity}

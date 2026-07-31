@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -40,7 +41,7 @@ def _docker_row(
     )
 
 
-_DOCKER_BINARY = "/usr/local/bin/docker"
+_DOCKER_BINARY = os.path.realpath("/tmp/openclean-test-docker")
 _DOCKER_CONTEXT = "desktop-linux"
 _DOCKER_ENDPOINT = "unix:///Users/example/.docker/run/docker.sock"
 _DOCKER_DAEMON_ID = "DAEMON:A"
@@ -53,8 +54,9 @@ def _docker_binding(
 ) -> str:
     return json.dumps(
         {
-            "v": 1,
+            "v": 2,
             "kind": "docker",
+            "cli_path": _DOCKER_BINARY,
             "context_name": _DOCKER_CONTEXT,
             "target": {"kind": "context", "value": _DOCKER_CONTEXT},
             "endpoint_host": endpoint,
@@ -168,7 +170,7 @@ class DockerScannerTests(unittest.TestCase):
             return bound_runner(command, **kwargs)
 
         result = scan_docker_resources(
-            finder=lambda _: "/usr/local/bin/docker",
+            finder=lambda _: _DOCKER_BINARY,
             runner=runner,
         )
 
@@ -233,7 +235,7 @@ class DockerScannerTests(unittest.TestCase):
         self.assertTrue(by_identifier["docker:build-cache"].actionable)
 
     def test_scan_binds_context_endpoint_and_daemon_to_every_item(self) -> None:
-        binary = "/usr/local/bin/docker"
+        binary = _DOCKER_BINARY
         context = "desktop-linux"
         endpoint = "unix:///Users/example/.docker/run/docker.sock"
         daemon_id = "DAEMON:A"
@@ -289,6 +291,7 @@ class DockerScannerTests(unittest.TestCase):
         self.assertEqual(len(result.items), 1)
         binding = json.loads(result.items[0].resource_binding)
         self.assertEqual(binding["context_name"], context)
+        self.assertEqual(binding["cli_path"], binary)
         self.assertEqual(binding["endpoint_host"], endpoint)
         self.assertEqual(binding["daemon_id"], daemon_id)
         self.assertEqual(binding["target"], {"kind": "context", "value": context})
@@ -468,13 +471,14 @@ class DockerScannerTests(unittest.TestCase):
     def test_prune_refuses_changed_daemon_before_starting_destructive_command(
         self,
     ) -> None:
-        binary = "/usr/local/bin/docker"
+        binary = _DOCKER_BINARY
         context = "desktop-linux"
         endpoint = "unix:///Users/example/.docker/run/docker.sock"
         binding = json.dumps(
             {
-                "v": 1,
+                "v": 2,
                 "kind": "docker",
+                "cli_path": binary,
                 "context_name": context,
                 "target": {"kind": "context", "value": context},
                 "endpoint_host": endpoint,
@@ -614,6 +618,24 @@ class DockerScannerTests(unittest.TestCase):
         )
 
         payload = dict(base)
+        payload["v"] = 1
+        malformed["legacy version"] = json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        )
+
+        payload = dict(base)
+        del payload["cli_path"]
+        malformed["missing CLI path"] = json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        )
+
+        payload = dict(base)
+        payload["cli_path"] = "relative/docker"
+        malformed["relative CLI path"] = json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        )
+
+        payload = dict(base)
         payload["skip_tls_verify"] = 0
         malformed["non-boolean TLS mode"] = json.dumps(
             payload, sort_keys=True, separators=(",", ":")
@@ -633,7 +655,7 @@ class DockerScannerTests(unittest.TestCase):
 
         malformed["non-canonical whitespace"] = json.dumps(base)
         malformed["duplicate key"] = _docker_binding().replace(
-            '"v":1', '"v":1,"v":1', 1
+            '"v":2', '"v":2,"v":2', 1
         )
         runner = mock.Mock(side_effect=AssertionError("不应启动 Docker CLI"))
 
@@ -656,8 +678,9 @@ class DockerScannerTests(unittest.TestCase):
         daemon_id = "DAEMON:DEFAULT"
         binding = json.dumps(
             {
-                "v": 1,
+                "v": 2,
                 "kind": "docker",
+                "cli_path": _DOCKER_BINARY,
                 "context_name": "default",
                 "target": {"kind": "host", "value": endpoint},
                 "endpoint_host": endpoint,
@@ -721,6 +744,115 @@ class DockerScannerTests(unittest.TestCase):
         self.assertEqual(result.reclaimed_bytes, 1_000_000)
         self.assertEqual(len(calls), 3)
         self.assertEqual(calls[-1][1:3], ["--host", endpoint])
+
+    def test_prune_refuses_cli_path_switch_before_any_docker_command(self) -> None:
+        switched_binary = os.path.realpath("/tmp/openclean-other-docker")
+        runner = mock.Mock(side_effect=AssertionError("不应启动 Docker CLI"))
+
+        with self.assertRaisesRegex(
+            DockerPruneError, "Docker CLI.*变化|重新扫描"
+        ) as raised:
+            prune_docker_resource(
+                "docker:build-cache",
+                resource_binding=_docker_binding(),
+                finder=lambda _: switched_binary,
+                runner=runner,
+            )
+
+        self.assertFalse(raised.exception.side_effect_unknown)
+        runner.assert_not_called()
+
+    def test_scan_and_prune_bind_canonical_cli_symlink_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "Docker CLI"
+            target.write_text("synthetic", encoding="utf-8")
+            symlink = root / "docker"
+            symlink.symlink_to(target)
+            canonical = str(target.resolve())
+            stdout = _docker_row(
+                "Build Cache", "1", "0", "1MB", "500kB (50%)"
+            )
+            calls: list[list[str]] = []
+
+            def runner(command, **_):
+                calls.append(command)
+                if command == [canonical, "context", "show"]:
+                    return subprocess.CompletedProcess(
+                        command, 0, f"{_DOCKER_CONTEXT}\n", ""
+                    )
+                if command == [
+                    canonical,
+                    "context",
+                    "inspect",
+                    _DOCKER_CONTEXT,
+                ]:
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        json.dumps([{
+                            "Name": _DOCKER_CONTEXT,
+                            "Endpoints": {
+                                "docker": {
+                                    "Host": _DOCKER_ENDPOINT,
+                                    "SkipTLSVerify": False,
+                                }
+                            },
+                        }]),
+                        "",
+                    )
+                if command == [
+                    canonical,
+                    "--context",
+                    _DOCKER_CONTEXT,
+                    "info",
+                    "--format",
+                    "{{json .ID}}",
+                ]:
+                    return subprocess.CompletedProcess(
+                        command, 0, json.dumps(_DOCKER_DAEMON_ID), ""
+                    )
+                if command == [
+                    canonical,
+                    "--context",
+                    _DOCKER_CONTEXT,
+                    "system",
+                    "df",
+                    "--format",
+                    "json",
+                ]:
+                    return subprocess.CompletedProcess(command, 0, stdout, "")
+                if command == [
+                    canonical,
+                    "--context",
+                    _DOCKER_CONTEXT,
+                    "builder",
+                    "prune",
+                    "--all",
+                    "--force",
+                ]:
+                    return subprocess.CompletedProcess(
+                        command, 0, "Total reclaimed space: 500kB\n", ""
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            scan = scan_docker_resources(
+                finder=lambda _: str(symlink),
+                runner=runner,
+            )
+            binding = json.loads(scan.items[0].resource_binding)
+            pruned = prune_docker_resource(
+                "docker:build-cache",
+                resource_binding=scan.items[0].resource_binding,
+                finder=lambda _: str(symlink),
+                runner=runner,
+            )
+
+            self.assertTrue(scan.complete)
+            self.assertEqual(binding["v"], 2)
+            self.assertEqual(binding["cli_path"], canonical)
+            self.assertEqual(pruned.reclaimed_bytes, 500_000)
+            self.assertTrue(all(command[0] == canonical for command in calls))
 
     def test_prune_maps_only_audited_resource_identifiers(self) -> None:
         expected = {
@@ -884,7 +1016,7 @@ class DockerScannerTests(unittest.TestCase):
             )
 
         result = scan_docker_resources(
-            finder=lambda _: "/usr/local/bin/docker",
+            finder=lambda _: _DOCKER_BINARY,
             runner=runner,
         )
 
@@ -903,7 +1035,7 @@ class DockerScannerTests(unittest.TestCase):
             raise subprocess.TimeoutExpired(command, 0.01)
 
         result = scan_docker_resources(
-            finder=lambda _: "/usr/local/bin/docker",
+            finder=lambda _: _DOCKER_BINARY,
             runner=runner,
             timeout=0.01,
         )
@@ -985,6 +1117,7 @@ class DockerScannerTests(unittest.TestCase):
             self.assertEqual(docker_item["resource_total_bytes"], 2_000)
             serialized = json.dumps(payload, ensure_ascii=False)
             self.assertNotIn("resource_binding", serialized)
+            self.assertNotIn(_DOCKER_BINARY, serialized)
             self.assertNotIn(_DOCKER_ENDPOINT, serialized)
             self.assertNotIn(_DOCKER_DAEMON_ID, serialized)
             self.assertEqual(

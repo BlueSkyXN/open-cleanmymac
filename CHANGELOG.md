@@ -41,8 +41,9 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
 ### Security
 
 - Docker actionable 候选现在携带不序列化的 scan-time target binding；容量读取和 prune
-  使用明确 context/effective host，执行前复核 endpoint TLS mode 与 Engine ID。缺失、
-  畸形或即时复核发现不一致会在破坏性命令启动前拒绝并要求重新扫描。
+  使用扫描时解析的 CLI realpath 和明确 context/effective host，执行前复核 CLI、endpoint
+  TLS mode 与 Engine ID。缺失、畸形、CLI realpath 变化或即时复核发现不一致会在破坏性
+  命令启动前拒绝并要求重新扫描。
 
 - 普通 Trash 移动改用 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`，目标名
   发生竞态时原子拒绝覆盖；API 或文件系统能力不足时 fail-closed。

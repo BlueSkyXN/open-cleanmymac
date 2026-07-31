@@ -201,8 +201,9 @@ best effort，不会把已经安装的 sequence 报成失败。托管 `knowledge
 - Trash rename 后的源/目标目录 fd 独立关闭；后置 close 失败保留已移动事实并返回
   `partial`；
 - Trash 永久清空只删除最终审计快照；审计后新增项保留，部分删除返回 `partial`；
-- Docker 候选携带不进入 JSON 的 scan-time resource binding；执行前重新复核明确
-  context/host、endpoint TLS mode 和 Engine ID，即时复核发现不一致时拒绝执行；
+- Docker 候选携带不进入 JSON 的 scan-time resource binding；执行前重新解析 CLI realpath
+  并复核明确 context/host、endpoint TLS mode 和 Engine ID，CLI realpath 变化或即时复核
+  发现不一致时拒绝执行；
 - Docker prune 启动后的 timeout/非零退出返回副作用未知的 `partial`；
 - 任一批量预检失败时整个批次不启动。
 
@@ -256,5 +257,5 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 
 剩余工作见 [TODO.md](TODO.md)。
 
-当前本地验证基线为 316 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+当前本地验证基线为 318 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
 checkout 的 `make check` 输出为准。

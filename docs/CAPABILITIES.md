@@ -60,7 +60,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 | 用户 ignore | `public-cli` | `knowledge_base.py` | lifecycle、权限、规范路径回执、原子写测试 |
 | CLI 配置 | `public-cli` | `config.py` | analytics lifecycle/readback |
 | 签名托管知识库客户端 | `project-extension` | `knowledge_update.py` | HTTPS/验签/跨进程防回滚/原子安装测试 |
-| Docker 容量与固定 prune | `project-extension` | `docker.py` | parser/白名单/精确选择/context-host-endpoint-Engine ID binding 隔离测试 |
+| Docker 容量与固定 prune | `project-extension` | `docker.py` | parser/白名单/精确选择/CLI realpath-context-host-endpoint-Engine ID binding 隔离测试 |
 | 失效启动项 | `internal` | `startup_items.py` | plist 解析、重判、用户态执行测试 |
 | ApplicationLanguages | `internal` | `application_languages.py` | metadata/语言/签名风险测试 |
 | Time Machine 本地快照提示 | `internal` | `macos.py`、`analyzer.py` | `tmutil` parser 与根卷分支测试 |
@@ -73,7 +73,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 ## 验证边界
 
-当前自动化基线覆盖 316 个 `unittest` 和 19 个 `TemporaryDirectory` 隔离预览场景。
+当前自动化基线覆盖 318 个 `unittest` 和 19 个 `TemporaryDirectory` 隔离预览场景。
 这能证明当前 checkout 的本地逻辑、归档和合成写路径，但不能替代以下验收：
 
 - 真实 iCloud Drive/第三方 File Provider 的 dataless 状态保持；

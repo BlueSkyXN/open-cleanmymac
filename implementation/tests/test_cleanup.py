@@ -32,6 +32,7 @@ from openclean.scanpoints import ScanPoint
 TEST_SF_DATALESS = 0x40000000
 DOCKER_BINDING = encode_docker_resource_binding(
     DockerTargetIdentity(
+        cli_path=os.path.realpath("/tmp/openclean-test-docker"),
         context_name="desktop-linux",
         target_kind="context",
         target_value="desktop-linux",

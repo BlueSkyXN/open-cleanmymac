@@ -65,8 +65,10 @@ notarization 和真实安装/升级/回滚验收。Python wheel 本身不能安�
 - `docker system df --format json` 不同版本输出；
 - Build Cache、Images、Containers 三条 prune 的 before/after 和错误报告；
 - 当前客户端已把扫描与执行绑定到明确 context/effective host、endpoint TLS mode 和
-  Engine ID，并在 prune 前复核；仍需用真实 context、`DOCKER_HOST`、TLS 和 Engine reset
-  验证行为。标准 CLI 多进程无法提供同一 API connection 的原子 precondition；
+  Engine ID，同时绑定扫描时解析的 CLI realpath，并在 prune 前复核；仍需用真实 context、
+  `DOCKER_HOST`、PATH/symlink 切换、CLI 就地升级、TLS 和 Engine reset 验证行为。realpath
+  binding 不对同路径二进制内容做 pinning，标准 CLI 多进程也无法提供同一 API connection
+  的原子 precondition；
 - 运行中 container、并发 daemon 变化和超时；
 - Local Volumes 永远不可执行。
 
@@ -125,7 +127,8 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
 - JSON schema v2 和统一机器错误 envelope；重复 domain/root 去重，显式 project root
   做存在性、目录类型和 symlink 参数校验；
 - 显式 `--redact-paths` 单文档 opaque refs，覆盖成功/失败 JSON 和解析前错误；
-- Docker scan-time target binding 与 prune 前 context/host、endpoint、Engine ID 复核；
+- Docker scan-time CLI realpath/target binding 与 prune 前 CLI、context/host、endpoint、
+  Engine ID 复核；
 - 19 场景隔离预览、macOS CI、wheel/sdist 和归档审计。
 
 ## 提交前验证

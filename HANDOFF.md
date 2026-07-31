@@ -38,10 +38,11 @@ make release-check
 - 任务 DAG、加权进度、运行中进程保护；
 - JSON schema v2、机器错误 envelope、显式 `--redact-paths` 单文档脱敏、标准 Python 包装
   和 release archive audit；
-- Docker scan-time context/host、endpoint 和 Engine ID binding；执行前即时复核发现不一致会
-  fail-closed，多 CLI 进程间仍有已记录的 TOCTOU 边界。
+- Docker scan-time CLI realpath、context/host、endpoint 和 Engine ID binding；CLI
+  realpath 变化或执行前即时复核发现不一致会 fail-closed，多 CLI 进程间仍有已记录的
+  TOCTOU 边界。
 
-最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，316 个单元测试通过，
+最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，318 个单元测试通过，
 19/19 隔离预览通过且 `real_user_data_modified=false`。这是本地快照；远端状态必须读取
 GitHub exact commit 的 Actions 结果后另行确认。
 

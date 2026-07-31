@@ -160,11 +160,14 @@ stateDiagram-v2
 
 ### Docker
 
-扫描先解析当前 context 与 endpoint，并用明确 `--context` 或 `--host` 取得 Engine ID 和
-`docker system df --format json`；内部 canonical binding 随 actionable Item 传到 cleanup，
-但不进入 JSON 或日志。prune 前重新 inspect endpoint/TLS mode 和 Engine ID，即时复核发现
-不一致时拒绝执行。执行器仍只映射固定 builder/image/container prune，Local Volumes
-始终不可执行；启动后的 timeout 或非零退出按副作用未知的 `partial` 报告。
+扫描先固定 Docker CLI 的 canonical realpath，再解析当前 context 与 endpoint，并用明确
+`--context` 或 `--host` 取得 Engine ID 和 `docker system df --format json`；内部 canonical
+binding 随 actionable Item 传到 cleanup，但不进入 JSON 或日志。prune 前重新解析 CLI 并
+复核 endpoint/TLS mode 和 Engine ID；CLI realpath 变化或即时复核发现不一致时拒绝执行。
+执行器仍只映射固定 builder/image/container prune，Local Volumes 始终不可执行；启动后的
+timeout 或非零退出按副作用未知的 `partial` 报告。realpath binding 不等于二进制内容或
+code-signature pinning，复核与 `exec` 也不是原子操作；同一路径下的 CLI 就地升级仍属于
+真实环境验收边界。
 
 probe 与 prune 是多个 Docker CLI 进程，不能提供同一 Engine API connection 的原子
 precondition；当前实现是 fail-closed 的即时复核，真实 daemon/context/TLS 仍需单独验收。

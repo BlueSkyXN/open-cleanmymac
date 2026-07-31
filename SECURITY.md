@@ -35,9 +35,10 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
   指定目标，不批量扩大选择范围。`--select` 与 `--all` 被拒绝组合。
 - 用户态文件通常移动到同卷 Trash；清空 Trash 和 Docker prune 是永久操作。
 - Docker Build Cache、Images、Containers 均要求 identifier 精确选择，不参与默认或批量
-  选择。actionable 候选还必须携带内部 scan-time binding；容量读取和 prune 使用明确
-  context 或 effective host，执行前重新复核 endpoint、`SkipTLSVerify` 和 Engine ID。
-  binding 缺失、畸形，或执行前即时复核发现不一致时均 fail-closed。
+  选择。actionable 候选还必须携带内部 scan-time binding；容量读取和 prune 使用扫描时
+  解析的同一 CLI realpath、明确 context 或 effective host，执行前重新复核 endpoint、
+  `SkipTLSVerify` 和 Engine ID。binding 缺失、畸形、CLI realpath 变化，或执行前即时复核
+  发现不一致时均 fail-closed。
 - `--redact-paths` 只在最终 JSON 序列化边界替换绝对路径和相关自由文本；默认精确路径
   合同保持不变，脱敏输出明确标记为不可用于 selector replay。
 - KnowledgeBase 保护闸在扫描和执行前重复运行。
@@ -71,6 +72,9 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 - Full Disk Access、admin helper 和 SIP 是不同能力；本项目不把其中一个当成另一个。
 - Docker 标准 CLI 的 identity probe 与 prune 是不同进程；显式 target 和即时复核会缩小
   context metadata TOCTOU 窗口，但不宣称具有同一 API connection 的原子绑定保证。
+- CLI binding 固定并在 prune 前即时复核解析后的 realpath，但 realpath 复核与 `exec`
+  不是原子操作，也不对同一路径下就地替换的二进制内容做 hash 或 code-signature
+  pinning；真实 CLI 升级仍需重新扫描和兼容验收。
 - Python 用户态进程无法对同 UID 恶意进程提供绝对竞态隔离。
 - `SF_DATALESS` 和 zero-block 启发式不能识别所有已经 materialized 的 cloud-synced 文件；
   当前只承诺 dataless/疑似占位保护，不承诺完整云同步来源识别。

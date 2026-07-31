@@ -1,13 +1,13 @@
 """Docker daemon 磁盘占用扫描。
 
-通过 Docker 官方 CLI 的只读 context inspect、daemon info 和
-``docker system df --format json`` 绑定扫描目标，不读取或猜测 Docker Desktop
-的内部存储路径。返回值中的 ``Item.size`` 表示 daemon 报告的可回收估算，
-而不是资源总占用。
+固定 Docker CLI 的 canonical realpath，再通过只读 context inspect、daemon info 和
+``docker system df --format json`` 绑定扫描目标，不读取或猜测 Docker Desktop 的内部
+存储路径。返回值中的 ``Item.size`` 表示 daemon 报告的可回收估算，而不是资源总占用。
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -21,7 +21,7 @@ DOCKER_SCAN_TASK = "docker-system-df"
 DOCKER_TARGET_TASK = "docker-target-identity"
 DEFAULT_DOCKER_TIMEOUT = 20.0
 DEFAULT_DOCKER_PRUNE_TIMEOUT = 60.0
-DOCKER_BINDING_VERSION = 1
+DOCKER_BINDING_VERSION = 2
 
 
 class DockerTargetError(RuntimeError):
@@ -47,6 +47,7 @@ class DockerPruneResult:
 
 @dataclass(frozen=True)
 class DockerTargetIdentity:
+    cli_path: str
     context_name: str
     target_kind: str
     target_value: str
@@ -55,6 +56,7 @@ class DockerTargetIdentity:
     daemon_id: str
 
     def __post_init__(self) -> None:
+        _validated_cli_path(self.cli_path)
         _validated_target_text(self.context_name, "context_name", 256)
         _validated_target_text(self.target_value, "target.value", 2048)
         _validated_target_text(self.endpoint_host, "endpoint_host", 2048)
@@ -88,11 +90,28 @@ def _validated_target_text(value: object, field: str, maximum: int) -> str:
     return value
 
 
+def _validated_cli_path(value: object) -> str:
+    path = _validated_target_text(value, "cli_path", 4096)
+    if (
+        not os.path.isabs(path)
+        or os.path.normpath(path) != path
+        or os.path.realpath(path) != path
+    ):
+        raise DockerTargetError("Docker binding cli_path 无效")
+    return path
+
+
+def _resolved_cli_path(value: object) -> str:
+    path = _validated_target_text(value, "cli_path", 4096)
+    return _validated_cli_path(os.path.realpath(os.path.abspath(path)))
+
+
 def encode_docker_resource_binding(target: DockerTargetIdentity) -> str:
     return json.dumps(
         {
             "v": DOCKER_BINDING_VERSION,
             "kind": "docker",
+            "cli_path": target.cli_path,
             "context_name": target.context_name,
             "target": {
                 "kind": target.target_kind,
@@ -118,6 +137,7 @@ def parse_docker_resource_binding(binding: str) -> DockerTargetIdentity:
     expected_keys = {
         "v",
         "kind",
+        "cli_path",
         "context_name",
         "target",
         "endpoint_host",
@@ -134,6 +154,7 @@ def parse_docker_resource_binding(binding: str) -> DockerTargetIdentity:
     if not isinstance(target, dict) or set(target) != {"kind", "value"}:
         raise DockerTargetError("Docker 候选 resource binding target 无效")
     parsed = DockerTargetIdentity(
+        cli_path=payload["cli_path"],
         context_name=payload["context_name"],
         target_kind=target["kind"],
         target_value=target["value"],
@@ -337,6 +358,7 @@ def probe_docker_target(
     expected: DockerTargetIdentity | None = None,
 ) -> DockerTargetIdentity:
     """只读解析有效 Docker target，并取得 Engine ID。"""
+    binary = _resolved_cli_path(binary)
     context_name = (
         expected.context_name
         if expected is not None
@@ -369,6 +391,7 @@ def probe_docker_target(
     except json.JSONDecodeError as exc:
         raise DockerTargetError("Docker target daemon ID 输出无效") from exc
     return DockerTargetIdentity(
+        cli_path=binary,
         context_name=context_name,
         target_kind=target_kind,
         target_value=target_value,
@@ -482,9 +505,19 @@ def prune_docker_resource(
         raise DockerPruneError(str(exc)) from exc
 
     find_binary = finder or shutil.which
-    binary = docker_path if docker_path is not None else find_binary("docker")
-    if binary is None:
+    discovered_binary = (
+        docker_path if docker_path is not None else find_binary("docker")
+    )
+    if discovered_binary is None:
         raise DockerPruneError("未找到 Docker CLI")
+    try:
+        binary = _resolved_cli_path(discovered_binary)
+    except DockerTargetError as exc:
+        raise DockerPruneError("Docker CLI 路径无效；请重新扫描") from exc
+    if binary != expected_target.cli_path:
+        raise DockerPruneError(
+            "Docker CLI realpath 已变化；请重新扫描后再执行"
+        )
     run = runner or subprocess.run
     try:
         current_target = probe_docker_target(
@@ -500,6 +533,14 @@ def prune_docker_resource(
     if current_target != expected_target:
         raise DockerPruneError(
             "Docker target 身份已变化；请重新扫描后再执行"
+        )
+    try:
+        binary = _resolved_cli_path(binary)
+    except DockerTargetError as exc:
+        raise DockerPruneError("Docker CLI 路径无效；请重新扫描") from exc
+    if binary != expected_target.cli_path:
+        raise DockerPruneError(
+            "Docker CLI realpath 已变化；请重新扫描后再执行"
         )
     command = [
         binary,
@@ -556,8 +597,21 @@ def scan_docker_resources(
     """读取 Docker daemon 的资源汇总；未安装 Docker 时静默跳过。"""
     result = ScanResult()
     find_binary = finder or shutil.which
-    binary = docker_path if docker_path is not None else find_binary("docker")
-    if binary is None:
+    discovered_binary = (
+        docker_path if docker_path is not None else find_binary("docker")
+    )
+    if discovered_binary is None:
+        return result
+    try:
+        binary = _resolved_cli_path(discovered_binary)
+    except DockerTargetError:
+        result.issues.append(
+            ScanIssue(
+                code="tool_unavailable",
+                message="Docker CLI 路径无效",
+                task=DOCKER_SCAN_TASK,
+            )
+        )
         return result
 
     run = runner or subprocess.run

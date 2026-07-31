@@ -19,7 +19,7 @@
 | 03 | [知识库](03-knowledge-base.md) | 忽略/保护规则、应用→附加文件映射、JSON 格式 | 🟡 自建 JSON、用户 ignore、签名更新客户端已落；应用附加字段尚未接生产扫描器，正式 channel 未配置 |
 | 04 | [IPC 协议](04-ipc-protocol.md) | XPC 特权操作、消息格式、防不当提权 | ⛔ external-prerequisite：需 native 签名链和真实安装验收 |
 | 05 | [关键算法](05-algorithms.md) | 目录大小、硬链接去重、云文件、fat 瘦身 | 🟡 物理/逻辑大小、硬链接、云占位已落；lipo 未实现 |
-| 06 | [系统流程](06-system-flow.md) | 数据流/控制流图（串起各模块） | 🟡 用户态清理、同卷 Trash、Docker target binding/白名单和交互流已落；XPC/optimize 未完成 |
+| 06 | [系统流程](06-system-flow.md) | 数据流/控制流图（串起各模块） | 🟡 用户态清理、同卷 Trash、Docker CLI/target binding/白名单和交互流已落；XPC/optimize 未完成 |
 | 07 | [谓词引擎](07-predicate-engine.md) | 判定"是否忽略"的谓词系统（7 种谓词） | 🟡 CLI 使用子集已落；Reachability/FileAccess 专项语义未实现 |
 
 ## 图例

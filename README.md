@@ -58,7 +58,7 @@ python3 -m venv .venv
 | `clean trash` | ✅ | ✅ | `confirm`；执行会永久清空内容 |
 | `purge [path]` | ✅ | ✅ 用户态 | 旧产物默认预选；普通项移到同卷 Trash |
 | `analyze [path]` | ✅ | ✅ 精确选择 | TUI/JSON/行式导航；不删除 Time Machine 快照 |
-| Docker daemon 容量 | ✅ | ✅ 受限 | 三类 prune 需精确选择和 scan-time target binding；Volumes 拒绝；真实 daemon 待验收 |
+| Docker daemon 容量 | ✅ | ✅ 受限 | 三类 prune 需精确选择和 CLI/target binding；Volumes 拒绝；真实 daemon 待验收 |
 | ApplicationLanguages | ✅ | ❌ | 只读审计；修改签名 app 风险过高 |
 | Broken startup items | ✅ | ✅ 用户项 | 系统项需要尚未实现的特权帮助器 |
 | Time Machine 本地快照 | ✅ | ❌ | 只显示数量/名称；公开列表不提供精确大小 |
@@ -152,8 +152,9 @@ Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`，原子拒绝覆盖 Tr
 的目标。Trash 目标还必须属于当前用户、使用私有权限，并在打开后复核目录身份。
 新建 Trash 会在可信父目录 fd 下相对创建，完成 no-follow identity 校验后才在 fd 上设置
 权限；rename 已完成但 fd 清理失败时会保留已移动事实并返回 `partial`。Trash 永久清空
-只处理最终审计快照，审计后新增项会保留。Docker 候选内部绑定扫描时的 context/host、
-endpoint TLS mode 和 Engine ID；prune 前即时复核发现不一致时会 fail-closed 并要求重扫。
+只处理最终审计快照，审计后新增项会保留。Docker 候选内部绑定扫描时解析后的 CLI
+realpath、context/host、endpoint TLS mode 和 Engine ID；CLI realpath 变化或 prune 前即时
+复核发现不一致时会 fail-closed 并要求重扫。
 prune 启动后的 timeout 或非零退出仍标记为 `partial`，因为 daemon 侧不可逆副作用可能
 已经发生。
 
@@ -200,7 +201,7 @@ make package
 make release-check
 ```
 
-当前本地基线通过 316 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
+当前本地基线通过 318 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
 checkout 实际运行结果为准。CI 在 macOS/Python 3.11 上执行 lint、测试、预览、构建、
 归档审计和隔离 wheel 安装，不会发布 PyPI、Homebrew 或 GitHub Release。
 
