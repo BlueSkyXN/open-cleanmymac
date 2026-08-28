@@ -4,8 +4,8 @@
 [功能预览](docs/PREVIEW.md) · [架构](docs/ARCHITECTURE.md) ·
 [安全](SECURITY.md) · [规格索引](specs/_index.md)
 
-当前仓库是 private Alpha，尚未选择公共许可证。提交变更不代表获得复制、分发或公开发布
-本项目的许可；公开协作与许可证将在后续单独决定。
+本仓库以 [GNU GPL v3](LICENSE) 公开。提交变更即按该许可证贡献代码与文档。请先阅读净室
+边界和 [SECURITY.md](SECURITY.md)；不要把 `analysis/` 或真实用户数据带进仓库。
 
 ## 净室边界
 
@@ -62,3 +62,21 @@ Document guarded feature preview
 
 Pull request 应列出行为变化、安全影响、验证命令与结果、未验证的外部边界。不要宣称 CI、
 真实 Docker、特权安装或发布成功，除非提供 exact commit 的读取证据。
+
+## 文档分层
+
+| 文档 | 读者 | 写什么 |
+|---|---|---|
+| [README.md](README.md) | 用户、审阅者 | 安装、命令、能力边界、许可证 |
+| [docs/PREVIEW.md](docs/PREVIEW.md) | 想先看效果的人 | 隔离预览、合成 TUI、退出码 |
+| [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | 要核对范围的人 | 能力状态、来源、验证证据 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 开发者 | 模块、数据流、信任边界 |
+| [SECURITY.md](SECURITY.md) | 安全审阅 | 威胁模型、报告渠道 |
+| [specs/_index.md](specs/_index.md) | 实现者 | 净室规格与实现缺口 |
+| [AGENTS.md](AGENTS.md) | 接手的 AI | 开工顺序与硬性约束 |
+
+修改公开 CLI、JSON schema 或安全级时，至少同步 README、相关 `docs/` 页和 CHANGELOG。
+
+## 许可证
+
+贡献按 [GNU GPL v3](LICENSE) 授权。不要在提交中夹带不兼容许可证的代码、私有规则或未授权素材。

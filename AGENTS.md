@@ -21,18 +21,14 @@ cat implementation/TODO.md
 ls specs/
 ```
 
-**当前状态**：扫描、谓词、JSON 知识库、Docker 动态容量与白名单 prune、物理大小/
-Darwin `SF_DATALESS` 与 zero-block 占位保护、System Junk 一级候选、Darwin user cache、
-broken startup items、`clean`/`purge`
-及系统缓存/日志的只读特权分层、`clean`/`purge` 用户态安全执行，以及 `clean`、
-`purge`、`analyze` 的全屏交互、通用任务 DAG 和动态扫描并行调度均已实现；标准 Python
-包装、`openclean` console script、隔离升级验证和 Time Machine 本地快照只读提示也已
-完成；`optimize ram|purgeable` 命令面已对齐，但在没有安全公开执行器时明确拒绝执行。
-签名托管知识库的 HTTPS、验签、防回滚、原子安装和用户规则分层机制已完成，但项目不
-内置未知服务端 URL/公钥。扫描、预览和配置读取默认只读；显式 `--yes`、
-`ignore add/remove`、`config --analytics` 和知识库更新会写入。特权帮助器及 optimize
-实际执行器仍待实现——见
-`implementation/TODO.md`。
+**当前状态**（用户门面以 [README.md](README.md) 为准，缺口见 `implementation/TODO.md`）：
+
+- **已完成**：五域扫描、谓词 / JSON 知识库、用户态 `clean` / `purge` / `analyze`、
+  TUI / JSON、同卷 Trash、Docker 白名单 prune、云占位保护、隔离预览、标准 Python 包装
+- **明确拒绝**：`optimize ram|purgeable`（没有已验证的安全公开执行器）
+- **未做 / 外部前提**：特权帮助器、正式知识库服务端、真实 Docker daemon 验收
+- **写入边界**：扫描和预览默认只读；`--yes`、`ignore add/remove`、
+  `config --analytics` 和知识库更新才会写入
 
 ---
 
@@ -45,7 +41,8 @@ broken startup items、`clean`/`purge`
 - **法律红线**：`implementation/` 的代码与 CleanMyMac **零代码血缘**，只依据规格中描述的事实和算法思想。
 
 **对你（接手的 AI）最重要的含义**：
-> 你**只需要、也只应该**读 `specs/` 和 `implementation/`。不要去看 `analysis/`（那是受版权保护的原始分析产物，已在本仓库隔离）。
+> 实现时只依据 `specs/` 和 `implementation/`。用户可见行为以 `README.md` 为准。
+> 不要去看 `analysis/`（受版权保护的原始分析产物，已隔离）。
 
 ---
 
@@ -53,10 +50,12 @@ broken startup items、`clean`/`purge`
 
 | 路径 | 和你的关系 | 说明 |
 |---|---|---|
-| **`AGENTS.md`** | ⭐ 你在这里 | 总入口（本文件） |
+| **`AGENTS.md`** | ⭐ 你在这里 | AI 开工入口（本文件） |
 | **`specs/`** | ⭐ **必读** | 8 份设计规格，按 `_index.md` 的顺序读 |
 | **`implementation/`** | ⭐ **你的战场** | Python 实现代码 + `TODO.md` 任务清单 |
-| `README.md` | 可略读 | 项目门面（人类视角的介绍） |
+| `README.md` | 用户门面 | 公开行为变化必须同步；许可证为 GPL-3.0 |
+| `docs/` | 用户/开发者文档 | 预览、能力地图、架构 |
+| `CONTRIBUTING.md` / `SECURITY.md` | 协作与安全 | 净室边界、检查门、漏洞报告 |
 | `analysis/` | ❌ **不要看** | 原始分析产物，受版权保护，`.gitignore` 已隔离 |
 | `local/` | ❌ 不用管 | 过程笔记 + 当时的分析脚手架（`local/tools/`），`.gitignore` 已隔离 |
 
@@ -136,4 +135,4 @@ make release-check
 
 ---
 
-*交接包整理：2026-07-30 · 基于 CleanMyMac 5 CLI v1.0.0 的净室规格*
+*交接包整理：2026-07-30 · 基于 CleanMyMac 5 CLI v1.0.0 的净室规格 · 仓库许可证 [GPL-3.0](LICENSE)*

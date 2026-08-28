@@ -18,12 +18,21 @@ class PackagingMetadataTests(unittest.TestCase):
 
         self.assertEqual(payload["project"]["name"], "open-cleanmymac")
         self.assertEqual(payload["project"]["dynamic"], ["version"])
+        self.assertEqual(payload["project"]["license"], {"text": "GPL-3.0-only"})
         self.assertEqual(payload["project"]["requires-python"], ">=3.11")
         self.assertEqual(payload["project"]["dependencies"], [])
         self.assertIn("macos", payload["project"]["keywords"])
+        self.assertIn(
+            "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+            payload["project"]["classifiers"],
+        )
         self.assertEqual(
             payload["project"]["urls"]["Repository"],
             "https://github.com/BlueSkyXN/open-cleanmymac",
+        )
+        self.assertEqual(
+            payload["project"]["urls"]["Changelog"],
+            "https://github.com/BlueSkyXN/open-cleanmymac/blob/main/CHANGELOG.md",
         )
         self.assertEqual(
             payload["project"]["scripts"]["openclean"],

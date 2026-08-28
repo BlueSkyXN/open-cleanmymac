@@ -11,6 +11,10 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
 
 ### Changed
 
+- 仓库现以 GNU GPL v3 作为公共许可证；公开文档、贡献指南、包装元数据和能力表与
+  GitHub 仓库现状对齐。根 README 改为可扫读首页（徽章、目录、特性摘要、合成 TUI
+  预览），修复能力表在 GitHub 上因 `|` 造成的表格错列，并把实现级安全细节下沉到
+  `SECURITY.md` 与 `docs/`。
 - Docker Build Cache、Images、Containers 现在都要求用资源 identifier 精确选择；不会再由
   默认选择、`--all` 或 tier 批量参数带入不可恢复的 prune。CLI exit 0 后即使容量文本
   无法解析，也会报告“prune 已完成、释放量未知”，不再把已发生的操作伪报为失败。
@@ -103,4 +107,4 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
 - SMAppService/XPC 特权 helper 未实现。
 - `optimize ram|purgeable` 只有明确的安全拒绝契约。
 - Docker prune 尚需在用户自己的 daemon 上做单独验收；preview 不连接真实 daemon。
-- 没有公共许可证和公开包发布渠道。
+- 当时尚未选择公共许可证，也没有 PyPI / Homebrew / GitHub Release 渠道。

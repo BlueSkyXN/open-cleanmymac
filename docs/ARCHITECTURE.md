@@ -5,7 +5,7 @@
 [规格索引](../specs/_index.md) · [实现说明](../implementation/README.md)
 
 本文描述 `openclean 0.23.0` 的实际实现架构。参考软件的功能事实位于 `specs/`；本文件
-只描述本项目自己的模块、数据流和安全边界。
+只描述本项目自己的模块、数据流和安全边界。用户入口见 [README.md](../README.md)。
 
 ## 1. 架构定义
 
@@ -193,4 +193,4 @@ requirement 双向校验、领域操作白名单、helper 端重新推导路径�
 - sdist 有意包含 tests、隔离 preview、release checker 和 checkout 便捷入口，保证源码归档
   可自验证；
 - CI 只构建并上传短期 artifact，不创建 tag、GitHub Release、PyPI 或 Homebrew 发布；
-- 仓库当前没有公共许可证，发布渠道必须在许可证/商标/净室审阅后另行决定。
+- 仓库以 [GNU GPL v3](../LICENSE) 许可。

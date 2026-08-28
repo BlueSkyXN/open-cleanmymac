@@ -5,7 +5,7 @@
 [安全](SECURITY.md) · [规格索引](specs/_index.md) ·
 [实现说明](implementation/README.md)
 
-> 版本：`0.23.0` · 日期：2026-07-31 · 状态：private GitHub Alpha 基线
+> 版本：`0.23.0` · 日期：2026-07-31 · 状态：public GitHub Alpha 基线 · [GPL-3.0](LICENSE)
 
 ## 立即上手
 
@@ -66,7 +66,7 @@ GitHub exact commit 的 Actions 结果后另行确认。
 - 不提交 token、私钥、真实用户路径、机器扫描结果或第三方私有规则。
 - 不解除 `requires_privilege`、ApplicationLanguages、Docker Volumes 等 fail-closed 标记。
 - 不用 `/usr/sbin/purge`、`memory_pressure` 或任意 shell 命令冒充 optimize。
-- 不创建 tag、Release、PyPI/Homebrew 发布或 public repo，除非得到单独授权并完成许可证审阅。
+- 不创建 tag、Release、PyPI/Homebrew 发布，除非得到单独授权并完成发行审阅。
 
 ## 关键实现入口
 
