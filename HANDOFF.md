@@ -42,7 +42,7 @@ make release-check
   realpath 变化或执行前即时复核发现不一致会 fail-closed，多 CLI 进程间仍有已记录的
   TOCTOU 边界。
 
-最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，318 个单元测试通过，
+最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，319 个单元测试通过，
 19/19 隔离预览通过且 `real_user_data_modified=false`。这是本地快照；远端状态必须读取
 GitHub exact commit 的 Actions 结果后另行确认。
 
@@ -87,8 +87,10 @@ GitHub exact commit 的 Actions 结果后另行确认。
 ## 包装策略
 
 - wheel：只包含运行时 `openclean` 包和 console entry point；
+- wheel/sdist 均携带与仓库根一致的 GPL-3.0 文本，并由 release checker 复核；
 - sdist：有意包含 tests、preview、release checker、`openclean_cli.py`、README/TODO；
 - 两者都禁止包含 `analysis/`、`local/`、缓存、`.DS_Store`、凭据和私钥；
+- 开发与 CI 构建工具统一固定在 `requirements-dev.txt`；
 - CI 构建 artifact，但不发布 release/channel。
 
 ## 交接后的第一步

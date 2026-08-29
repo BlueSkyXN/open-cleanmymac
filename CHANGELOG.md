@@ -11,6 +11,9 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
 
 ### Changed
 
+- 新增 AI agent 只读调用指南；开发工具版本集中到 `requirements-dev.txt`，避免本地与 CI
+  使用不同 Ruff 默认规则。包装元数据改用 SPDX license expression，wheel/sdist 都携带
+  完整 GPL-3.0 文本，release archive audit 会拒绝缺失或不一致的许可证。
 - 仓库现以 GNU GPL v3 作为公共许可证；公开文档、贡献指南、包装元数据和能力表与
   GitHub 仓库现状对齐。根 README 改为可扫读首页（徽章、目录、特性摘要、合成 TUI
   预览），修复能力表在 GitHub 上因 `|` 造成的表格错列，并把实现级安全细节下沉到

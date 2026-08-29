@@ -21,7 +21,7 @@
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install ruff build
+.venv/bin/python -m pip install -r requirements-dev.txt
 make check
 ```
 
@@ -48,8 +48,9 @@ make release-check
 git diff --check
 ```
 
-wheel 只含运行时包；sdist 有意包含 tests、preview、release checker 和 checkout wrapper。
-归档不得包含 `analysis/`、`local/`、缓存、`.DS_Store`、凭据或私钥。
+wheel 只含运行时包、console entry point 和许可证；sdist 有意包含 tests、preview、
+release checker、checkout wrapper 和许可证。归档不得包含 `analysis/`、`local/`、缓存、
+`.DS_Store`、凭据或私钥。
 
 ## 提交说明
 
@@ -68,6 +69,7 @@ Pull request 应列出行为变化、安全影响、验证命令与结果、未�
 | 文档 | 读者 | 写什么 |
 |---|---|---|
 | [README.md](README.md) | 用户、审阅者 | 安装、命令、能力边界、许可证 |
+| [docs/AI_USAGE.md](docs/AI_USAGE.md) | AI agent 接入方 | 只读调用、JSON 判读和停止边界 |
 | [docs/PREVIEW.md](docs/PREVIEW.md) | 想先看效果的人 | 隔离预览、合成 TUI、退出码 |
 | [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | 要核对范围的人 | 能力状态、来源、验证证据 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 开发者 | 模块、数据流、信任边界 |

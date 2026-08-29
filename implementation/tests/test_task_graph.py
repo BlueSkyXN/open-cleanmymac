@@ -18,7 +18,9 @@ from openclean.task_graph import (
 
 class TaskGraphValidationTests(unittest.TestCase):
     def test_rejects_duplicate_unknown_self_and_cyclic_dependencies(self) -> None:
-        action = lambda: None
+        def action() -> None:
+            return None
+
         with self.assertRaisesRegex(TaskGraphError, "唯一"):
             execute_task_graph(
                 [TaskSpec("same", action), TaskSpec("same", action)],

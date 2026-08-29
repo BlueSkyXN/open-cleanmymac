@@ -5,8 +5,8 @@
 [安全](../SECURITY.md) · [规格索引](../specs/_index.md)
 
 这是 `openclean` 的独立 Python 实现层。运行时只使用标准库，要求 macOS 和 Python
-3.11+；当前 CI 只验证 Python 3.11。许可证为仓库根目录的
-[GPL-3.0](../LICENSE)。净室边界、功能矩阵和用户安全说明见
+3.11+；当前 CI 只验证 Python 3.11。许可证为随包提供的
+[GPL-3.0](LICENSE)。净室边界、功能矩阵和用户安全说明见
 [仓库 README](../README.md)。
 
 ## 安装与入口
@@ -254,9 +254,9 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 
 剩余工作见 [TODO.md](TODO.md)。
 
-当前本地验证基线为 318 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+当前本地验证基线为 319 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
 checkout 的 `make check` 输出为准。
 
 ## 许可证
 
-本包随仓库以 [GNU GPL v3](../LICENSE) 许可。PyPI / Homebrew / GitHub Release 渠道尚未开通。
+本包随仓库以 [GNU GPL v3](LICENSE) 许可。PyPI / Homebrew / GitHub Release 渠道尚未开通。

@@ -45,13 +45,27 @@ class ReleaseArtifactGuardTests(unittest.TestCase):
         valid = (
             b"Name: open-cleanmymac\n"
             b"Version: 0.23.0\n"
-            b"Requires-Python: >=3.11\n\n"
+            b"Requires-Python: >=3.11\n"
+            b"License-Expression: GPL-3.0-only\n"
+            b"License-File: LICENSE\n\n"
         )
         _assert_metadata(valid, source="test")
 
         with self.assertRaisesRegex(ValueError, "Version"):
             _assert_metadata(
                 valid.replace(b"0.23.0", b"9.9.9"),
+                source="test",
+            )
+
+        with self.assertRaisesRegex(ValueError, "License-Expression"):
+            _assert_metadata(
+                valid.replace(b"GPL-3.0-only", b"MIT"),
+                source="test",
+            )
+
+        with self.assertRaisesRegex(ValueError, "License-File"):
+            _assert_metadata(
+                valid.replace(b"License-File: LICENSE\n", b""),
                 source="test",
             )
 

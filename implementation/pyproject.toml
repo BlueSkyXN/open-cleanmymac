@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,14 +7,14 @@ name = "open-cleanmymac"
 dynamic = ["version"]
 description = "Clean-room macOS cleanup CLI implemented in Python"
 readme = "README.md"
-license = {text = "GPL-3.0-only"}
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = []
 keywords = ["macos", "cleanup", "disk-space", "cli", "clean-room"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
-  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
   "Operating System :: MacOS :: MacOS X",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",

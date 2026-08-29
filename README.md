@@ -14,6 +14,7 @@ macOS 磁盘清理 CLI · 安装后的命令名为 **`openclean`**
 · [能力地图](docs/CAPABILITIES.md)
 · [架构](docs/ARCHITECTURE.md)
 · [安全政策](SECURITY.md)
+· [AI 只读调用](docs/AI_USAGE.md)
 · [贡献指南](CONTRIBUTING.md)
 · [规格索引](specs/_index.md)
 
@@ -50,7 +51,8 @@ Docker daemon 或云文件。更多画面见 [docs/PREVIEW.md](docs/PREVIEW.md)�
 
 ## 快速开始
 
-要求：macOS、Python 3.11+。当前 CI 只验证 Python 3.11。开发检查还需要 `ruff`。
+要求：macOS、Python 3.11+。当前 CI 只验证 Python 3.11。开发工具版本统一记录在
+`requirements-dev.txt`。
 
 ### 隔离预览（推荐先做）
 
@@ -213,7 +215,7 @@ Item / ScanIssue / ScanResult
 ## 开发
 
 ```bash
-python3 -m pip install ruff build
+python3 -m pip install -r requirements-dev.txt
 make lint
 make test
 make preview
@@ -222,7 +224,7 @@ make package
 make release-check
 ```
 
-当前本地基线通过 318 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
+当前本地基线通过 319 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
 checkout 的实际运行结果为准。CI 在 macOS / Python 3.11 上执行 lint、测试、预览、构建、
 归档审计和隔离 wheel 安装，不发布 PyPI、Homebrew 或 GitHub Release。
 
@@ -230,6 +232,7 @@ checkout 的实际运行结果为准。CI 在 macOS / Python 3.11 上执行 lint
 |---|---|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 净室边界、开发环境和检查门 |
 | [CHANGELOG.md](CHANGELOG.md) | 用户可见变更 |
+| [docs/AI_USAGE.md](docs/AI_USAGE.md) | AI agent 的只读调用边界与 JSON 判读方式 |
 | [implementation/README.md](implementation/README.md) | 安装入口、选择语义、JSON 与规则格式 |
 | [implementation/TODO.md](implementation/TODO.md) | 当前开发缺口 |
 
