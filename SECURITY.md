@@ -4,8 +4,11 @@
 [功能预览](docs/PREVIEW.md) · [架构](docs/ARCHITECTURE.md) ·
 [规格索引](specs/_index.md) · [实现说明](implementation/README.md)
 
-`openclean` 会枚举、移动和在特定命令下永久删除文件，因此安全缺陷可能导致数据丢失。
+`openclean` 会枚举、移动，并在特定命令下永久删除文件。安全缺陷可能导致数据丢失。
 请不要在公开 issue 中提交可利用细节、真实目录树、规则文件、用户名、token 或其他隐私数据。
+
+当前公开源码基线是 `0.23.0` Alpha，许可证为 [GPL-3.0](LICENSE)。尚未发布签名安装包、
+PyPI、Homebrew 或 GitHub Release；只有仓库 exact commit 和 CI artifact 能作为当前构建来源。
 
 ## 报告漏洞
 
@@ -23,8 +26,7 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 | `0.23.x` | 当前 Alpha 基线 |
 | `<0.23` | 不维护；请先复现于当前版本 |
 
-项目尚未发布 PyPI/Homebrew/GitHub Release。只有仓库 exact commit 和 CI artifact 能作为
-当前构建来源。
+支持范围覆盖当前 Git 基线，不覆盖自行修改后的 fork 或未审阅的第三方构建。
 
 ## 安全模型
 

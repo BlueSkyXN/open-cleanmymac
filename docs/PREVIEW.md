@@ -4,7 +4,9 @@
 [架构](ARCHITECTURE.md) · [安全](../SECURITY.md) ·
 [规格索引](../specs/_index.md) · [实现说明](../implementation/README.md)
 
-本项目提供一个可重复、无需触碰真实用户数据的功能预览：
+`make preview` 是本项目的安全演示入口：在 `TemporaryDirectory` 中覆盖全部非交互命令族、
+临时写路径和 guard 状态，不读取真实 `HOME`。curses TUI 另有由生产绘制函数生成的确定性
+SVG，不冒充 macOS Terminal 截图。
 
 ```bash
 make preview

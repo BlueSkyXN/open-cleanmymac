@@ -6,6 +6,7 @@
 
 本文把“材料里出现过的能力”和“当前 `openclean` CLI 承诺交付的能力”分开。内部组件或
 Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意保持只读或 fail-closed。
+用户入口见 [README.md](../README.md)；本页是范围与验证的权威表。
 
 ## 状态定义
 
@@ -26,13 +27,13 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 | capability | command | status | boundary / exclusion |
 |---|---|---|---|
 | 五域聚合扫描 | `scan` | `available` | `scan` 始终只读；扫描点是保守公开子集 |
-| 分类清理 | `clean junk\|dev\|ai` | `available` | 默认预览；`--yes` 只执行当前已审阅选择 |
+| 分类清理 | `clean junk / dev / ai` | `available` | 默认预览；`--yes` 只执行当前已审阅选择 |
 | Trash 审阅与清空 | `clean trash` | `available` | confirm；内容永久删除，根目录保留 |
 | 项目产物清理 | `purge [path]` | `available` | 只处理公开产物字典；普通项移到同卷 Trash |
 | 空间分析 | `analyze [path]` | `available` | 不自动删除 Time Machine 快照 |
 | 精确参数选择 | `clean/purge --select` | `available` | 从空选择集开始；tier flag 只作风险 gate；拒绝 `--select + --all` |
 | 文本/JSON/TUI 输出 | 全局 | `available` | 默认 JSON 保留精确路径；`--redact-paths` 生成不可 replay 的单文档 opaque refs |
-| 用户 ignore | `ignore list\|add\|remove` | `available` | 写入用户 `0600` JSON；不内置私有规则 |
+| 用户 ignore | `ignore list / add / remove` | `available` | 写入用户 `0600` JSON；不内置私有规则 |
 | CLI 配置 | `config` | `available` | analytics 仅是偏好；当前没有遥测上传 |
 | 签名托管知识库客户端 | `config --update-knowledge` | `external-prerequisite` | 客户端已完成；项目尚无正式 URL、公钥和发布流程 |
 | Docker 容量与固定 prune | `scan/clean dev` | `external-prerequisite` | identifier 精确选择和 target binding 已完成；真实 daemon 验收待完成；Volumes 永远拒绝 |
@@ -40,7 +41,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 | ApplicationLanguages | `scan/clean junk` | `read-only` | 固定 `critical + actionable=false`；不修改签名 app |
 | Time Machine 本地快照提示 | `analyze` | `read-only` | 只显示名称/数量；不宣称精确大小，不删除 |
 | dataless/疑似占位保护 | 所有文件扫描/执行 | `available` | 不保证识别全部已 materialized cloud-synced 文件；真实 provider fixture 待验收 |
-| RAM/purgeable 能力状态 | `optimize ram\|purgeable` | `guarded-unavailable` | 没有已验证、安全、公开的等价执行接口 |
+| RAM/purgeable 能力状态 | `optimize ram / purgeable` | `guarded-unavailable` | 没有已验证、安全、公开的等价执行接口 |
 | 特权系统清理 | 候选只读可见 | `external-prerequisite` | 需 native host/helper、SMAppService、签名、entitlements、安装验收 |
 | universal binary thinning | 无 | `not-implemented` | 当前不实现；修改签名/兼容性风险高 |
 | Desktop GUI、菜单栏、后台 agent | 无 | `out-of-scope` | 当前产品只开发 CLI；curses TUI 属于 CLI |
@@ -73,7 +74,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 ## 验证边界
 
-当前自动化基线覆盖 318 个 `unittest` 和 19 个 `TemporaryDirectory` 隔离预览场景。
+当前自动化基线覆盖 319 个 `unittest` 和 19 个 `TemporaryDirectory` 隔离预览场景。
 这能证明当前 checkout 的本地逻辑、归档和合成写路径，但不能替代以下验收：
 
 - 真实 iCloud Drive/第三方 File Provider 的 dataless 状态保持；

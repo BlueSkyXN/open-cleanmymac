@@ -5,7 +5,7 @@
 [安全](SECURITY.md) · [规格索引](specs/_index.md) ·
 [实现说明](implementation/README.md)
 
-> 版本：`0.23.0` · 日期：2026-07-31 · 状态：private GitHub Alpha 基线
+> 版本：`0.23.0` · 日期：2026-07-31 · 状态：public GitHub Alpha 基线 · [GPL-3.0](LICENSE)
 
 ## 立即上手
 
@@ -42,7 +42,7 @@ make release-check
   realpath 变化或执行前即时复核发现不一致会 fail-closed，多 CLI 进程间仍有已记录的
   TOCTOU 边界。
 
-最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，318 个单元测试通过，
+最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，319 个单元测试通过，
 19/19 隔离预览通过且 `real_user_data_modified=false`。这是本地快照；远端状态必须读取
 GitHub exact commit 的 Actions 结果后另行确认。
 
@@ -66,7 +66,7 @@ GitHub exact commit 的 Actions 结果后另行确认。
 - 不提交 token、私钥、真实用户路径、机器扫描结果或第三方私有规则。
 - 不解除 `requires_privilege`、ApplicationLanguages、Docker Volumes 等 fail-closed 标记。
 - 不用 `/usr/sbin/purge`、`memory_pressure` 或任意 shell 命令冒充 optimize。
-- 不创建 tag、Release、PyPI/Homebrew 发布或 public repo，除非得到单独授权并完成许可证审阅。
+- 不创建 tag、Release、PyPI/Homebrew 发布，除非得到单独授权并完成发行审阅。
 
 ## 关键实现入口
 
@@ -87,8 +87,10 @@ GitHub exact commit 的 Actions 结果后另行确认。
 ## 包装策略
 
 - wheel：只包含运行时 `openclean` 包和 console entry point；
+- wheel/sdist 均携带与仓库根一致的 GPL-3.0 文本，并由 release checker 复核；
 - sdist：有意包含 tests、preview、release checker、`openclean_cli.py`、README/TODO；
 - 两者都禁止包含 `analysis/`、`local/`、缓存、`.DS_Store`、凭据和私钥；
+- 开发与 CI 构建工具统一固定在 `requirements-dev.txt`；
 - CI 构建 artifact，但不发布 release/channel。
 
 ## 交接后的第一步

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,8 @@ name = "open-cleanmymac"
 dynamic = ["version"]
 description = "Clean-room macOS cleanup CLI implemented in Python"
 readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = []
 keywords = ["macos", "cleanup", "disk-space", "cli", "clean-room"]
@@ -24,6 +26,7 @@ Homepage = "https://github.com/BlueSkyXN/open-cleanmymac"
 Repository = "https://github.com/BlueSkyXN/open-cleanmymac"
 Issues = "https://github.com/BlueSkyXN/open-cleanmymac/issues"
 Documentation = "https://github.com/BlueSkyXN/open-cleanmymac/tree/main/docs"
+Changelog = "https://github.com/BlueSkyXN/open-cleanmymac/blob/main/CHANGELOG.md"
 
 [project.scripts]
 openclean = "openclean.cli:main"

@@ -22,6 +22,9 @@ PACKAGE_VERSION = str(
     ]
 )
 PACKAGE_NAME = "open-cleanmymac"
+LICENSE_EXPRESSION = "GPL-3.0-only"
+LICENSE_NAME = "LICENSE"
+LICENSE_CONTENT = (IMPLEMENTATION_ROOT / LICENSE_NAME).read_bytes()
 
 FORBIDDEN_COMPONENTS = {
     "analysis",
@@ -100,6 +103,7 @@ def _assert_metadata(content: bytes, *, source: str) -> None:
         "Name": PACKAGE_NAME,
         "Version": PACKAGE_VERSION,
         "Requires-Python": ">=3.11",
+        "License-Expression": LICENSE_EXPRESSION,
     }
     for field, expected_value in expected.items():
         if metadata.get(field) != expected_value:
@@ -107,6 +111,11 @@ def _assert_metadata(content: bytes, *, source: str) -> None:
                 f"{source} 的 {field} 不匹配："
                 f"{metadata.get(field)!r} != {expected_value!r}"
             )
+    if metadata.get_all("License-File", []) != [LICENSE_NAME]:
+        raise ValueError(
+            f"{source} 的 License-File 不匹配："
+            f"{metadata.get_all('License-File', [])!r} != {[LICENSE_NAME]!r}"
+        )
 
 
 def _assert_zip_member(info: zipfile.ZipInfo) -> None:
@@ -136,6 +145,15 @@ def _wheel_members(path: Path) -> list[str]:
             archive.read(metadata_members[0]),
             source="wheel METADATA",
         )
+        license_members = [
+            name
+            for name in members
+            if name.endswith(f".dist-info/licenses/{LICENSE_NAME}")
+        ]
+        if len(license_members) != 1:
+            raise ValueError("wheel 必须恰好包含一份 GPL LICENSE")
+        if archive.read(license_members[0]) != LICENSE_CONTENT:
+            raise ValueError("wheel 的 LICENSE 与仓库许可证不一致")
         entrypoint_members = [
             name
             for name in members
@@ -184,10 +202,25 @@ def _sdist_members(path: Path) -> list[str]:
         if stream is None:
             raise ValueError("无法读取 sdist PKG-INFO")
         _assert_metadata(stream.read(), source="sdist PKG-INFO")
+        license_members = [
+            member
+            for member in archive_members
+            if (
+                member.isfile()
+                and PurePosixPath(member.name).name == LICENSE_NAME
+                and len(PurePosixPath(member.name).parts) == 2
+            )
+        ]
+        if len(license_members) != 1:
+            raise ValueError("sdist 必须恰好包含一份根 LICENSE")
+        stream = archive.extractfile(license_members[0])
+        if stream is None or stream.read() != LICENSE_CONTENT:
+            raise ValueError("sdist 的 LICENSE 与仓库许可证不一致")
     for member in members:
         _assert_safe_member(member)
     relative = [PurePosixPath(name).parts[1:] for name in members]
     required = {
+        ("LICENSE",),
         ("README.md",),
         ("TODO.md",),
         ("openclean_cli.py",),
