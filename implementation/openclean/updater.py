@@ -11,7 +11,6 @@ from pathlib import Path
 
 from .models import UPDATER_STATUSES, normalize_path
 
-
 _MAX_INFO_PLIST_BYTES = 2 * 1024 * 1024
 _NUMERIC_VERSION = re.compile(r"^\d+(?:\.\d+)*$")
 

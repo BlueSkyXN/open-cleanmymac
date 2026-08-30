@@ -27,7 +27,6 @@ from .processes import (
 )
 from .updater import UpdaterAssessment, assess_updater_staging_root
 
-
 RETENTION_DAYS = (7, 14, 30)
 
 

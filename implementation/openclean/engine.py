@@ -15,8 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .application_ownership import process_markers_for_path
 from .application_languages import scan_application_languages
+from .application_ownership import process_markers_for_path
 from .docker import scan_docker_resources
 from .filesystem import filesystem_id_retry, lstat_retry, scandir_entries
 from .knowledge_base import KnowledgeBase

@@ -7,7 +7,6 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TypeVar
 
-
 T = TypeVar("T")
 
 
