@@ -53,7 +53,7 @@ class ScanPointContractTests(unittest.TestCase):
         self.assertTrue(points["Lark 更新缓存"].updater_protection)
         self.assertEqual(points["Lark 更新缓存"].safety, "critical")
         self.assertEqual(
-            points["日志与 trace 保留期"].scanner,
+            points["日志/runtime 保留期"].scanner,
             "retention-diagnostics",
         )
         self.assertEqual(

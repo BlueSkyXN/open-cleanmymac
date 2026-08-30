@@ -46,9 +46,16 @@ Qoder ShipIt/Qoder updater、Lark update 和 TRAE updater。`staged > installed`
 | DiagnosticLogs | `~/Library/Logs/DiagnosticReports`、`/Library/Logs/DiagnosticReports`（`.ips`/`.crash`/`.panic`/`.diag`） |
 | SandboxLogs / QuarantineLogs | 沙盒日志；`~/Library/Preferences/com.apple.LaunchServices.QuarantineEvents*` |
 
-本项目额外对 WorkBuddy logs/traces、Lark SDK logs、Shadowrocket logs 和 TRAE logs 做
+本项目额外对 WorkBuddy logs/traces/audit、Codex logs/runtime、Lark SDK logs、
+Shadowrocket logs、TRAE logs，以及 UURemote application/updater logs 和历史安装包做
 retention-aware 只读诊断：只读取目录项、物理块、mtime、文件数量、进程和打开句柄状态，
-分别报告 7/14/30 天容量；不读取正文，不把任一阈值设为默认删除策略，也不提供批量执行器。
+分别报告 7/14/30 天容量；不读取正文或安装包内容，不把任一阈值设为默认删除策略，也不
+提供批量执行器。
+
+`getconf` 发现的 Darwin `T/X` 根额外匹配公开命名的 Go/Node 构建临时目录、Qoder CLI
+版本化 runtime/updater 解压目录、AI toolhost snapshots、UURemote temp 和
+`*.code_sign_clone`。这些路径只进入 retention 诊断，固定不可执行。Darwin user cache 的
+直接子项按公开 bundle/helper 名称应用进程保护；任意其它位置的同名目录不匹配。
 
 ### 其它系统垃圾
 - **BrokenStartupItems**：失效的启动项（指向已不存在二进制的 LaunchAgents/Daemons）。

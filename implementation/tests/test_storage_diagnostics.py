@@ -12,18 +12,39 @@ from unittest import mock
 from openclean.cli import _item_payload
 from openclean.engine import IgnoreRules
 from openclean.knowledge_base import KnowledgeBase
-from openclean.macos import DarwinUserTempDiscovery
+from openclean.macos import DarwinUserCacheDiscovery, DarwinUserTempDiscovery
 from openclean.processes import OpenFileSnapshot, ProcessSnapshot
 from openclean.storage_diagnostics import (
+    RETENTION_RULES,
     RetentionRule,
     SQLiteRule,
+    discover_darwin_transient_retention_rules,
     scan_darwin_temp_updater_diagnostics,
+    scan_retention_diagnostics,
     scan_retention_rules,
     scan_sqlite_rules,
 )
 
 
 class RetentionDiagnosticTests(unittest.TestCase):
+    def test_real_world_public_roots_are_diagnostic_only(self) -> None:
+        by_path = {rule.path: rule for rule in RETENTION_RULES}
+
+        self.assertIn("~/.cache/codex-runtimes", by_path)
+        self.assertIn("~/Library/Logs/WorkBuddy", by_path)
+        self.assertIn(
+            "~/Library/Application Support/"
+            "com.netease.uuremote.updater/download",
+            by_path,
+        )
+        self.assertIn(
+            "UURemoteService",
+            by_path[
+                "~/Library/Application Support/"
+                "com.netease.uuremote.updater/download"
+            ].process_markers,
+        )
+
     def test_knowledge_base_protection_short_circuits_before_lstat(self) -> None:
         protected = Path("/protected/logs")
         gate = IgnoreRules(
@@ -103,6 +124,109 @@ class RetentionDiagnosticTests(unittest.TestCase):
 
             self.assertEqual(result.items, [])
             self.assertEqual(result.issues, [])
+
+
+class DarwinTransientDiagnosticTests(unittest.TestCase):
+    def test_discovers_only_public_dynamic_name_patterns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            temp_root = root / "T"
+            cache_root = root / "C"
+            code_sign_root = root / "X"
+            for path in (
+                temp_root / "go-build123",
+                temp_root / "qodercli-natives-v1.2.3-user",
+                temp_root / "UURemote",
+                temp_root / "private-session-abcdef",
+                code_sign_root / "com.google.Chrome.code_sign_clone",
+                code_sign_root / "org.example.tool.code_sign_clone",
+            ):
+                path.mkdir(parents=True)
+
+            with mock.patch(
+                "openclean.storage_diagnostics.discover_darwin_user_temp",
+                return_value=DarwinUserTempDiscovery(paths=(temp_root,)),
+            ), mock.patch(
+                "openclean.storage_diagnostics.discover_darwin_user_cache",
+                return_value=DarwinUserCacheDiscovery(paths=(cache_root,)),
+            ):
+                rules, issues = discover_darwin_transient_retention_rules()
+
+            by_name = {Path(rule.path).name: rule for rule in rules}
+            self.assertEqual(issues, ())
+            self.assertIn("go-build123", by_name)
+            self.assertIn("qodercli-natives-v1.2.3-user", by_name)
+            self.assertIn("UURemote", by_name)
+            self.assertIn("com.google.Chrome.code_sign_clone", by_name)
+            self.assertIn("org.example.tool.code_sign_clone", by_name)
+            self.assertNotIn("private-session-abcdef", by_name)
+            self.assertIn(
+                "Google Chrome.app",
+                by_name[
+                    "com.google.Chrome.code_sign_clone"
+                ].process_markers,
+            )
+
+    def test_dynamic_roots_remain_non_actionable_retention_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            temp_root = root / "T"
+            cache_root = root / "C"
+            go_build = temp_root / "go-build123"
+            clone = root / "X/com.google.Chrome.code_sign_clone"
+            go_build.mkdir(parents=True)
+            clone.mkdir(parents=True)
+            go_file = go_build / "build.bin"
+            clone_file = clone / "clone.bin"
+            go_file.write_bytes(b"go" * 4096)
+            clone_file.write_bytes(b"clone" * 4096)
+
+            with mock.patch(
+                "openclean.storage_diagnostics.RETENTION_RULES",
+                (),
+            ), mock.patch(
+                "openclean.storage_diagnostics.discover_darwin_user_temp",
+                return_value=DarwinUserTempDiscovery(paths=(temp_root,)),
+            ), mock.patch(
+                "openclean.storage_diagnostics.discover_darwin_user_cache",
+                return_value=DarwinUserCacheDiscovery(paths=(cache_root,)),
+            ), mock.patch(
+                "openclean.storage_diagnostics.capture_process_snapshot",
+                return_value=ProcessSnapshot(
+                    ("/usr/local/go/bin/go build", "/Applications/Google Chrome.app")
+                ),
+            ), mock.patch(
+                "openclean.storage_diagnostics.capture_open_file_snapshot",
+                return_value=OpenFileSnapshot((str(go_file), str(clone_file))),
+            ):
+                result = scan_retention_diagnostics(IgnoreRules())
+
+            self.assertTrue(result.complete)
+            self.assertEqual(len(result.items), 2)
+            self.assertTrue(all(not item.actionable for item in result.items))
+            self.assertTrue(
+                all(item.diagnostic_kind == "retention" for item in result.items)
+            )
+            self.assertTrue(all(item.open_handle_count == 1 for item in result.items))
+
+    def test_unexpected_cache_root_does_not_guess_the_x_sibling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            unexpected = root / "cache"
+            unexpected.mkdir()
+
+            with mock.patch(
+                "openclean.storage_diagnostics.discover_darwin_user_temp",
+                return_value=DarwinUserTempDiscovery(),
+            ), mock.patch(
+                "openclean.storage_diagnostics.discover_darwin_user_cache",
+                return_value=DarwinUserCacheDiscovery(paths=(unexpected,)),
+            ):
+                rules, issues = discover_darwin_transient_retention_rules()
+
+            self.assertEqual(rules, ())
+            self.assertEqual(issues[0].code, "path_discovery_failed")
+            self.assertFalse(issues[0].blocking)
 
 
 class SQLiteDiagnosticTests(unittest.TestCase):

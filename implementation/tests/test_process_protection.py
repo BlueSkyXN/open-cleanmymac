@@ -9,6 +9,7 @@ from unittest import mock
 from openclean.application_ownership import process_markers_for_path
 from openclean.cleanup import execute_cleanup
 from openclean.engine import IgnoreRules, scan_points
+from openclean.macos import DarwinUserCacheDiscovery
 from openclean.processes import (
     OpenFileDetectionError,
     OpenFileSnapshot,
@@ -17,7 +18,12 @@ from openclean.processes import (
     capture_open_file_snapshot,
     capture_process_snapshot,
 )
-from openclean.scanpoints import AI_TOOL_JUNK, SYSTEM_JUNK, ScanPoint
+from openclean.scanpoints import (
+    AI_TOOL_JUNK,
+    DEVELOPER_JUNK,
+    SYSTEM_JUNK,
+    ScanPoint,
+)
 
 
 class ProcessSnapshotTests(unittest.TestCase):
@@ -186,6 +192,7 @@ class ProcessProtectedScanTests(unittest.TestCase):
             home = Path(tmp) / "home"
             owned = home / "Library" / "Caches" / "com.openai.codex"
             sibling = home / "Library" / "Caches" / "com.openai.codex-backup"
+            uuremote = home / "Library" / "Caches" / "com.netease.uuremote"
 
             self.assertIn(
                 "ChatGPT.app",
@@ -195,15 +202,89 @@ class ProcessProtectedScanTests(unittest.TestCase):
                 process_markers_for_path(sibling, home=home),
                 (),
             )
+            self.assertIn(
+                "UURemote.app",
+                process_markers_for_path(uuremote, home=home),
+            )
+
+    def test_darwin_cache_owner_rules_require_the_discovered_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_root = root / "C"
+            owned = cache_root / "com.netease.uuremote"
+
+            self.assertIn(
+                "UURemote.app",
+                process_markers_for_path(
+                    owned,
+                    home=root / "home",
+                    darwin_cache_root=cache_root,
+                ),
+            )
+            self.assertIn(
+                "Cursor.app",
+                process_markers_for_path(
+                    cache_root / "com.todesktop.230313mzl4w4u92.helper",
+                    home=root / "home",
+                    darwin_cache_root=cache_root,
+                ),
+            )
+            self.assertEqual(
+                process_markers_for_path(
+                    root / "other/com.netease.uuremote",
+                    home=root / "home",
+                    darwin_cache_root=cache_root,
+                ),
+                (),
+            )
+
+    def test_generic_darwin_cache_applies_application_owner_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            cache_root = root / "C"
+            owned = cache_root / "com.netease.uuremote"
+            owned.mkdir(parents=True)
+            (owned / "data.bin").write_bytes(b"data")
+            point = ScanPoint(
+                "Darwin 用户缓存",
+                (),
+                "confirm",
+                expand_children=True,
+                path_provider="darwin-user-cache",
+                process_owner_protection=True,
+            )
+
+            with mock.patch.dict("os.environ", {"HOME": str(home)}), mock.patch(
+                "openclean.engine.discover_darwin_user_cache",
+                return_value=DarwinUserCacheDiscovery(paths=(cache_root,)),
+            ), mock.patch(
+                "openclean.engine.capture_process_snapshot",
+                return_value=ProcessSnapshot(
+                    ("/Applications/UURemote.app/Contents/MacOS/UURemote",)
+                ),
+            ):
+                result = scan_points([point], workers=1)
+
+            self.assertEqual(len(result.items), 1)
+            item = result.items[0]
+            self.assertEqual(item.path, owned)
+            self.assertFalse(item.actionable)
+            self.assertIn("UURemote.app", item.running_process_markers)
+            self.assertIn("正在运行", item.action_block_reason)
 
     def test_public_xcode_and_ai_points_are_precise_and_process_guarded(self) -> None:
         system = {point.category: point for point in SYSTEM_JUNK}
+        developer = {point.category: point for point in DEVELOPER_JUNK}
         ai = {point.category: point for point in AI_TOOL_JUNK}
 
         self.assertIn("Xcode 文档缓存", system)
         self.assertIn("Xcode 设备日志", system)
         self.assertEqual(system["Xcode Archives"].safety, "critical")
         self.assertTrue(system["Xcode DerivedData"].running_process_markers)
+        self.assertTrue(system["Darwin 用户缓存"].process_owner_protection)
+        self.assertIn("go test", developer["Go 构建缓存"].running_process_markers)
+        self.assertIn("gopls", developer["Go module cache"].running_process_markers)
         self.assertNotIn("~/.codex/cache", ai["Codex 缓存"].paths)
         self.assertIn(
             "~/.codex/cache/codex_apps_tools",

@@ -724,7 +724,14 @@ def _scan_point(
     ):
         facts = candidate.facts
         owner_markers = (
-            process_markers_for_path(facts.path)
+            process_markers_for_path(
+                facts.path,
+                darwin_cache_root=(
+                    candidate.root.path
+                    if sp.path_provider == "darwin-user-cache"
+                    else None
+                ),
+            )
             if sp.process_owner_protection
             else ()
         )

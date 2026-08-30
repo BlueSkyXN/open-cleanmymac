@@ -120,7 +120,9 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
   Login Data、IndexedDB 或整个 profile，运行中固定不可执行。
 - Claude/Copilot 等版本目录应先解析当前 symlink/安装版本，只报告非当前完整旧版本；
   零字节更新 marker、当前 binary 和 session state 必须保留。
-- UURemote 历史 `.pkg` 等需比较已安装版本并检查句柄，再纳入 updater 状态机。
+- UURemote application/updater logs、历史 `.pkg` 和 Darwin temp 已纳入只读 retention
+  诊断；若未来允许删除单个 `.pkg`，仍需读取可信 package version、比较已安装版本并在
+  执行前复核句柄，再纳入 updater 状态机。
 
 ## 当前已完成的交付门
 
@@ -137,6 +139,10 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
   WAL/SHM/journal 和句柄状态；不自动 `VACUUM` 或删除数据库；
 - `DARWIN_USER_TEMP_DIR` 中的 Qoder ShipIt 完整 app 副本按动态 updater 根读取版本；
   应用缺失等状态只读可见且固定不可执行；
+- Codex runtime/macOS logs、WorkBuddy macOS/audit logs、UURemote logs/download，以及
+  Darwin `T/X` 中公开命名的构建 temp、版本化 runtime、toolhost snapshot 和 code-sign
+  clone 均进入只读 retention 诊断；
+- 通用 Darwin user cache 一级候选按公开 bundle/helper 名称继承应用进程保护；
 - JSON per-volume 汇总，以及 Go module、Cargo Git、npm 次级缓存扫描；
 - 任务 DAG、加权进度、动态扫描并发；
 - System Junk、Darwin cache、broken startup items、Time Machine、ApplicationLanguages；

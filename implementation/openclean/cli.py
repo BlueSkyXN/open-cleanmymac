@@ -1073,7 +1073,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = ap.add_subparsers(dest="cmd")
 
-    sp = sub.add_parser("scan", help="扫描并报告可清理项（只读，不删除）")
+    sp = sub.add_parser(
+        "scan",
+        help="扫描并报告磁盘占用、清理候选和只读诊断（不删除）",
+    )
     sp.add_argument("--domain", action="append", choices=ALL_DOMAINS,
                     help=f"扫描域，可多次指定；默认全部：{', '.join(ALL_DOMAINS)}")
     sp.add_argument(

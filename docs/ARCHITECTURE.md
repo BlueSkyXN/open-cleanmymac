@@ -46,7 +46,7 @@ flowchart TD
 | `filesystem.py` | `lstat` / `scandir` / `statvfs` 的 EINTR-safe 只读封装 | 路径策略或删除 |
 | `application_ownership.py` | 公开缓存路径到应用进程 marker 的保守归属 | 私有厂商规则或进程枚举 |
 | `updater.py` | 已知 updater 根、app/ZIP bundle metadata、版本状态比较 | 执行暂存代码或自动安装 |
-| `storage_diagnostics.py` | 日志 retention 与 SQLite freelist 只读结构化诊断 | 删除日志、`VACUUM` 或读取日志正文 |
+| `storage_diagnostics.py` | 日志/runtime/download retention、Darwin transient 与 SQLite freelist 只读诊断 | 删除诊断对象、`VACUUM` 或读取正文/包内容 |
 | `task_graph.py` | DAG 校验、就绪调度、依赖失败传播 | 业务规则 |
 | `progress.py` | 固定权重、单调快照、TTY renderer | 任务执行 |
 | `predicates.py` | 组合谓词、KB 优先的保护闸 | 规则持久化 |
@@ -120,6 +120,9 @@ issue 使用稳定 code、message、task、path 和 `blocking`。`complete=true`
     read-only PRAGMA。两类诊断始终不可执行，也不进入 cleanup 状态机。
 12. Qoder ShipIt 的 Darwin temp 根由 `getconf` 动态发现，复用 updater 版本判定，但完整
     app 副本始终只读报告，避免把暂存状态或应用缺失误当作清理授权。
+13. Darwin `T/X` 仅按公开名称模式发现构建临时目录、版本化 runtime、toolhost snapshot、
+    UURemote temp 与 code-sign clone；通用 Darwin cache 直接子项按公开 bundle/helper 名称
+    继承应用进程保护，不从真实机器数据生成私有路径规则。
 
 JSON 的 `volumes` 按 scan-time device 分组文件系统候选，分别汇总系统盘与外置盘容量。
 Docker 等非文件系统资源不进入卷汇总；`device_id` 不是跨重启的持久标识。

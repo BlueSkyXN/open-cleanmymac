@@ -65,6 +65,10 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
   read-only URI，并在查询前后复核文件状态。两类结果固定不可执行，不进入通用清理器。
 - Darwin temp updater 只匹配明确的 Qoder ShipIt 动态根并读取受限 app metadata；即使版本
   可判断也固定不可执行，避免临时下载/解压竞态进入通用清理器。
+- Darwin `T/X` 扩展只匹配公开维护的目录名/glob，读取 no-follow metadata、进程和句柄；
+  不读取 runtime、安装包、toolhost snapshot 或 code-sign clone 内容，所有结果固定不可执行。
+- 通用 Darwin user cache 仅在 `getconf` 发现根的直接子项上按公开 bundle/helper 名称应用
+  进程归属，不会把任意位置的同名目录当作应用缓存。
 - macOS `SF_DATALESS` 在目录枚举和最终移动前优先检查；zero-block 规则作为保守兜底，
   dataless/疑似云占位对象不计入可回收空间且不可执行。
 - 特权路径、Docker volumes、ApplicationLanguages 修改和 universal binary thinning保持

@@ -57,6 +57,11 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
   WAL/SHM/journal 和句柄；不自动 `VACUUM`，也不把数据库文件当成垃圾。
 - 新增 `DARWIN_USER_TEMP_DIR` Qoder ShipIt 临时副本诊断：动态完整 app 复用 updater 版本
   状态机，应用缺失或状态未知时只读可见且固定不可执行。
+- retention 诊断补充 Codex runtime/macOS logs、WorkBuddy macOS/audit logs，以及 UURemote
+  application/updater logs 和历史安装包；全部只读取 metadata 并固定不可执行。
+- 通过 `getconf` 动态识别 Darwin `T/X` 下的 Go/Node 临时构建目录、Qoder CLI 版本化
+  runtime/updater 解压目录、AI toolhost snapshots、UURemote temp 和 `*.code_sign_clone`，
+  只报告 7/14/30 天占用、进程和句柄，不根据真实机器容量硬编码阈值。
 - 隔离 preview 用两个合成 Trash 根验证精确选择不会产生 collateral selection。
 - 文本清理报告现在准确区分只读预览和执行结果，并把精确选择统一标为“当前选择”。
 - `clean`/`purge`/`optimize` help 直接说明永久操作、同卷 Trash 和预期退出码；临时
@@ -91,6 +96,8 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
   进程状态无法读取时保持 fail-closed。
 - updater 执行前重新读取版本状态；扫描后的暂存版本、已安装版本或状态变化会在任何移动
   开始前取消整批。ZIP 只读取受限大小的顶层 app plist，不运行第三方内容。
+- 通用 Darwin user cache 一级候选现在按公开 bundle/helper 名称继承应用进程保护；新增
+  UURemote user-cache 归属，运行中或进程探测失败时仍可见但不可执行。
 - 日志诊断只读取 no-follow 文件 metadata；SQLite 通过 `mode=ro&immutable=1` 查询并在前后
   复核文件身份/大小/mtime，两类结果都固定不可执行。
 - 清理后代审计改为 no-follow 目录 fd + `fstat` + `scandir(fd)`，并复核类型、owner、device

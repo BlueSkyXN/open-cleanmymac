@@ -58,6 +58,7 @@ class CliContractTests(unittest.TestCase):
     def test_help_is_stdout_only_and_explains_safety_contracts(self) -> None:
         cases = (
             (("--help",), "macOS 清理工具"),
+            (("--help",), "只读诊断"),
             (("scan", "--help"), "仅本次运行"),
             (("clean", "--help"), "永久操作"),
             (("purge", "--help"), "同卷 Trash"),

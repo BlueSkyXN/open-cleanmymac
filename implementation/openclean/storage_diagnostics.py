@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import fnmatch
 import sqlite3
 import stat
 import time
@@ -14,7 +15,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .filesystem import lstat_retry, scandir_entries
-from .macos import discover_darwin_user_temp
+from .macos import discover_darwin_user_cache, discover_darwin_user_temp
 from .models import FileFacts, FileIdentity, Item, ScanIssue, ScanResult, normalize_path
 from .predicates import Predicate, ProtectionGate
 from .processes import (
@@ -45,6 +46,13 @@ class SQLiteRule:
     minimum_free_bytes: int = 1024 * 1024
 
 
+@dataclass(frozen=True)
+class DarwinTransientPattern:
+    category: str
+    name_globs: tuple[str, ...]
+    process_markers: tuple[str, ...] = ()
+
+
 RETENTION_RULES: tuple[RetentionRule, ...] = (
     RetentionRule(
         "WorkBuddy logs 保留期",
@@ -55,6 +63,26 @@ RETENTION_RULES: tuple[RetentionRule, ...] = (
         "WorkBuddy traces 保留期",
         "~/.workbuddy/traces",
         ("WorkBuddy.app",),
+    ),
+    RetentionRule(
+        "WorkBuddy macOS logs 保留期",
+        "~/Library/Logs/WorkBuddy",
+        ("WorkBuddy.app",),
+    ),
+    RetentionRule(
+        "WorkBuddy audit log 保留期",
+        "~/.workbuddy/audit-log",
+        ("WorkBuddy.app",),
+    ),
+    RetentionRule(
+        "Codex macOS logs 保留期",
+        "~/Library/Logs/com.openai.codex",
+        ("ChatGPT.app", "Codex.app", "codex"),
+    ),
+    RetentionRule(
+        "Codex runtime cache 保留期",
+        "~/.cache/codex-runtimes",
+        ("ChatGPT.app", "Codex.app", "codex"),
     ),
     RetentionRule(
         "Lark SDK logs 保留期",
@@ -74,7 +102,86 @@ RETENTION_RULES: tuple[RetentionRule, ...] = (
         "~/Library/Application Support/TRAE SOLO CN/logs",
         ("TRAE SOLO CN.app", "TRAE SOLO CN Helper"),
     ),
+    RetentionRule(
+        "UURemote updater logs 保留期",
+        "~/Library/Application Support/com.netease.uuremote.updater/Logs",
+        ("UURemote.app", "UURemoteService", "UURemoteServer"),
+    ),
+    RetentionRule(
+        "UURemote application logs 保留期",
+        "~/Library/Application Support/com.netease.uuremote/Logs",
+        ("UURemote.app", "UURemoteService", "UURemoteServer"),
+    ),
+    RetentionRule(
+        "UURemote 历史安装包保留期",
+        "~/Library/Application Support/com.netease.uuremote.updater/download",
+        ("UURemote.app", "UURemoteService", "UURemoteServer"),
+    ),
 )
+
+
+DARWIN_TEMP_RETENTION_PATTERNS: tuple[DarwinTransientPattern, ...] = (
+    DarwinTransientPattern(
+        "Darwin Go build 临时目录保留期",
+        ("go-build*",),
+        ("/bin/go ", "go build", "go test", "gopls"),
+    ),
+    DarwinTransientPattern(
+        "Darwin Node compile cache 保留期",
+        ("node-compile-cache", "v8-compile-cache-*"),
+        ("node",),
+    ),
+    DarwinTransientPattern(
+        "Qoder CLI 版本化运行时保留期",
+        ("qodercli-natives-*",),
+        ("qoder", "Qoder"),
+    ),
+    DarwinTransientPattern(
+        "Qoder CLI updater 解压目录保留期",
+        ("qoderclicn-update-*-extract",),
+        ("qoder", "Qoder"),
+    ),
+    DarwinTransientPattern(
+        "Electron 下载临时目录保留期",
+        ("electron-download-*",),
+    ),
+    DarwinTransientPattern(
+        "AI toolhost snapshots 保留期",
+        ("toolhost-snapshots", "trae-agent-toolhost-*"),
+        ("agent-tool-host", "TRAE SOLO CN.app"),
+    ),
+    DarwinTransientPattern(
+        "UURemote Darwin 临时目录保留期",
+        ("UURemote",),
+        ("UURemote.app", "UURemoteService", "UURemoteServer"),
+    ),
+)
+
+
+DARWIN_CODE_SIGN_RETENTION_PATTERNS: tuple[DarwinTransientPattern, ...] = (
+    DarwinTransientPattern(
+        "Google Chrome code-sign clone 保留期",
+        ("com.google.Chrome.code_sign_clone",),
+        ("Google Chrome.app",),
+    ),
+    DarwinTransientPattern(
+        "Comet code-sign clone 保留期",
+        ("ai.perplexity.comet.code_sign_clone",),
+        ("Comet.app",),
+    ),
+    DarwinTransientPattern(
+        "Doubao browser code-sign clone 保留期",
+        ("com.bot.pc.doubao.browser.code_sign_clone",),
+        ("Doubao.app", "豆包"),
+    ),
+    DarwinTransientPattern(
+        "应用 code-sign clone 保留期",
+        ("*.code_sign_clone",),
+    ),
+)
+
+
+_MAX_DYNAMIC_RETENTION_ROOTS = 128
 
 
 SQLITE_RULES: tuple[SQLiteRule, ...] = (
@@ -147,6 +254,122 @@ def _append_filesystem_issue(
         code = "filesystem_error"
     issues.append(
         ScanIssue(code=code, message=str(exc), task=task, path=path)
+    )
+
+
+def _matching_transient_pattern(
+    name: str,
+    patterns: Sequence[DarwinTransientPattern],
+) -> DarwinTransientPattern | None:
+    return next(
+        (
+            pattern
+            for pattern in patterns
+            if any(
+                fnmatch.fnmatchcase(name, name_glob)
+                for name_glob in pattern.name_globs
+            )
+        ),
+        None,
+    )
+
+
+def _discover_transient_rules_under(
+    root: Path,
+    patterns: Sequence[DarwinTransientPattern],
+    issues: list[ScanIssue],
+    *,
+    task: str,
+    remaining: int,
+) -> list[RetentionRule]:
+    if remaining <= 0:
+        return []
+    try:
+        entries = scandir_entries(root)
+        rules: list[RetentionRule] = []
+        for entry in entries:
+            pattern = _matching_transient_pattern(entry.name, patterns)
+            if pattern is None:
+                continue
+            if len(rules) >= remaining:
+                issues.append(
+                    ScanIssue(
+                        code="diagnostic_limit_reached",
+                        message=(
+                            "动态保留期候选超过安全上限，"
+                            "其余路径未进入本次诊断"
+                        ),
+                        task=task,
+                        path=root,
+                        blocking=False,
+                    )
+                )
+                break
+            rules.append(
+                RetentionRule(
+                    pattern.category,
+                    entry.path,
+                    pattern.process_markers,
+                )
+            )
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        _append_filesystem_issue(issues, exc, root, task)
+        return []
+    return rules
+
+
+def discover_darwin_transient_retention_rules(
+) -> tuple[tuple[RetentionRule, ...], tuple[ScanIssue, ...]]:
+    """通过 getconf 动态发现公开命名的 Darwin 临时/运行副本根。"""
+
+    rules: list[RetentionRule] = []
+    issues: list[ScanIssue] = []
+    temp_discovery = discover_darwin_user_temp()
+    issues.extend(temp_discovery.issues)
+    for root in temp_discovery.paths:
+        rules.extend(
+            _discover_transient_rules_under(
+                root,
+                DARWIN_TEMP_RETENTION_PATTERNS,
+                issues,
+                task="Darwin 临时目录保留期",
+                remaining=_MAX_DYNAMIC_RETENTION_ROOTS - len(rules),
+            )
+        )
+
+    cache_discovery = discover_darwin_user_cache()
+    issues.extend(cache_discovery.issues)
+    for cache_root in cache_discovery.paths:
+        if cache_root.name != "C":
+            issues.append(
+                ScanIssue(
+                    code="path_discovery_failed",
+                    message="DARWIN_USER_CACHE_DIR 不是预期的 C 根",
+                    task="Darwin code-sign clone 保留期",
+                    path=cache_root,
+                    blocking=False,
+                )
+            )
+            continue
+        rules.extend(
+            _discover_transient_rules_under(
+                cache_root.parent / "X",
+                DARWIN_CODE_SIGN_RETENTION_PATTERNS,
+                issues,
+                task="Darwin code-sign clone 保留期",
+                remaining=_MAX_DYNAMIC_RETENTION_ROOTS - len(rules),
+            )
+        )
+
+    unique = {
+        normalize_path(rule.path): rule
+        for rule in rules
+    }
+    return (
+        tuple(unique[path] for path in sorted(unique, key=str)),
+        tuple(issues),
     )
 
 
@@ -223,7 +446,7 @@ def scan_retention_rules(
     open_files: OpenFileSnapshot | None,
     now: float | None = None,
 ) -> ScanResult:
-    """按 7/14/30 天报告日志物理占用；始终只读且不可执行。"""
+    """按 7/14/30 天报告公开存储根物理占用；始终只读且不可执行。"""
 
     result = ScanResult()
     observed_at = time.time() if now is None else now
@@ -245,7 +468,7 @@ def scan_retention_rules(
             result.issues.append(
                 ScanIssue(
                     code="diagnostic_root_invalid",
-                    message="日志诊断根必须是非符号链接目录",
+                    message="保留期诊断根必须是非符号链接目录",
                     task=rule.category,
                     path=root,
                 )
@@ -299,7 +522,7 @@ def scan_retention_rules(
                 logical_size=measurement.logical_bytes,
                 allocated_size=measurement.allocated_bytes,
                 actionable=False,
-                action_block_reason="日志保留期诊断仅只读",
+                action_block_reason="保留期诊断仅只读",
                 identity=FileIdentity.from_stat(root_stat),
                 latest_mtime=latest_mtime,
                 age_days=(
@@ -356,12 +579,14 @@ def _capture_runtime_snapshots(
 
 def scan_retention_diagnostics(protection: Predicate) -> ScanResult:
     result = ScanResult()
+    dynamic_rules, discovery_issues = discover_darwin_transient_retention_rules()
+    result.issues.extend(discovery_issues)
     processes, open_files = _capture_runtime_snapshots(
         result,
-        task="日志与 trace 保留期",
+        task="日志/runtime 保留期",
     )
     scanned = scan_retention_rules(
-        RETENTION_RULES,
+        (*RETENTION_RULES, *dynamic_rules),
         protection,
         process_snapshot=processes,
         open_files=open_files,

@@ -87,6 +87,7 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 - updater 候选统一为 critical 且要求精确选择；`pending_update`、`installed_app_missing`
   和 `version_unknown` 不可执行，同版/旧版残留在执行前仍会重新比较版本。
 - retention 与 SQLite freelist 项固定为只读诊断：不接受选择，不进入通用 cleanup executor。
+  retention 同时覆盖公开日志/runtime/download 根和 `getconf` 发现的 Darwin `T/X` 维护模式。
 
 ## TUI
 
@@ -207,9 +208,11 @@ best effort，不会把已经安装的 sequence 报成失败。托管 `knowledge
 - 环境变量缓存根只允许位于 `~/Library/Caches` 或 `~/.cache`，并强制精确选择；
 - 已知应用归属规则同样覆盖通用 `~/Library/Caches` 一级候选；应用正在运行或进程状态无法
   读取时，候选继续显示但不可执行；
+- Darwin user cache 只在 `getconf` 根的直接子项上按公开 bundle/helper 名称应用进程归属；
+  Darwin `T/X` transient 仅按维护的公开 glob 进入只读 retention 诊断；
 - 已知 updater 只读取受限大小的 app `Info.plist` 或 ZIP 内顶层 bundle metadata；不执行
   暂存代码。版本状态不明时 fail-closed，同版/旧版残留在执行前重新判定；
-- 日志保留期扫描只遍历文件 metadata，不读取正文；SQLite 使用
+- 日志/runtime/download 保留期扫描只遍历文件 metadata，不读取正文或包内容；SQLite 使用
   `mode=ro&immutable=1` PRAGMA 且不创建、checkpoint 或修改 WAL/SHM；
 - `analyze` 同时比较每个一级候选的 `st_dev` 与 `statvfs().f_fsid`，不进入其它卷或文件
   系统挂载点；后者用于识别 macOS 上 `st_dev` 相同的 APFS root/Data 挂载边界；
@@ -279,7 +282,7 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 
 剩余工作见 [TODO.md](TODO.md)。
 
-当前本地验证基线为 347 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+当前本地验证基线为 353 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
 checkout 的 `make check` 输出为准。
 
 ## 许可证

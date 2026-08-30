@@ -100,9 +100,12 @@ python3 -m venv .venv
 - 已知应用缓存即使从通用 `~/Library/Caches` 入口发现，也会受运行中进程保护
 - 已知 updater 区分待安装、同版本、旧版本、应用缺失和未知状态；执行前重新判定
 - JSON 按运行时 device 汇总各卷容量，外置 Trash 不再与系统盘收益混为一个数字
-- WorkBuddy/Lark/Shadowrocket/TRAE 日志只按元数据报告 7/14/30 天保留期容量和句柄状态
+- WorkBuddy、Codex、Lark、Shadowrocket、TRAE、UURemote 的公开日志/runtime/download
+  根只按元数据报告 7/14/30 天保留期容量和句柄状态
 - Codex SQLite 只读报告内部 freelist；不自动 `VACUUM`，也不把数据库当作垃圾文件
 - Darwin 用户临时目录中的 Qoder ShipIt 完整 app 副本会按版本报告，但固定不可执行
+- Darwin `T/X` 中公开命名的构建临时目录、版本化 runtime 和 `*.code_sign_clone` 只读可见；
+  通用 Darwin user cache 也会继承已知应用的运行状态保护
 
 | 能力 | 预览 | 执行 | 当前边界 |
 |---|---|---|---|
@@ -116,9 +119,10 @@ python3 -m venv .venv
 | Broken startup items | 是 | 用户项 | 系统项需要尚未实现的特权帮助器 |
 | Time Machine 本地快照 | 是 | 否 | 只显示数量/名称；公开列表不提供精确大小 |
 | 应用 updater 缓存 | 是 | 受限 | 新版本/应用缺失/未知状态强制保护；同版/旧版仅 critical 精确选择 |
-| 日志/trace 保留期 | 是 | 否 | 只读 7/14/30 天物理占用、文件数、进程和句柄；不读取正文 |
+| 日志/runtime/download 保留期 | 是 | 否 | 只读 7/14/30 天物理占用、文件数、进程和句柄；不读取正文或包内容 |
 | SQLite 内部空闲页 | 是 | 否 | immutable read-only page/freelist；不执行 `VACUUM` 或删除数据库 |
 | Darwin updater 临时副本 | 是 | 否 | `getconf` 动态发现、版本判定；不自动删除 temp 中的完整 app |
+| Darwin 临时/运行副本 | 是 | 否 | `getconf` 派生 `T/X`；只匹配公开名称模式，固定不可执行 |
 | 签名托管知识库 | 客户端完成 | 显式更新 | 需用户提供 HTTPS URL 和钉住的公钥；项目不内置服务端 |
 | `optimize ram / purgeable` | 命令面 | 否 | `status=unavailable`，退出码 1 |
 | SMAppService / XPC 特权清理 | — | 否 | 需要 native host/helper、签名、entitlements 和真实安装验收 |
@@ -128,7 +132,7 @@ python3 -m venv .venv
 
 | 域 | 典型内容 |
 |---|---|
-| system | 用户缓存/日志、保留期诊断、updater、Xcode、失效启动项、应用语言只读审计 |
+| system | 用户/Darwin 缓存、日志与 runtime 保留期诊断、updater、Xcode、失效启动项、应用语言只读审计 |
 | developer | pip、uv、npm、Go、Cargo、Homebrew、Docker daemon 报告 |
 | ai | Claude、Codex、Gemini、OpenCode、Cursor 缓存 |
 | project | `node_modules`、`.venv`、`target`、DerivedData 等可重建产物 |
@@ -196,7 +200,8 @@ SQLite 项报告 page、freelist、内部空闲容量/比例和 WAL/SHM/journal 
 
 执行链会在扫描、批量预检和最终移动前重复检查保护规则、inode、owner、挂载点、云占位、
 运行中进程和 symlink 边界。运行中的已知应用缓存仍会显示容量，但固定为不可执行；这条
-保护同时应用于专用扫描点和通用 `~/Library/Caches` 一级候选。macOS 上优先使用 Darwin `SF_DATALESS`，并以
+保护同时应用于专用扫描点、通用 `~/Library/Caches` 和动态 Darwin user cache 一级候选。
+macOS 上优先使用 Darwin `SF_DATALESS`，并以
 `st_blocks == 0 && st_size > 0` 作为保守兜底；这不等于识别所有已经 materialized 的
 云同步文件。环境变量缓存路径只允许落在受信缓存根下，并强制精确选择。Docker 三类
 prune 不参与默认或批量选择。updater 新版本、对应应用缺失或版本未知时不可执行；同版或
@@ -246,7 +251,7 @@ make package
 make release-check
 ```
 
-当前本地基线通过 347 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
+当前本地基线通过 353 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
 checkout 的实际运行结果为准。CI 在 macOS / Python 3.11 上执行 lint、测试、预览、构建、
 归档审计和隔离 wheel 安装，不发布 PyPI、Homebrew 或 GitHub Release。
 

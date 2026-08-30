@@ -134,6 +134,10 @@ ScanTask =
 3. 分别计算早于 7/14/30 天的物理容量，并独立报告进程与 `lsof` 打开句柄；
 4. 保护规则、跨卷、云占位和访问错误仍会跳过或形成 issue；
 5. 结果固定 `critical + actionable=false`，不把 retention 阈值变成通用删除事实。
+6. 固定根只采用公开路径约定；Darwin 动态根由 `getconf` 发现，并只允许维护的直接子项
+   glob。真实机器的用户名、容量、mtime、UUID、会话名和私有项目名不得固化成规则。
+7. 日志之外的 runtime、历史安装包、toolhost snapshot、构建 temp 和 code-sign clone
+   仍只读取 metadata；retention 诊断不等价于安全删除结论。
 
 ### 7.2 SQLite freelist
 

@@ -60,12 +60,17 @@ DEVELOPER_JUNK: list[ScanPoint] = [
         "按 npm 子目录精确审阅；删除后可能重新下载或失去历史日志",
     ),
     ScanPoint("CocoaPods 缓存", ("~/Library/Caches/CocoaPods",)),
-    ScanPoint("Go 构建缓存", ("~/Library/Caches/go-build",)),
+    ScanPoint(
+        "Go 构建缓存",
+        ("~/Library/Caches/go-build",),
+        running_process_markers=("/bin/go ", "go build", "go test", "gopls"),
+    ),
     ScanPoint(
         "Go module cache",
         ("~/go/pkg/mod",),
         "confirm",
         "等价于可重建的 module 下载缓存；清理后需要重新下载依赖",
+        running_process_markers=("/bin/go ", "go build", "go test", "gopls"),
     ),
     ScanPoint("Deno 缓存", ("~/Library/Caches/deno",)),
     ScanPoint("Bun 缓存", ("~/.bun/install/cache",)),
@@ -138,6 +143,7 @@ SYSTEM_JUNK: list[ScanPoint] = [
         "由 getconf 发现当前用户路径，并按一级子项逐项审阅",
         expand_children=True,
         path_provider="darwin-user-cache",
+        process_owner_protection=True,
     ),
     ScanPoint(
         "用户日志",
@@ -147,7 +153,7 @@ SYSTEM_JUNK: list[ScanPoint] = [
         expand_children=True,
     ),
     ScanPoint(
-        "日志与 trace 保留期",
+        "日志/runtime 保留期",
         (),
         "critical",
         "只按物理块、mtime、文件数量、进程和打开句柄生成 7/14/30 天诊断",
