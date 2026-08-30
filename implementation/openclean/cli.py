@@ -8,6 +8,7 @@ import argparse
 import json
 import stat
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 from . import __version__
@@ -36,6 +37,7 @@ from .knowledge_base import (
     RulesStore,
 )
 from .knowledge_update import KnowledgeUpdateError, update_knowledge_base
+from .macos import volume_mount_point
 from .models import Item, ScanResult, normalize_path
 from .navigator import run_space_browser
 from .progress import TerminalProgressRenderer
@@ -456,8 +458,80 @@ def _item_payload(item) -> dict[str, object]:
         "age_days": item.age_days,
         "preselected": item.preselected,
         "excluded_paths": item.excluded_paths,
+        "cross_device_paths": item.cross_device_paths,
+        "device_id": item.identity.device if item.identity is not None else None,
+        "updater_status": item.updater_status or None,
+        "installed_version": item.installed_version or None,
+        "staged_version": item.staged_version or None,
+        "updater_external_install": item.updater_external_install,
+        "diagnostic_kind": item.diagnostic_kind or None,
+        "open_handle_count": item.open_handle_count,
+        "retention_file_count": item.retention_file_count,
+        "retention_7d_bytes": item.retention_7d_bytes,
+        "retention_14d_bytes": item.retention_14d_bytes,
+        "retention_30d_bytes": item.retention_30d_bytes,
+        "sqlite_page_size": item.sqlite_page_size,
+        "sqlite_page_count": item.sqlite_page_count,
+        "sqlite_freelist_count": item.sqlite_freelist_count,
+        "sqlite_internal_free_bytes": item.sqlite_internal_free_bytes,
+        "sqlite_internal_free_ratio": item.sqlite_internal_free_ratio,
+        "sqlite_wal_bytes": item.sqlite_wal_bytes,
         "domain": item.domain or None,
     }
+
+
+def _volume_summaries(
+    items: Iterable[Item],
+    *,
+    report_reclaimable: bool = True,
+) -> list[dict[str, object]]:
+    grouped: dict[int, list[Item]] = {}
+    for item in items:
+        if item.path is None or item.identity is None:
+            continue
+        grouped.setdefault(item.identity.device, []).append(item)
+
+    summaries: list[dict[str, object]] = []
+    for device_id, volume_items in grouped.items():
+        try:
+            mount_point = volume_mount_point(volume_items[0].path)
+        except (FileNotFoundError, PermissionError, OSError):
+            mount_point = None
+        summaries.append(
+            {
+                "device_id": device_id,
+                "mount_point": (
+                    str(mount_point) if mount_point is not None else None
+                ),
+                "system_disk": mount_point == Path("/"),
+                "item_count": len(volume_items),
+                "potential_bytes": sum(item.size for item in volume_items),
+                "reclaimable_bytes": (
+                    sum(item.size for item in volume_items if item.actionable)
+                    if report_reclaimable
+                    else 0
+                ),
+                "preselected_bytes": sum(
+                    item.size
+                    for item in volume_items
+                    if item.preselected is True
+                ),
+                "requires_privilege_bytes": sum(
+                    item.size
+                    for item in volume_items
+                    if item.requires_privilege
+                ),
+                "unsupported_bytes": sum(
+                    item.size
+                    for item in volume_items
+                    if not item.actionable and not item.requires_privilege
+                ),
+            }
+        )
+    return sorted(
+        summaries,
+        key=lambda summary: -int(summary["potential_bytes"]),
+    )
 
 
 def _item_location(item) -> str:
@@ -468,6 +542,17 @@ def _item_location(item) -> str:
 
 def _item_annotations(item: Item) -> str:
     annotations: list[str] = []
+    if item.diagnostic_kind:
+        annotations.append(f"[只读诊断: {item.diagnostic_kind}]")
+    if item.updater_status:
+        versions = (
+            f" installed={item.installed_version or 'unknown'}"
+            f" staged={item.staged_version or 'unknown'}"
+        )
+        external = " external-install" if item.updater_external_install else ""
+        annotations.append(
+            f"[updater: {item.updater_status}{versions}{external}]"
+        )
     if item.requires_explicit_selection:
         annotations.append("[需 --select 精确选择]")
     if item.requires_privilege:
@@ -603,6 +688,7 @@ def _print_report(
             "unsupported_bytes": result.unsupported_total,
             "total_human": human(result.total),
             "reclaimable_human": human(result.actionable_total),
+            "volumes": _volume_summaries(result.items),
             "items": [
                 _item_payload(i)
                 for i in sorted(result.items, key=lambda x: -x.size)
@@ -668,6 +754,7 @@ def _print_purge_report(
             "reclaimable_human": human(result.actionable_total),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
+            "volumes": _volume_summaries(result.items),
             "projects": project_payload,
             "issues": [_issue_payload(issue) for issue in result.issues],
             "cleanup": (
@@ -762,6 +849,7 @@ def _print_clean_report(
             "reclaimable_human": human(result.actionable_total),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
+            "volumes": _volume_summaries(result.items),
             "categories": categories,
             "issues": [_issue_payload(issue) for issue in result.issues],
             "cleanup": (
@@ -844,13 +932,14 @@ def _print_analyze_report(
             "cancelled": analysis.cancelled,
             "total_bytes": analysis.total,
             "potential_bytes": analysis.total,
-            "reclaimable_bytes": sum(
-                entry.item.size
-                for entry in analysis.entries
-                if entry.item.actionable
-            ),
+            # Space Lens 只描述占用，不把任意一级目录归类为垃圾。
+            "reclaimable_bytes": 0,
             "allocated_bytes": analysis.total,
             "total_human": human(analysis.total),
+            "volumes": _volume_summaries(
+                (entry.item for entry in analysis.entries),
+                report_reclaimable=False,
+            ),
             "volume": {
                 "total_bytes": analysis.volume_total,
                 "used_bytes": analysis.volume_used,
@@ -872,6 +961,7 @@ def _print_analyze_report(
             "entries": [
                 {
                     **_item_payload(entry.item),
+                    "reclaimable_bytes": 0,
                     "percent": entry.percent,
                     "selected": entry.item.path in selected_paths,
                 }

@@ -14,6 +14,19 @@ SAFETY_LEVELS = frozenset({"safe", "confirm", "critical"})
 RESOURCE_KINDS = frozenset({"filesystem", "docker"})
 CLEANUP_SCOPES = frozenset({"", "darwin-user-cache"})
 PATH_SOURCES = frozenset({"builtin", "environment"})
+UPDATER_STATUSES = frozenset(
+    {
+        "",
+        "pending_update",
+        "same_version_residue",
+        "older_version_residue",
+        "installed_app_missing",
+        "version_unknown",
+    }
+)
+DIAGNOSTIC_KINDS = frozenset(
+    {"", "retention", "sqlite_freelist", "updater_temp"}
+)
 
 # ``SF_DATALESS`` is part of the public macOS ``sys/stat.h`` contract.  Older
 # Python builds expose ``st_flags`` but not the corresponding ``stat`` constant.
@@ -132,6 +145,7 @@ class Item:
     age_days: int | None = None
     preselected: bool | None = None
     excluded_paths: int = 0
+    cross_device_paths: int = 0
     domain: str = ""
     path_source: str = "builtin"
     requires_explicit_selection: bool = False
@@ -147,6 +161,22 @@ class Item:
     startup_program: str = ""
     startup_program_uses_path: bool = False
     resource_binding: str = ""
+    updater_status: str = ""
+    installed_version: str = ""
+    staged_version: str = ""
+    updater_external_install: bool = False
+    diagnostic_kind: str = ""
+    open_handle_count: int | None = None
+    retention_file_count: int | None = None
+    retention_7d_bytes: int | None = None
+    retention_14d_bytes: int | None = None
+    retention_30d_bytes: int | None = None
+    sqlite_page_size: int | None = None
+    sqlite_page_count: int | None = None
+    sqlite_freelist_count: int | None = None
+    sqlite_internal_free_bytes: int | None = None
+    sqlite_internal_free_ratio: float | None = None
+    sqlite_wal_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if self.safety not in SAFETY_LEVELS:
@@ -155,6 +185,10 @@ class Item:
             raise ValueError(f"未知资源类型：{self.resource_kind}")
         if self.path_source not in PATH_SOURCES:
             raise ValueError(f"未知路径来源：{self.path_source}")
+        if self.updater_status not in UPDATER_STATUSES:
+            raise ValueError(f"未知 updater 状态：{self.updater_status}")
+        if self.diagnostic_kind not in DIAGNOSTIC_KINDS:
+            raise ValueError(f"未知诊断类型：{self.diagnostic_kind}")
         if self.cleanup_scope not in CLEANUP_SCOPES:
             raise ValueError(f"未知 cleanup_scope：{self.cleanup_scope}")
         if self.resource_kind == "filesystem" and self.path is None:
@@ -165,6 +199,8 @@ class Item:
             raise ValueError("size 不能为负数")
         if self.excluded_paths < 0:
             raise ValueError("excluded_paths 不能为负数")
+        if self.cross_device_paths < 0:
+            raise ValueError("cross_device_paths 不能为负数")
         if self.cloud_file_count < 0:
             raise ValueError("cloud_file_count 不能为负数")
         if self.cloud_logical_size < 0:
@@ -175,6 +211,25 @@ class Item:
             raise ValueError("total_count 不能为负数")
         if self.active_count is not None and self.active_count < 0:
             raise ValueError("active_count 不能为负数")
+        diagnostic_counts = (
+            self.open_handle_count,
+            self.retention_file_count,
+            self.retention_7d_bytes,
+            self.retention_14d_bytes,
+            self.retention_30d_bytes,
+            self.sqlite_page_size,
+            self.sqlite_page_count,
+            self.sqlite_freelist_count,
+            self.sqlite_internal_free_bytes,
+            self.sqlite_wal_bytes,
+        )
+        if any(value is not None and value < 0 for value in diagnostic_counts):
+            raise ValueError("诊断计数和容量不能为负数")
+        if (
+            self.sqlite_internal_free_ratio is not None
+            and not 0.0 <= self.sqlite_internal_free_ratio <= 1.0
+        ):
+            raise ValueError("SQLite 空闲页比例必须位于 0 到 1")
         if any(not marker.strip() for marker in self.running_process_markers):
             raise ValueError("running_process_markers 不能包含空字符串")
         if self.cleanup_scope and (
@@ -191,6 +246,50 @@ class Item:
             raise ValueError("启动项程序引用只能用于文件系统资源")
         if self.resource_binding and self.resource_kind == "filesystem":
             raise ValueError("文件系统资源不能携带外部资源 binding")
+        if self.updater_status and self.resource_kind != "filesystem":
+            raise ValueError("updater 状态只能用于文件系统资源")
+        if (
+            self.installed_version
+            or self.staged_version
+            or self.updater_external_install
+        ) and not self.updater_status:
+            raise ValueError("updater 元数据必须包含 updater_status")
+        retention_values = (
+            self.retention_file_count,
+            self.retention_7d_bytes,
+            self.retention_14d_bytes,
+            self.retention_30d_bytes,
+        )
+        if any(value is not None for value in retention_values) and (
+            self.diagnostic_kind != "retention"
+        ):
+            raise ValueError("retention 元数据必须使用 retention 诊断类型")
+        if all(value is not None for value in retention_values[1:]) and not (
+            self.retention_7d_bytes
+            >= self.retention_14d_bytes
+            >= self.retention_30d_bytes
+        ):
+            raise ValueError("retention 容量必须按 7/14/30 天单调递减")
+        sqlite_values = (
+            self.sqlite_page_size,
+            self.sqlite_page_count,
+            self.sqlite_freelist_count,
+            self.sqlite_internal_free_bytes,
+            self.sqlite_internal_free_ratio,
+            self.sqlite_wal_bytes,
+        )
+        if any(value is not None for value in sqlite_values) and (
+            self.diagnostic_kind != "sqlite_freelist"
+        ):
+            raise ValueError("SQLite 元数据必须使用 sqlite_freelist 诊断类型")
+        if (
+            self.sqlite_page_count is not None
+            and self.sqlite_freelist_count is not None
+            and self.sqlite_freelist_count > self.sqlite_page_count
+        ):
+            raise ValueError("SQLite freelist 不能超过 page count")
+        if self.diagnostic_kind and self.actionable:
+            raise ValueError("只读诊断项不能 actionable")
 
 
 @dataclass(frozen=True)

@@ -11,7 +11,9 @@ from openclean.cleanup import execute_cleanup
 from openclean.engine import IgnoreRules, scan_points
 from openclean.macos import (
     DarwinUserCacheDiscovery,
+    DarwinUserTempDiscovery,
     discover_darwin_user_cache,
+    discover_darwin_user_temp,
 )
 from openclean.models import ScanIssue
 from openclean.scanpoints import ScanPoint
@@ -79,6 +81,31 @@ class DarwinUserCacheDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(discovery.paths, ())
         self.assertIn("0.25 秒", discovery.issues[0].message)
+
+    def test_temp_discovery_uses_darwin_user_temp_key(self) -> None:
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                "/var/folders/ab/current-user/T/\n",
+                "",
+            )
+
+        discovery = discover_darwin_user_temp(runner=runner)
+
+        self.assertEqual(
+            discovery,
+            DarwinUserTempDiscovery(
+                paths=(Path("/var/folders/ab/current-user/T"),)
+            ),
+        )
+        self.assertEqual(
+            calls[0][0],
+            ["/usr/bin/getconf", "DARWIN_USER_TEMP_DIR"],
+        )
 
 
 class DarwinUserCacheScanTests(unittest.TestCase):

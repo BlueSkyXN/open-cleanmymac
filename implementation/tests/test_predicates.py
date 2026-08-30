@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from unittest import mock
 
 from openclean.knowledge_base import KnowledgeBase
 from openclean.models import FileFacts
@@ -89,6 +90,14 @@ class PredicateTests(unittest.TestCase):
             )
 
             self.assertTrue(gate.should_ignore(FileFacts.from_path(protected)))
+
+    def test_empty_knowledge_base_precheck_avoids_path_work(self) -> None:
+        gate = ProtectionGate()
+
+        with mock.patch("openclean.predicates.normalize_path") as normalize:
+            self.assertFalse(gate.knowledge_base_ignores("/unused/path"))
+
+        normalize.assert_not_called()
 
 
 if __name__ == "__main__":

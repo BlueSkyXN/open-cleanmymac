@@ -15,8 +15,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .application_ownership import process_markers_for_path
 from .application_languages import scan_application_languages
 from .docker import scan_docker_resources
+from .filesystem import filesystem_id_retry, lstat_retry, scandir_entries
 from .knowledge_base import KnowledgeBase
 from .macos import (
     discover_darwin_user_cache,
@@ -47,8 +49,14 @@ from .scanpoints import (
     ScanPoint,
 )
 from .startup_items import scan_broken_startup_items
+from .storage_diagnostics import (
+    scan_darwin_temp_updater_diagnostics,
+    scan_retention_diagnostics,
+    scan_sqlite_diagnostics,
+)
 from .task_graph import TaskSpec as GraphTaskSpec
 from .task_graph import execute_task_graph
+from .updater import assess_updater_candidate
 
 
 class Cancelled(Exception):
@@ -91,6 +99,15 @@ class IgnoreRules(ProtectionGate):
         super().__init__(knowledge_base=knowledge_base, predicates=predicates)
 
 
+def _predicates_ignore_after_knowledge_base(
+    protection: Predicate,
+    facts: FileFacts,
+) -> bool:
+    if isinstance(protection, ProtectionGate):
+        return protection.predicates_ignore(facts)
+    return protection.should_ignore(facts)
+
+
 @dataclass
 class _DirectoryMeasurement:
     size: int = 0
@@ -100,6 +117,7 @@ class _DirectoryMeasurement:
     cloud_logical_size: int = 0
     latest_mtime: float = 0.0
     excluded_paths: int = 0
+    cross_device_paths: int = 0
 
 
 @dataclass(frozen=True)
@@ -137,6 +155,7 @@ def _measure_dir(
     issues: list[ScanIssue],
     task: str,
     progress: TaskProgress | None = None,
+    device_boundary: int | None = None,
 ) -> _DirectoryMeasurement:
     measurement = _DirectoryMeasurement()
     root_facts = _inspect_path(
@@ -146,20 +165,79 @@ def _measure_dir(
         protection,
         missing_is_issue=True,
     )
-    if root_facts is None or protection.should_ignore(root_facts):
+    if root_facts is None:
         measurement.excluded_paths += 1
         return measurement
     if stat.S_ISLNK(root_facts.stat.st_mode) or not stat.S_ISDIR(
         root_facts.stat.st_mode
     ):
         return measurement
-    if root_facts.is_dataless:
-        measurement.cloud_file_count = 1
-        measurement.latest_mtime = root_facts.stat.st_mtime
-        return measurement
-    try:
-        with os.scandir(root_facts.path) as it:
-            for entry in it:
+    filesystem_boundary: int | None = None
+    if device_boundary is not None:
+        try:
+            filesystem_boundary = filesystem_id_retry(root_facts.path)
+        except (PermissionError, FileNotFoundError, OSError) as exc:
+            _append_issue(issues, exc, root_facts.path, task)
+            measurement.excluded_paths += 1
+            return measurement
+    directories = [root_facts]
+    while directories:
+        directory = directories.pop()
+        current_directory = _inspect_path(
+            directory.path,
+            issues,
+            task,
+            protection,
+            missing_is_issue=True,
+        )
+        if (
+            current_directory is None
+            or stat.S_ISLNK(current_directory.stat.st_mode)
+            or not stat.S_ISDIR(current_directory.stat.st_mode)
+        ):
+            measurement.excluded_paths += 1
+            continue
+        directory = current_directory
+        if device_boundary is not None:
+            if directory.stat.st_dev != device_boundary:
+                measurement.cross_device_paths += 1
+                issues.append(
+                    ScanIssue(
+                        code="cross_device_skipped",
+                        message="检测到其它文件系统挂载点，已停止跨卷遍历",
+                        task=task,
+                        path=directory.path,
+                        blocking=False,
+                    )
+                )
+                continue
+            try:
+                current_filesystem = filesystem_id_retry(directory.path)
+            except (PermissionError, FileNotFoundError, OSError) as exc:
+                _append_issue(issues, exc, directory.path, task)
+                measurement.excluded_paths += 1
+                continue
+            if current_filesystem != filesystem_boundary:
+                measurement.cross_device_paths += 1
+                issues.append(
+                    ScanIssue(
+                        code="cross_device_skipped",
+                        message="检测到其它文件系统挂载点，已停止跨卷遍历",
+                        task=task,
+                        path=directory.path,
+                        blocking=False,
+                    )
+                )
+                continue
+        if directory.is_dataless:
+            measurement.cloud_file_count += 1
+            measurement.latest_mtime = max(
+                measurement.latest_mtime,
+                directory.stat.st_mtime,
+            )
+            continue
+        try:
+            for entry in scandir_entries(directory.path):
                 ctl.checkpoint()
                 if progress is not None:
                     progress.advance()
@@ -169,20 +247,35 @@ def _measure_dir(
                 ):
                     measurement.excluded_paths += 1
                     continue
-                facts = _inspect_path(
-                    entry.path,
+                facts = _facts_from_entry(
+                    entry,
                     issues,
                     task,
-                    protection,
-                    missing_is_issue=True,
                 )
                 if facts is None:
                     measurement.excluded_paths += 1
                     continue
-                if protection.should_ignore(facts):
+                if _predicates_ignore_after_knowledge_base(
+                    protection, facts
+                ):
                     measurement.excluded_paths += 1
                     continue
                 if stat.S_ISLNK(facts.stat.st_mode):
+                    continue
+                if (
+                    device_boundary is not None
+                    and facts.stat.st_dev != device_boundary
+                ):
+                    measurement.cross_device_paths += 1
+                    issues.append(
+                        ScanIssue(
+                            code="cross_device_skipped",
+                            message="检测到其它文件系统挂载点，已停止跨卷遍历",
+                            task=task,
+                            path=facts.path,
+                            blocking=False,
+                        )
+                    )
                     continue
                 measurement.latest_mtime = max(
                     measurement.latest_mtime, facts.stat.st_mtime
@@ -193,31 +286,7 @@ def _measure_dir(
                         measurement.logical_size += facts.logical_size
                         measurement.cloud_logical_size += facts.logical_size
                 elif stat.S_ISDIR(facts.stat.st_mode):
-                    child_measurement = _measure_dir(
-                        facts.path,
-                        ctl,
-                        seen_inodes,
-                        protection,
-                        issues,
-                        task,
-                        progress,
-                    )
-                    measurement.size += child_measurement.size
-                    measurement.logical_size += child_measurement.logical_size
-                    measurement.allocated_size += (
-                        child_measurement.allocated_size
-                    )
-                    measurement.cloud_file_count += (
-                        child_measurement.cloud_file_count
-                    )
-                    measurement.cloud_logical_size += (
-                        child_measurement.cloud_logical_size
-                    )
-                    measurement.latest_mtime = max(
-                        measurement.latest_mtime,
-                        child_measurement.latest_mtime,
-                    )
-                    measurement.excluded_paths += child_measurement.excluded_paths
+                    directories.append(facts)
                 else:
                     key = (facts.stat.st_dev, facts.stat.st_ino)
                     if facts.stat.st_nlink > 1:
@@ -227,10 +296,24 @@ def _measure_dir(
                     measurement.logical_size += facts.logical_size
                     measurement.allocated_size += facts.allocated_size
                     measurement.size += facts.allocated_size
-    except (PermissionError, FileNotFoundError, OSError) as exc:
-        _append_issue(issues, exc, root, task)
-        measurement.excluded_paths += 1
+        except (PermissionError, FileNotFoundError, OSError) as exc:
+            _append_issue(issues, exc, directory.path, task)
+            measurement.excluded_paths += 1
     return measurement
+
+
+def _facts_from_entry(
+    entry: os.DirEntry[str],
+    issues: list[ScanIssue],
+    task: str,
+) -> FileFacts | None:
+    path = Path(entry.path)
+    try:
+        stat_result = lstat_retry(path)
+    except (PermissionError, FileNotFoundError, OSError) as exc:
+        _append_issue(issues, exc, path, task)
+        return None
+    return FileFacts(path=path, stat=stat_result)
 
 
 def _inspect_path(
@@ -262,13 +345,17 @@ def _inspect_path(
         )
         return None
     try:
-        return FileFacts(path=normalized, stat=normalized.lstat())
+        facts = FileFacts(path=normalized, stat=lstat_retry(normalized))
     except FileNotFoundError as exc:
         if missing_is_issue:
             _append_issue(issues, exc, normalized, task)
+        return None
     except (PermissionError, OSError) as exc:
         _append_issue(issues, exc, normalized, task)
-    return None
+        return None
+    if _predicates_ignore_after_knowledge_base(protection, facts):
+        return None
+    return facts
 
 
 def _append_issue(
@@ -356,7 +443,6 @@ def _safe_glob_paths(
     )
     if (
         prefix_facts is None
-        or protection.should_ignore(prefix_facts)
         or stat.S_ISLNK(prefix_facts.stat.st_mode)
         or not stat.S_ISDIR(prefix_facts.stat.st_mode)
     ):
@@ -384,7 +470,6 @@ def _safe_glob_paths(
                 )
                 if (
                     parent_facts is None
-                    or protection.should_ignore(parent_facts)
                     or stat.S_ISLNK(parent_facts.stat.st_mode)
                     or not stat.S_ISDIR(parent_facts.stat.st_mode)
                 ):
@@ -393,8 +478,10 @@ def _safe_glob_paths(
                     _append_dataless_issue(issues, parent_facts.path, task)
                     continue
                 try:
-                    with os.scandir(parent) as iterator:
-                        entries = sorted(iterator, key=lambda entry: entry.name)
+                    entries = sorted(
+                        scandir_entries(parent),
+                        key=lambda entry: entry.name,
+                    )
                 except (PermissionError, FileNotFoundError, OSError) as exc:
                     _append_issue(issues, exc, parent, task)
                     continue
@@ -432,7 +519,6 @@ def _safe_glob_paths(
                 )
                 if (
                     facts is None
-                    or protection.should_ignore(facts)
                     or stat.S_ISLNK(facts.stat.st_mode)
                     or not stat.S_ISDIR(facts.stat.st_mode)
                 ):
@@ -561,7 +647,6 @@ def _scan_point_candidates(
         )
         if (
             root_facts is None
-            or protection.should_ignore(root_facts)
             or stat.S_ISLNK(root_facts.stat.st_mode)
         ):
             continue
@@ -586,8 +671,10 @@ def _scan_point_candidates(
         if not stat.S_ISDIR(root_facts.stat.st_mode):
             continue
         try:
-            with os.scandir(root_facts.path) as iterator:
-                entries = sorted(iterator, key=lambda entry: entry.name)
+            entries = sorted(
+                scandir_entries(root_facts.path),
+                key=lambda entry: entry.name,
+            )
         except (PermissionError, FileNotFoundError, OSError) as exc:
             _append_issue(issues, exc, root_facts.path, point.category)
             continue
@@ -597,11 +684,6 @@ def _scan_point_candidates(
                 progress.advance()
             candidate = normalize_path(entry.path)
             if candidate in seen_candidates:
-                continue
-            if (
-                isinstance(protection, ProtectionGate)
-                and protection.knowledge_base_ignores(candidate)
-            ):
                 continue
             if not _child_matches(point, entry.name):
                 continue
@@ -614,7 +696,6 @@ def _scan_point_candidates(
             )
             if (
                 facts is None
-                or protection.should_ignore(facts)
                 or stat.S_ISLNK(facts.stat.st_mode)
             ):
                 continue
@@ -636,24 +717,41 @@ def _scan_point(
     process_snapshot: ProcessSnapshot | None = None,
 ) -> ScanResult:
     result = ScanResult()
-    if sp.running_process_markers:
-        if process_snapshot is None:
-            return result
-        if process_snapshot.any_running(sp.running_process_markers):
-            result.issues.append(
-                ScanIssue(
-                    code="resource_in_use",
-                    message="检测到相关工具正在运行，已跳过该扫描点",
-                    task=sp.category,
-                    blocking=False,
-                )
-            )
-            return result
+    reported_resource_in_use = False
     seen: set[tuple[int, int]] = set()
     for candidate in _scan_point_candidates(
         sp, ctl, protection, result.issues, progress
     ):
         facts = candidate.facts
+        owner_markers = (
+            process_markers_for_path(facts.path)
+            if sp.process_owner_protection
+            else ()
+        )
+        process_markers = tuple(
+            dict.fromkeys((*sp.running_process_markers, *owner_markers))
+        )
+        process_state_unknown = bool(process_markers) and process_snapshot is None
+        resource_in_use = bool(
+            process_markers
+            and process_snapshot is not None
+            and process_snapshot.any_running(process_markers)
+        )
+        if resource_in_use and not reported_resource_in_use:
+            result.issues.append(
+                ScanIssue(
+                    code="resource_in_use",
+                    message="检测到相关工具正在运行，候选仅报告且不可执行",
+                    task=sp.category,
+                    blocking=False,
+                )
+            )
+            reported_resource_in_use = True
+        updater = (
+            assess_updater_candidate(facts.path)
+            if sp.updater_protection
+            else None
+        )
         is_cloud_file = facts.is_probable_cloud_placeholder
         if is_cloud_file:
             logical_size = (
@@ -664,6 +762,7 @@ def _scan_point(
             cloud_file_count = 1
             cloud_logical_size = logical_size
             excluded_paths = 0
+            cross_device_paths = 0
         elif stat.S_ISDIR(facts.stat.st_mode):
             measurement = _measure_dir(
                 facts.path,
@@ -673,6 +772,7 @@ def _scan_point(
                 result.issues,
                 sp.category,
                 progress,
+                facts.stat.st_dev if sp.stay_on_device else None,
             )
             size = measurement.size
             logical_size = measurement.logical_size
@@ -681,6 +781,7 @@ def _scan_point(
             cloud_logical_size = measurement.cloud_logical_size
             is_cloud_file = False
             excluded_paths = measurement.excluded_paths
+            cross_device_paths = measurement.cross_device_paths
         else:
             is_cloud_file = False
             logical_size = facts.logical_size
@@ -689,10 +790,17 @@ def _scan_point(
             cloud_file_count = 1 if is_cloud_file else 0
             cloud_logical_size = logical_size if is_cloud_file else 0
             excluded_paths = 0
+            cross_device_paths = 0
         if size > 0 or cloud_file_count > 0:
             note = sp.note
             if excluded_paths:
                 suffix = f"包含 {excluded_paths} 个忽略/保护路径，默认不选"
+                note = f"{note}；{suffix}" if note else suffix
+            if cross_device_paths:
+                suffix = (
+                    f"包含 {cross_device_paths} 个跨卷挂载路径，"
+                    "未计入容量且不可执行"
+                )
                 note = f"{note}；{suffix}" if note else suffix
             if cloud_file_count:
                 suffix = (
@@ -703,7 +811,7 @@ def _scan_point(
             environment_override = candidate.path_source == "environment"
             safety = (
                 "critical"
-                if cloud_file_count
+                if cloud_file_count or updater is not None
                 else "confirm"
                 if environment_override and sp.safety == "safe"
                 else sp.safety
@@ -716,17 +824,39 @@ def _scan_point(
             if sp.requires_privilege and "特权帮助器" not in note:
                 suffix = "需要尚未实现的特权帮助器，当前仅只读报告"
                 note = f"{note}；{suffix}" if note else suffix
+            if resource_in_use:
+                suffix = "相关应用正在运行；当前仅报告，退出后需重新扫描"
+                note = f"{note}；{suffix}" if note else suffix
+            elif process_state_unknown:
+                suffix = "无法确认相关应用是否正在运行；当前仅报告"
+                note = f"{note}；{suffix}" if note else suffix
+            if updater is not None:
+                note = f"{note}；{updater.note}" if note else updater.note
+            updater_blocked = updater is not None and updater.blocks_cleanup
             actionable = (
                 excluded_paths == 0
+                and cross_device_paths == 0
                 and cloud_file_count == 0
                 and not sp.requires_privilege
+                and not resource_in_use
+                and not process_state_unknown
+                and not updater_blocked
             )
             if excluded_paths:
                 action_block_reason = "包含忽略或保护路径"
+            elif cross_device_paths:
+                action_block_reason = "包含跨卷挂载路径"
             elif cloud_file_count:
                 action_block_reason = "包含云占位文件"
             elif sp.requires_privilege:
                 action_block_reason = "需要尚未实现的特权帮助器"
+            elif updater_blocked:
+                assert updater is not None
+                action_block_reason = updater.block_reason
+            elif resource_in_use:
+                action_block_reason = "相关应用正在运行"
+            elif process_state_unknown:
+                action_block_reason = "无法确认相关应用是否正在运行"
             else:
                 action_block_reason = ""
             result.items.append(
@@ -751,10 +881,13 @@ def _scan_point(
                         and size > 0
                     ),
                     excluded_paths=excluded_paths,
+                    cross_device_paths=cross_device_paths,
                     domain=sp.domain,
                     path_source=candidate.path_source,
-                    requires_explicit_selection=environment_override,
-                    running_process_markers=sp.running_process_markers,
+                    requires_explicit_selection=(
+                        environment_override or updater is not None
+                    ),
+                    running_process_markers=process_markers,
                     cleanup_scope=(
                         "darwin-user-cache"
                         if sp.path_provider == "darwin-user-cache"
@@ -770,6 +903,16 @@ def _scan_point(
                         if sp.path_provider == "darwin-user-cache"
                         else None
                     ),
+                    updater_status=updater.status if updater else "",
+                    installed_version=(
+                        updater.installed_version if updater else ""
+                    ),
+                    staged_version=(
+                        updater.staged_version if updater else ""
+                    ),
+                    updater_external_install=(
+                        updater.external_install if updater else False
+                    ),
                 )
             )
     return result
@@ -778,7 +921,10 @@ def _scan_point(
 def _process_snapshot_for_points(
     points: list[ScanPoint],
 ) -> tuple[ProcessSnapshot | None, ScanIssue | None]:
-    if not any(point.running_process_markers for point in points):
+    if not any(
+        point.running_process_markers or point.process_owner_protection
+        for point in points
+    ):
         return None, None
     try:
         return capture_process_snapshot(), None
@@ -819,6 +965,12 @@ def _scan_dynamic_point_with_progress(
                 checkpoint=ctl.checkpoint,
                 on_progress=progress.advance,
             )
+        elif point.scanner == "retention-diagnostics":
+            result = scan_retention_diagnostics(protection)
+        elif point.scanner == "darwin-temp-updater":
+            result = scan_darwin_temp_updater_diagnostics(protection)
+        elif point.scanner == "sqlite-freelist":
+            result = scan_sqlite_diagnostics(protection)
         else:
             result = ScanResult(
                 issues=[
@@ -1254,7 +1406,7 @@ def _directory_entries(
     task: str,
 ) -> list[os.DirEntry[str]] | None:
     try:
-        directory_stat = directory.lstat()
+        directory_stat = lstat_retry(directory)
         directory_facts = FileFacts(path=directory, stat=directory_stat)
         if directory_facts.is_dataless:
             _append_dataless_issue(result.issues, directory, task)
@@ -1271,8 +1423,7 @@ def _directory_entries(
                 )
             )
             return None
-        with os.scandir(directory_facts.path) as iterator:
-            return list(iterator)
+        return list(scandir_entries(directory_facts.path))
     except (PermissionError, FileNotFoundError, OSError) as exc:
         _append_issue(result.issues, exc, directory, task)
         return None
@@ -1304,7 +1455,6 @@ def _discover_project_roots(
         )
         if (
             facts is None
-            or protection.should_ignore(facts)
             or not stat.S_ISDIR(facts.stat.st_mode)
         ):
             return
@@ -1413,7 +1563,6 @@ def scan_project_artifacts(
         )
         if (
             facts is None
-            or ignore.should_ignore(facts)
             or not stat.S_ISDIR(facts.stat.st_mode)
         ):
             return
@@ -1439,7 +1588,7 @@ def scan_project_artifacts(
                 ignore,
                 missing_is_issue=True,
             )
-            if child_facts is None or ignore.should_ignore(child_facts):
+            if child_facts is None:
                 continue
             if not stat.S_ISDIR(child_facts.stat.st_mode):
                 continue

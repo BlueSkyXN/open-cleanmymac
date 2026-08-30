@@ -403,10 +403,11 @@ class ApplicationLanguagesScanTests(unittest.TestCase):
                 preferred_languages=["en"],
             )
 
-            self.assertFalse(result.complete)
+            self.assertTrue(result.complete)
             self.assertEqual(result.items, [])
             self.assertEqual(result.issues[0].code, "application_metadata_invalid")
             self.assertIn("CFBundleDevelopmentRegion", result.issues[0].message)
+            self.assertFalse(result.issues[0].blocking)
 
     def test_missing_preferences_skips_scan_instead_of_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -72,6 +72,15 @@ ScanTask =
 ### 3.3 显示格式化
 - 支持 **base2（1024）/ base10（1000）** 与本地化单位。
 
+### 3.4 本项目的保守遍历边界
+- Python 实现使用显式栈和 no-follow `lstat` / `scandir`；目录在实际进入前重新验证，
+  普通文件只做一次 `lstat`，避免跟随扫描期间被替换的目录 symlink。
+- `lstat`、打开目录和读取下一目录项遇到 `EINTR` 时重试；权限、缺失和其它文件系统错误
+  继续转成结构化 issue，不把部分结果伪装成完整可执行候选。
+- `analyze` 为每个一级候选同时固定 `st_dev` 与 `statvfs().f_fsid`。任一身份变化时停止
+  该分支，记录 `cross_device_skipped` / `cross_device_paths`，不计入容量并阻止候选执行；
+  双重身份用于识别 macOS APFS root/Data 可能呈现相同 `st_dev` 的挂载边界。
+
 ---
 
 ## 4. universal 二进制瘦身算法（CMLipo）
@@ -90,15 +99,54 @@ ScanTask =
 |---|---|
 | **应用语言包** | 枚举应用 `.lproj`；按用户语言白名单保留；`hasNonStringsFilesAt` 排除含非 strings 资源的语言包。本项目只报告潜在项，固定不可执行。 |
 | **诊断日志** | 收集 `DiagnosticReports` 下 `.ips/.crash/.panic/.diag/.hang`，过 KB 忽略后判可删。 |
-| **缓存** | 缓存目录归属某应用时，**该应用正在运行则跳过**（防删在写缓存）。 |
+| **缓存** | 缓存目录归属某应用时，应用正在运行则候选**可见但不可执行**；进程状态无法读取时同样 fail-closed。通用 `~/Library/Caches` 一级候选不能绕过已知应用归属规则。 |
 | **失效启动项** | LaunchAgents/Daemons plist 指向的可执行路径**不存在** → 判为 broken。 |
 | **失效偏好** | plist 对应应用已不存在 → 判为残留偏好。 |
 | **Xcode** | DerivedData/DeviceSupport/Archives/ModuleCaches/Simulator runtimes 等，按 KB 忽略 + 是否当前用 SDK 判定。 |
-| **AI 工具** | 按工具固定相对路径（cache/debug/telemetry/tmp）定位，过 AIJunkIgnoreRules 判可删。 |
+| **AI 工具** | 按工具固定相对路径（cache/debug/telemetry/tmp）定位，过 AIJunkIgnoreRules 判可删；Codex 同时识别 `.codex/tmp` 与 `.codex/.tmp`，Chrome DevTools MCP 同时兼容根布局与 `Default/` profile。 |
 
 ---
 
-## 6. 知识库加载算法（格式思想层）
+## 6. updater 状态机（本项目扩展）
+
+1. 从公开维护的 updater 根读取已暂存 app 的 `Info.plist`，或只解压 ZIP 内受限大小的顶层
+   app `Info.plist`；不执行下载包或暂存 bundle。
+2. 按 bundle ID 在 `/Applications`、`~/Applications` 和挂载卷的 `Applications` 中定位
+   已安装 app。
+3. 仅比较纯数字点分版本：
+   - staged > installed：`pending_update`，不可执行；
+   - staged == installed：`same_version_residue`，critical 精确选择；
+   - staged < installed：`older_version_residue`，critical 精确选择；
+   - app 缺失、metadata 损坏、多版本冲突或不可比较：fail-closed。
+4. 执行前重新读取版本；状态、installed 或 staged 版本任一变化即取消整批。
+5. 已安装 app 位于 `/Volumes` 时只报告外置安装提示，不假定 updater 一定能自动替换。
+6. `DARWIN_USER_TEMP_DIR` 中的 Qoder ShipIt 动态根通过 `getconf` 发现并复用同一版本模型，
+   但完整 app 临时副本固定不可执行。
+
+---
+
+## 7. 结构化空间诊断（本项目扩展）
+
+### 7.1 日志/trace 保留期
+
+1. 对明确的日志根做 no-follow、同 device 遍历，硬链接按 `(device, inode)` 去重；
+2. 只累计普通文件的 `st_blocks * 512`、逻辑大小、mtime 和数量，不读取正文；
+3. 分别计算早于 7/14/30 天的物理容量，并独立报告进程与 `lsof` 打开句柄；
+4. 保护规则、跨卷、云占位和访问错误仍会跳过或形成 issue；
+5. 结果固定 `critical + actionable=false`，不把 retention 阈值变成通用删除事实。
+
+### 7.2 SQLite freelist
+
+1. 仅针对公开维护的精确数据库路径，拒绝 symlink/非普通文件；
+2. 使用 `file:...?mode=ro&immutable=1` 读取 `page_size`、`page_count`、`freelist_count`；
+3. 查询前后复核 device/inode/size/mtime，变化则丢弃结果；
+4. `potential_bytes` 最多为内部空闲页和当前物理分配量的较小值，但
+   `reclaimable_bytes=0`；同时报告数据库总大小、空闲比例、WAL/SHM/journal 和句柄；
+5. 不创建/修改 sidecar，不 checkpoint，不运行 `VACUUM`，不删除数据库。
+
+---
+
+## 8. 知识库加载算法（格式思想层）
 
 - 持久化为自定义二进制容器（`.cmmkb`）。
 - 结构 ≈ **序列化对象图（NSKeyedArchiver/PropertyList）+ deflate 压缩 + 外层编码**。

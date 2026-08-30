@@ -6,11 +6,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from openclean.application_ownership import process_markers_for_path
 from openclean.cleanup import execute_cleanup
 from openclean.engine import IgnoreRules, scan_points
 from openclean.processes import (
+    OpenFileDetectionError,
+    OpenFileSnapshot,
     ProcessDetectionError,
     ProcessSnapshot,
+    capture_open_file_snapshot,
     capture_process_snapshot,
 )
 from openclean.scanpoints import AI_TOOL_JUNK, SYSTEM_JUNK, ScanPoint
@@ -51,9 +55,42 @@ class ProcessSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessDetectionError, "0.01 秒"):
             capture_process_snapshot(runner=timeout, timeout=0.01)
 
+    def test_open_file_snapshot_parses_paths_and_counts_scopes(self) -> None:
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                "p10\nfcwd\nn/Users/example\n"
+                "f5\nn/Users/example/logs/a.log\n"
+                "f6\nn/Users/example/state.sqlite-wal\n",
+                "",
+            )
+
+        snapshot = capture_open_file_snapshot(runner=runner)
+
+        self.assertEqual(calls[0][0], ["/usr/sbin/lsof", "-nP", "-Fn"])
+        self.assertEqual(snapshot.count_under("/Users/example/logs"), 1)
+        self.assertEqual(
+            snapshot.count_sqlite_family("/Users/example/state.sqlite"),
+            1,
+        )
+
+    def test_open_file_snapshot_failure_is_explicit(self) -> None:
+        with self.assertRaisesRegex(OpenFileDetectionError, "denied"):
+            capture_open_file_snapshot(
+                runner=lambda command, **_: subprocess.CompletedProcess(
+                    command, 1, "", "denied"
+                )
+            )
+        snapshot = OpenFileSnapshot(("/tmp/root/file",))
+        self.assertEqual(snapshot.count_under("/tmp/root"), 1)
+
 
 class ProcessProtectedScanTests(unittest.TestCase):
-    def test_running_tool_skips_scan_point_as_nonblocking_information(self) -> None:
+    def test_running_tool_is_visible_but_non_actionable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "cache"
             cache.mkdir()
@@ -71,7 +108,10 @@ class ProcessProtectedScanTests(unittest.TestCase):
                 result = scan_points([point], workers=1)
 
             self.assertTrue(result.complete)
-            self.assertEqual(result.items, [])
+            self.assertEqual(len(result.items), 1)
+            self.assertFalse(result.items[0].actionable)
+            self.assertFalse(result.items[0].preselected)
+            self.assertIn("正在运行", result.items[0].action_block_reason)
             self.assertEqual(result.issues[0].code, "resource_in_use")
             self.assertFalse(result.issues[0].blocking)
 
@@ -100,9 +140,61 @@ class ProcessProtectedScanTests(unittest.TestCase):
                 result = scan_points(points, workers=1)
 
             self.assertFalse(result.complete)
-            self.assertEqual([item.category for item in result.items], ["Ordinary"])
+            by_category = {item.category: item for item in result.items}
+            self.assertEqual(set(by_category), {"Protected", "Ordinary"})
+            self.assertFalse(by_category["Protected"].actionable)
+            self.assertIn(
+                "无法确认",
+                by_category["Protected"].action_block_reason,
+            )
+            self.assertTrue(by_category["Ordinary"].actionable)
             self.assertEqual(result.issues[0].code, "process_detection_failed")
             self.assertTrue(result.issues[0].blocking)
+
+    def test_generic_user_cache_applies_application_owner_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            caches = home / "Library" / "Caches"
+            codex_cache = caches / "com.openai.codex"
+            codex_cache.mkdir(parents=True)
+            (codex_cache / "data.bin").write_bytes(b"data")
+            point = ScanPoint(
+                "用户缓存",
+                (str(caches),),
+                "confirm",
+                expand_children=True,
+                process_owner_protection=True,
+            )
+
+            with mock.patch.dict("os.environ", {"HOME": str(home)}), mock.patch(
+                "openclean.engine.capture_process_snapshot",
+                return_value=ProcessSnapshot(
+                    ("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",)
+                ),
+            ):
+                result = scan_points([point], workers=1)
+
+            self.assertEqual(len(result.items), 1)
+            item = result.items[0]
+            self.assertEqual(item.path, codex_cache)
+            self.assertFalse(item.actionable)
+            self.assertIn("ChatGPT.app", item.running_process_markers)
+            self.assertIn("正在运行", item.action_block_reason)
+
+    def test_application_owner_rules_do_not_match_similar_sibling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            owned = home / "Library" / "Caches" / "com.openai.codex"
+            sibling = home / "Library" / "Caches" / "com.openai.codex-backup"
+
+            self.assertIn(
+                "ChatGPT.app",
+                process_markers_for_path(owned, home=home),
+            )
+            self.assertEqual(
+                process_markers_for_path(sibling, home=home),
+                (),
+            )
 
     def test_public_xcode_and_ai_points_are_precise_and_process_guarded(self) -> None:
         system = {point.category: point for point in SYSTEM_JUNK}
@@ -117,11 +209,16 @@ class ProcessProtectedScanTests(unittest.TestCase):
             "~/.codex/cache/codex_apps_tools",
             ai["Codex 缓存"].paths,
         )
+        self.assertIn("~/.codex/.tmp", ai["Codex 缓存"].paths)
         self.assertIn(
             "~/.claude/stats-cache.json",
             ai["Claude 缓存"].paths,
         )
         self.assertTrue(ai["chrome-devtools-mcp"].running_process_markers)
+        self.assertIn(
+            "~/.cache/chrome-devtools-mcp/chrome-profile/Default/Cache",
+            ai["chrome-devtools-mcp"].paths,
+        )
 
 
 class ProcessProtectedExecutionTests(unittest.TestCase):

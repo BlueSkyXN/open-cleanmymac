@@ -115,7 +115,7 @@ class SpaceTuiTests(unittest.TestCase):
             self.assertEqual(result.selected[0].path, directory)
             self.assertTrue(nested.exists())
 
-    def test_yes_still_requires_y_confirmation(self) -> None:
+    def test_yes_requires_critical_bang_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "root"
             root.mkdir()
@@ -124,7 +124,7 @@ class SpaceTuiTests(unittest.TestCase):
 
             result, screen = self._run(
                 root,
-                [ord(" "), curses.KEY_DC, ord("y")],
+                [ord(" "), curses.KEY_DC, ord("y"), ord("!")],
                 allow_execution=True,
             )
 

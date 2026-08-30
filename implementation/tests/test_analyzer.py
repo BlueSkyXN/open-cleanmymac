@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +15,7 @@ from openclean.analyzer import AnalyzeError, analyze_path
 from openclean.cli import main
 from openclean.engine import IgnoreRules
 from openclean.knowledge_base import KnowledgeBase
+from openclean.models import FileFacts
 
 
 class AnalyzerTests(unittest.TestCase):
@@ -129,9 +132,160 @@ class AnalyzerTests(unittest.TestCase):
             self.assertEqual(payload["entry_count_total"], 2)
             self.assertEqual(payload["entry_count_returned"], 1)
             self.assertEqual(len(payload["entries"]), 1)
+            self.assertEqual(payload["reclaimable_bytes"], 0)
+            self.assertEqual(payload["entries"][0]["reclaimable_bytes"], 0)
+            self.assertTrue(payload["volumes"])
+            self.assertTrue(
+                all(
+                    volume["reclaimable_bytes"] == 0
+                    for volume in payload["volumes"]
+                )
+            )
+            self.assertEqual(payload["entries"][0]["safety"], "critical")
+            self.assertTrue(
+                payload["entries"][0]["requires_explicit_selection"]
+            )
             self.assertEqual(
                 payload["entries"][0]["path"], str(root / "large.bin")
             )
+
+    def test_analyze_stays_on_each_top_level_items_device(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            parent = root / "mounts"
+            external = parent / "external"
+            external.mkdir(parents=True)
+            local_file = parent / "local.bin"
+            local_file.write_bytes(b"local")
+            (external / "large.bin").write_bytes(b"x" * 100_000)
+            engine = __import__(
+                "openclean.engine", fromlist=["_facts_from_entry"]
+            )
+            original = engine._facts_from_entry
+
+            def different_device(entry, issues, task):
+                facts = original(entry, issues, task)
+                if facts is None or facts.path != external:
+                    return facts
+                current = facts.stat
+                return FileFacts(
+                    path=facts.path,
+                    stat=SimpleNamespace(
+                        st_mode=current.st_mode,
+                        st_size=current.st_size,
+                        st_blocks=current.st_blocks,
+                        st_mtime=current.st_mtime,
+                        st_dev=current.st_dev + 1,
+                        st_ino=current.st_ino,
+                        st_nlink=current.st_nlink,
+                        st_uid=current.st_uid,
+                        st_flags=getattr(current, "st_flags", 0),
+                    ),
+                )
+
+            with mock.patch(
+                "openclean.engine._facts_from_entry",
+                side_effect=different_device,
+            ), mock.patch(
+                "openclean.analyzer.nonprivileged_action_block_reason",
+                return_value="",
+            ):
+                analysis = analyze_path(root)
+
+            self.assertTrue(analysis.complete)
+            self.assertEqual(len(analysis.entries), 1)
+            item = analysis.entries[0].item
+            self.assertEqual(item.path, parent)
+            self.assertEqual(item.size, local_file.stat().st_blocks * 512)
+            self.assertEqual(item.cross_device_paths, 1)
+            self.assertFalse(item.actionable)
+            self.assertIn("跨卷", item.action_block_reason)
+            issue = next(
+                issue
+                for issue in analysis.issues
+                if issue.code == "cross_device_skipped"
+            )
+            self.assertEqual(issue.path, external)
+            self.assertFalse(issue.blocking)
+
+    def test_analyze_skips_same_device_different_filesystem(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            parent = root / "mounts"
+            external = parent / "same-device-mount"
+            external.mkdir(parents=True)
+            local_file = parent / "local.bin"
+            local_file.write_bytes(b"local")
+            (external / "large.bin").write_bytes(b"x" * 100_000)
+
+            def filesystem_id(path: Path) -> int:
+                return 200 if path == external else 100
+
+            with mock.patch(
+                "openclean.engine.filesystem_id_retry",
+                side_effect=filesystem_id,
+            ), mock.patch(
+                "openclean.analyzer.nonprivileged_action_block_reason",
+                return_value="",
+            ):
+                analysis = analyze_path(root)
+
+            self.assertTrue(analysis.complete)
+            self.assertEqual(len(analysis.entries), 1)
+            item = analysis.entries[0].item
+            self.assertEqual(item.path, parent)
+            self.assertEqual(item.size, local_file.stat().st_blocks * 512)
+            self.assertEqual(item.cross_device_paths, 1)
+            self.assertFalse(item.actionable)
+            issue = next(
+                issue
+                for issue in analysis.issues
+                if issue.code == "cross_device_skipped"
+            )
+            self.assertEqual(issue.path, external)
+
+    def test_analyze_retries_interrupted_root_lstat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data.bin").write_bytes(b"data")
+            original = Path.lstat
+            interrupted = False
+
+            def flaky_lstat(path: Path):
+                nonlocal interrupted
+                if path == root and not interrupted:
+                    interrupted = True
+                    raise InterruptedError(errno.EINTR, "interrupted")
+                return original(path)
+
+            with mock.patch.object(Path, "lstat", new=flaky_lstat):
+                analysis = analyze_path(root)
+
+            self.assertTrue(interrupted)
+            self.assertTrue(analysis.complete)
+            self.assertEqual(len(analysis.entries), 1)
+
+    def test_analyze_retries_interrupted_filesystem_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data").mkdir()
+            (root / "data" / "file.bin").write_bytes(b"data")
+            original = os.statvfs
+            interrupted = False
+
+            def flaky_statvfs(path: str | os.PathLike[str]):
+                nonlocal interrupted
+                if Path(path) == root / "data" and not interrupted:
+                    interrupted = True
+                    raise InterruptedError(errno.EINTR, "interrupted")
+                return original(path)
+
+            with mock.patch("os.statvfs", side_effect=flaky_statvfs):
+                analysis = analyze_path(root)
+
+            self.assertTrue(interrupted)
+            self.assertTrue(analysis.complete)
+            self.assertEqual(len(analysis.entries), 1)
 
     def test_rejects_file_and_symlink_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

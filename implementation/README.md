@@ -82,6 +82,11 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 - Docker Build Cache/Images/Containers 分别映射固定官方 prune 命令且均需 identifier
   精确选择；Local Volumes 始终不可执行。
 - 特权系统项、ApplicationLanguages、云保护项和不支持资源无法被参数强制解锁。
+- `analyze` 的一级候选统一为 `critical + requires_explicit_selection`；非交互执行必须精确
+  `--select`，全屏执行在 `Y` 后还需按 `!` 完成 critical 二次确认。
+- updater 候选统一为 critical 且要求精确选择；`pending_update`、`installed_app_missing`
+  和 `version_unknown` 不可执行，同版/旧版残留在执行前仍会重新比较版本。
+- retention 与 SQLite freelist 项固定为只读诊断：不接受选择，不进入通用 cleanup executor。
 
 ## TUI
 
@@ -90,6 +95,7 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 提供只读行式导航。
 
 TUI 的选择只是选择；实际执行仍要求启动命令带 `--yes`，并在汇总页再次按 `Y`。
+`analyze` 候选属于 critical，随后还会进入独立的 `!` 二次确认。
 快捷键见 [docs/PREVIEW.md](../docs/PREVIEW.md)。
 
 ## JSON schema v2
@@ -97,12 +103,22 @@ TUI 的选择只是选择；实际执行仍要求启动命令带 `--yes`，并�
 成功结果包含 `schema_version=2`。通用容量字段：
 
 - `potential_bytes`：发现的物理占用；
-- `reclaimable_bytes`：`actionable=true` 候选占用；
+- `reclaimable_bytes`：清理域中 `actionable=true` 候选占用；`analyze` 顶层及每个 entry
+  固定为 `0`，因为空间占用本身不等于垃圾；
 - `requires_privilege_bytes`：当前需要特权 helper 的占用；
 - `unsupported_bytes`：既不可执行又非特权候选的占用。
 
 `scan` 额外返回 `command`、`mode` 和 `requested_domains`。`analyze` 返回 `top`、
-`truncated`、`entry_count_total`、`entry_count_returned`。`optimize --json` 返回：
+`truncated`、`entry_count_total`、`entry_count_returned`。路径候选的
+`cross_device_paths` 表示递归时跳过的其它文件系统挂载点数量；非零候选不可执行。
+`device_id` 是本次启动中的文件系统设备标识；顶层 `volumes` 按设备分别汇总
+`mount_point`、`system_disk` 和容量。updater 项额外返回 `updater_status`、
+`installed_version`、`staged_version` 与 `updater_external_install`。
+`diagnostic_kind=retention` 额外返回文件数、打开句柄以及 7/14/30 天物理容量；
+`diagnostic_kind=sqlite_freelist` 返回 page/freelist、内部空闲容量与比例、数据库总大小和
+WAL/SHM/journal 容量。`diagnostic_kind=updater_temp` 报告动态 ShipIt app 的版本状态。
+三类都固定 `actionable=false`、`reclaimable_bytes=0`。
+`optimize --json` 返回：
 
 ```json
 {
@@ -189,6 +205,15 @@ best effort，不会把已经安装的 sequence 报成失败。托管 `knowledge
 
 - 不跟随候选或 ancestor symlink；
 - 环境变量缓存根只允许位于 `~/Library/Caches` 或 `~/.cache`，并强制精确选择；
+- 已知应用归属规则同样覆盖通用 `~/Library/Caches` 一级候选；应用正在运行或进程状态无法
+  读取时，候选继续显示但不可执行；
+- 已知 updater 只读取受限大小的 app `Info.plist` 或 ZIP 内顶层 bundle metadata；不执行
+  暂存代码。版本状态不明时 fail-closed，同版/旧版残留在执行前重新判定；
+- 日志保留期扫描只遍历文件 metadata，不读取正文；SQLite 使用
+  `mode=ro&immutable=1` PRAGMA 且不创建、checkpoint 或修改 WAL/SHM；
+- `analyze` 同时比较每个一级候选的 `st_dev` 与 `statvfs().f_fsid`，不进入其它卷或文件
+  系统挂载点；后者用于识别 macOS 上 `st_dev` 相同的 APFS root/Data 挂载边界；
+- 只读 `lstat` / `scandir` 遇到 `EINTR` 时重试，其它访问错误继续按 issue 报告；
 - 目录大小按物理块计量，硬链接 device/inode 去重；Darwin `SF_DATALESS` 与 zero-block
   启发式在目录枚举前阻止 dataless/疑似云占位，它们不计回收量；
 - 执行前批量复核保护规则、device/inode、owner、mount、云和运行中进程；
@@ -254,7 +279,7 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 
 剩余工作见 [TODO.md](TODO.md)。
 
-当前本地验证基线为 319 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+当前本地验证基线为 347 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
 checkout 的 `make check` 输出为准。
 
 ## 许可证

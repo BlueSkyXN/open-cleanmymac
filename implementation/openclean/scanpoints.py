@@ -26,6 +26,9 @@ class ScanPoint:
     child_extensions: tuple[str, ...] = ()
     path_provider: str | None = None
     requires_privilege: bool = False
+    process_owner_protection: bool = False
+    updater_protection: bool = False
+    stay_on_device: bool = False
 
     def __post_init__(self) -> None:
         if (self.child_globs or self.child_extensions) and not self.expand_children:
@@ -50,13 +53,31 @@ DEVELOPER_JUNK: list[ScanPoint] = [
     ScanPoint("Yarn 缓存", ("~/Library/Caches/Yarn",)),
     ScanPoint("pnpm store", ("~/Library/pnpm/store",)),
     ScanPoint("npm 缓存", ("~/.npm/_cacache",)),
+    ScanPoint(
+        "npm 临时与日志缓存",
+        ("~/.npm/_npx", "~/.npm/_prebuilds", "~/.npm/_logs"),
+        "confirm",
+        "按 npm 子目录精确审阅；删除后可能重新下载或失去历史日志",
+    ),
     ScanPoint("CocoaPods 缓存", ("~/Library/Caches/CocoaPods",)),
     ScanPoint("Go 构建缓存", ("~/Library/Caches/go-build",)),
+    ScanPoint(
+        "Go module cache",
+        ("~/go/pkg/mod",),
+        "confirm",
+        "等价于可重建的 module 下载缓存；清理后需要重新下载依赖",
+    ),
     ScanPoint("Deno 缓存", ("~/Library/Caches/deno",)),
     ScanPoint("Bun 缓存", ("~/.bun/install/cache",)),
     ScanPoint("mise 缓存", ("~/Library/Caches/mise",)),
     ScanPoint("Homebrew 缓存", ("~/Library/Caches/Homebrew",)),
     ScanPoint("Cargo 注册缓存", ("~/.cargo/registry/cache",)),
+    ScanPoint(
+        "Cargo Git 缓存",
+        ("~/.cargo/git/checkouts", "~/.cargo/git/db"),
+        "confirm",
+        "Git dependency checkout/database；清理后需要重新获取依赖",
+    ),
     ScanPoint("Rustup 下载", ("~/.rustup/downloads",)),
     ScanPoint("Gradle 构建缓存", ("~/.gradle/caches/build-cache-1",)),
     ScanPoint("Maven 本地仓库", ("~/.m2/repository",)),
@@ -83,7 +104,17 @@ DEVELOPER_JUNK: list[ScanPoint] = [
 SYSTEM_JUNK: list[ScanPoint] = [
     ScanPoint("用户缓存", ("~/Library/Caches",), "confirm",
               "按一级子项逐项审阅；通用缓存不默认选择",
-              expand_children=True),
+              expand_children=True,
+              process_owner_protection=True,
+              updater_protection=True),
+    ScanPoint(
+        "Lark 更新缓存",
+        ("~/Library/Application Support/LarkShell/update",),
+        "critical",
+        "仅在版本状态可确认且 Lark 完全退出后精确审阅",
+        running_process_markers=("Lark.app", "Feishu", "Lark Helper"),
+        updater_protection=True,
+    ),
     ScanPoint(
         "系统缓存",
         ("/Library/Caches",),
@@ -114,6 +145,20 @@ SYSTEM_JUNK: list[ScanPoint] = [
         "confirm",
         "按一级子项逐项审阅；通用日志不默认选择",
         expand_children=True,
+    ),
+    ScanPoint(
+        "日志与 trace 保留期",
+        (),
+        "critical",
+        "只按物理块、mtime、文件数量、进程和打开句柄生成 7/14/30 天诊断",
+        scanner="retention-diagnostics",
+    ),
+    ScanPoint(
+        "Darwin updater 临时副本",
+        (),
+        "critical",
+        "通过 DARWIN_USER_TEMP_DIR 只读发现 Qoder ShipIt 完整应用副本",
+        scanner="darwin-temp-updater",
     ),
     ScanPoint(
         "系统日志",
@@ -281,10 +326,18 @@ AI_TOOL_JUNK: list[ScanPoint] = [
         "Codex 缓存",
         (
             "~/.codex/tmp",
+            "~/.codex/.tmp",
             "~/.codex/cache/codex_apps_server_info",
             "~/.codex/cache/codex_apps_tools",
         ),
         running_process_markers=("codex",),
+    ),
+    ScanPoint(
+        "Codex SQLite 内部空闲页",
+        (),
+        "critical",
+        "使用 immutable read-only PRAGMA 报告 freelist，不执行 VACUUM",
+        scanner="sqlite-freelist",
     ),
     ScanPoint(
         "Gemini 临时",
@@ -318,16 +371,12 @@ AI_TOOL_JUNK: list[ScanPoint] = [
     ScanPoint(
         "chrome-devtools-mcp",
         tuple(
-            f"~/.cache/chrome-devtools-mcp/chrome-profile/{path}"
+            f"~/.cache/chrome-devtools-mcp/chrome-profile/{prefix}{path}"
+            for prefix in ("", "Default/")
             for path in (
-                "Cache",
-                "Code Cache",
-                "GPUCache",
-                "DawnGraphiteCache",
-                "DawnWebGPUCache",
-                "Service Worker/CacheStorage",
-                "GraphiteDawnCache",
-                "component_crx_cache",
+                "Cache", "Code Cache", "GPUCache", "DawnGraphiteCache",
+                "DawnWebGPUCache", "Service Worker/CacheStorage",
+                "GraphiteDawnCache", "component_crx_cache",
                 "extensions_crx_cache",
             )
         ),

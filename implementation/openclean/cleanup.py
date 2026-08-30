@@ -36,6 +36,7 @@ from .processes import (
     capture_process_snapshot,
 )
 from .startup_items import StartupItemError, startup_item_still_broken
+from .updater import assess_updater_candidate
 
 
 class SelectionError(ValueError):
@@ -491,6 +492,22 @@ def _audit_item(
         raise CleanupSafetyError("候选包含 macOS dataless/疑似云占位文件")
 
     path = normalize_path(item.path)
+    if item.updater_status:
+        current_updater = assess_updater_candidate(path, home=home)
+        if current_updater is None:
+            raise CleanupSafetyError(
+                "updater 暂存状态已变化，需重新扫描后再决定"
+            )
+        if (
+            current_updater.status != item.updater_status
+            or current_updater.installed_version != item.installed_version
+            or current_updater.staged_version != item.staged_version
+        ):
+            raise CleanupSafetyError(
+                "updater 版本状态已变化，需重新扫描后再决定"
+            )
+        if current_updater.blocks_cleanup:
+            raise CleanupSafetyError(current_updater.block_reason)
     _validate_cleanup_scope(item, path, uid, home)
     if item.domain == "trash" and not _is_trash_root(path, uid):
         raise CleanupSafetyError(f"拒绝清空非 Trash 根目录：{path}")

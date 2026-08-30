@@ -114,6 +114,14 @@ universal binary thinning 未实现。若未来仅做审计，需要结构化记
 需要完整对齐规格 01，还需为可计数任务建模 total，并提供每任务 Control、引擎级聚合和
 Control 状态 observer；不能把进度 callback 当作 Control observer。
 
+### 9. 浏览器 origin 与版本化 CLI 缓存
+
+- Chrome `Service Worker/CacheStorage` 应按 profile/origin 只读汇总；不删除 Cookies、
+  Login Data、IndexedDB 或整个 profile，运行中固定不可执行。
+- Claude/Copilot 等版本目录应先解析当前 symlink/安装版本，只报告非当前完整旧版本；
+  零字节更新 marker、当前 binary 和 session state 必须保留。
+- UURemote 历史 `.pkg` 等需比较已安装版本并检查句柄，再纳入 updater 状态机。
+
 ## 当前已完成的交付门
 
 - 五域扫描、物理/逻辑大小、硬链接去重、Darwin `SF_DATALESS`/zero-block 占位保护、
@@ -122,6 +130,14 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
 - clean/purge/analyze 预览、TUI、精确选择、用户态执行和报告；`--select` 不继承默认
   预选，tier flag 只作为精确目标的风险授权；
 - 同卷 Trash、Trash 清空、Docker 固定 prune、运行中进程保护；
+- updater installed/staged 版本状态、执行前重判和外置安装提示；
+- WorkBuddy logs/traces、Lark SDK、Shadowrocket、TRAE 日志按物理块和 mtime 输出
+  7/14/30 天只读保留期诊断，并报告进程与打开句柄状态；不读取正文或批量删除；
+- Codex `logs_2.sqlite` 使用 `mode=ro&immutable=1` 输出 page/freelist、内部空闲页比例、
+  WAL/SHM/journal 和句柄状态；不自动 `VACUUM` 或删除数据库；
+- `DARWIN_USER_TEMP_DIR` 中的 Qoder ShipIt 完整 app 副本按动态 updater 根读取版本；
+  应用缺失等状态只读可见且固定不可执行；
+- JSON per-volume 汇总，以及 Go module、Cargo Git、npm 次级缓存扫描；
 - 任务 DAG、加权进度、动态扫描并发；
 - System Junk、Darwin cache、broken startup items、Time Machine、ApplicationLanguages；
 - JSON schema v2 和统一机器错误 envelope；重复 domain/root 去重，显式 project root

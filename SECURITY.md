@@ -58,6 +58,13 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 - 后代目录审计使用 no-follow fd + `fstat` + `scandir(fd)`，拒绝扫描后替换的 symlink、
   类型、owner、device 或 dataless 变化。
 - 环境变量缓存根受可信目录约束，并要求精确选择。
+- updater 候选只读取受限大小的 bundle metadata，不执行暂存代码；待安装新版、应用缺失或
+  未知版本状态固定不可执行。同版/旧版残留要求 critical 精确选择，执行前重新比较版本，
+  任一变化都会取消整批。
+- retention 诊断只读取文件 metadata，不读取日志/trace 正文；SQLite 诊断使用 immutable
+  read-only URI，并在查询前后复核文件状态。两类结果固定不可执行，不进入通用清理器。
+- Darwin temp updater 只匹配明确的 Qoder ShipIt 动态根并读取受限 app metadata；即使版本
+  可判断也固定不可执行，避免临时下载/解压竞态进入通用清理器。
 - macOS `SF_DATALESS` 在目录枚举和最终移动前优先检查；zero-block 规则作为保守兜底，
   dataless/疑似云占位对象不计入可回收空间且不可执行。
 - 特权路径、Docker volumes、ApplicationLanguages 修改和 universal binary thinning保持
@@ -92,6 +99,8 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 - 根路径、home、home 祖先、挂载点和跨卷路径；
 - 目标 symlink、ancestor symlink、扫描后替换和 inode 变化；
 - 保护路径与保护后代、云占位和运行中进程；
+- updater 新版/同版/旧版、应用缺失、损坏 ZIP、多版本冲突和扫描后版本变化；
+- retention 年龄桶/ignore/进程/句柄，以及 SQLite immutable 查询、sidecar 不变和畸形文件；
 - 环境变量指向 Documents、`/`、受信缓存根和受保护路径；
 - 未带 `--yes`、批量选择扩大、critical 二次确认；
 - Trash 与 Docker 的可恢复性差异；
