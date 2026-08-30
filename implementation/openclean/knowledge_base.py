@@ -53,6 +53,10 @@ class _PathRules:
     globs: tuple[str, ...] = ()
     regexes: tuple[re.Pattern[str], ...] = ()
 
+    @property
+    def is_empty(self) -> bool:
+        return not (self.paths or self.globs or self.regexes)
+
     def merge(self, overrides: _PathRules) -> _PathRules:
         paths = tuple(dict.fromkeys((*self.paths, *overrides.paths)))
         globs = tuple(dict.fromkeys((*self.globs, *overrides.globs)))
@@ -69,8 +73,7 @@ class _PathRules:
         )
 
     def match(self, path: Path, kind: str) -> RuleMatch | None:
-        normalized = normalize_path(path)
-        candidate = str(normalized)
+        candidate = str(path)
 
         for root in self.paths:
             try:
@@ -98,6 +101,10 @@ class KnowledgeBase:
     applications: dict[str, ApplicationRule] = field(default_factory=dict)
     source: Path | None = None
     schema_version: int = SCHEMA_VERSION
+
+    @property
+    def has_path_rules(self) -> bool:
+        return not (self.ignored.is_empty and self.protected.is_empty)
 
     @classmethod
     def empty(cls) -> KnowledgeBase:
@@ -176,6 +183,8 @@ class KnowledgeBase:
         )
 
     def match_path(self, path: str | os.PathLike[str]) -> RuleMatch | None:
+        if not self.has_path_rules:
+            return None
         normalized = normalize_path(path)
         return (
             self.protected.match(normalized, "protect")

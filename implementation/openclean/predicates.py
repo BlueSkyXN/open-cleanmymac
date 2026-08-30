@@ -40,6 +40,8 @@ class KnowledgeBaseIgnorePredicate:
     knowledge_base: KnowledgeBase
 
     def should_ignore(self, item: FileFacts) -> bool:
+        if not self.knowledge_base.has_path_rules:
+            return False
         # 按规格同时查询 URL 与 path；任一命中即停止。
         return self.knowledge_base.should_ignore_url(
             item.file_url
@@ -129,10 +131,16 @@ class ProtectionGate:
     def should_ignore(self, item: FileFacts) -> bool:
         if self._knowledge_base.should_ignore(item):
             return True
+        return self.predicates_ignore(item)
+
+    def predicates_ignore(self, item: FileFacts) -> bool:
+        """知识库已先行判定后，仅计算普通谓词。"""
         return any(predicate.should_ignore(item) for predicate in self._predicates)
 
     def knowledge_base_ignores(self, path: str | os.PathLike[str]) -> bool:
         """无需访问文件系统即可执行最外层知识库安全判定。"""
+        if not self._knowledge_base.knowledge_base.has_path_rules:
+            return False
         facts = FileFacts(path=normalize_path(path), stat=None)
         return self._knowledge_base.should_ignore(facts)
 

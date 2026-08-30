@@ -118,20 +118,27 @@ class DarwinUserCacheDiscovery:
 
 
 @dataclass(frozen=True)
+class DarwinUserTempDiscovery:
+    paths: tuple[Path, ...] = ()
+    issues: tuple[ScanIssue, ...] = ()
+
+
+@dataclass(frozen=True)
 class LocalSnapshotDiscovery:
     mount_point: Path
     snapshots: tuple[str, ...] = ()
     issues: tuple[ScanIssue, ...] = ()
 
 
-def discover_darwin_user_cache(
+def _discover_darwin_user_directory(
+    variable: str,
+    task: str,
     *,
     getconf_path: str = "/usr/bin/getconf",
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     timeout: float = 2.0,
-) -> DarwinUserCacheDiscovery:
-    """通过 macOS 公开 ``getconf`` 接口发现当前用户的 Darwin cache 根。"""
-    command = [getconf_path, "DARWIN_USER_CACHE_DIR"]
+) -> tuple[tuple[Path, ...], tuple[ScanIssue, ...]]:
+    command = [getconf_path, variable]
     run = runner or subprocess.run
     try:
         completed = run(
@@ -152,29 +159,67 @@ def discover_darwin_user_cache(
             detail = completed.stderr.strip()
             message = detail or f"getconf 退出码 {completed.returncode}"
         else:
-            lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+            lines = [
+                line.strip()
+                for line in completed.stdout.splitlines()
+                if line.strip()
+            ]
             if len(lines) != 1 or "\x00" in lines[0]:
-                message = "getconf 返回的 Darwin cache 路径格式无效"
+                message = f"getconf 返回的 {variable} 路径格式无效"
             else:
                 raw_path = lines[0]
                 if not os.path.isabs(raw_path):
-                    message = "getconf 返回的 Darwin cache 路径不是绝对路径"
+                    message = f"getconf 返回的 {variable} 路径不是绝对路径"
                 else:
                     path = normalize_path(raw_path)
                     if path == Path("/"):
                         message = "getconf 返回了不安全的根目录"
                     else:
-                        return DarwinUserCacheDiscovery(paths=(path,))
+                        return (path,), ()
 
-    return DarwinUserCacheDiscovery(
-        issues=(
-            ScanIssue(
-                code="path_discovery_failed",
-                message=message,
-                task="Darwin 用户缓存",
-            ),
-        )
+    return (), (
+        ScanIssue(
+            code="path_discovery_failed",
+            message=message,
+            task=task,
+        ),
     )
+
+
+def discover_darwin_user_cache(
+    *,
+    getconf_path: str = "/usr/bin/getconf",
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    timeout: float = 2.0,
+) -> DarwinUserCacheDiscovery:
+    """通过 macOS 公开 ``getconf`` 接口发现当前用户的 Darwin cache 根。"""
+
+    paths, issues = _discover_darwin_user_directory(
+        "DARWIN_USER_CACHE_DIR",
+        "Darwin 用户缓存",
+        getconf_path=getconf_path,
+        runner=runner,
+        timeout=timeout,
+    )
+    return DarwinUserCacheDiscovery(paths, issues)
+
+
+def discover_darwin_user_temp(
+    *,
+    getconf_path: str = "/usr/bin/getconf",
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    timeout: float = 2.0,
+) -> DarwinUserTempDiscovery:
+    """通过公开 ``getconf`` 接口发现当前用户的 Darwin temp 根。"""
+
+    paths, issues = _discover_darwin_user_directory(
+        "DARWIN_USER_TEMP_DIR",
+        "Darwin updater 临时副本",
+        getconf_path=getconf_path,
+        runner=runner,
+        timeout=timeout,
+    )
+    return DarwinUserTempDiscovery(paths, issues)
 
 
 def volume_mount_point(path: str | os.PathLike[str]) -> Path:

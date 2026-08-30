@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from openclean.cli import main
-from openclean.models import Item, ScanResult
+from openclean.cli import _item_annotations, _item_payload, _volume_summaries, main
+from openclean.models import FileIdentity, Item, ScanResult
 
 
 def _rules(root: Path) -> Path:
@@ -19,9 +19,46 @@ def _rules(root: Path) -> Path:
 
 
 class CliContractTests(unittest.TestCase):
+    def test_item_and_volume_payloads_separate_external_disk_capacity(self) -> None:
+        system = Item(
+            Path("/Users/example/cache"),
+            100,
+            "cache",
+            identity=FileIdentity(10, 1, 501),
+            updater_status="same_version_residue",
+            installed_version="1.0",
+            staged_version="1.0.0",
+        )
+        external = Item(
+            Path("/Volumes/External/.Trashes/501"),
+            250,
+            "trash",
+            identity=FileIdentity(20, 2, 501),
+        )
+
+        def mount_point(path: Path) -> Path:
+            return Path("/Volumes/External") if "External" in str(path) else Path("/")
+
+        with mock.patch(
+            "openclean.cli.volume_mount_point",
+            side_effect=mount_point,
+        ):
+            volumes = _volume_summaries((system, external))
+
+        by_device = {volume["device_id"]: volume for volume in volumes}
+        self.assertEqual(by_device[10]["reclaimable_bytes"], 100)
+        self.assertTrue(by_device[10]["system_disk"])
+        self.assertEqual(by_device[20]["reclaimable_bytes"], 250)
+        self.assertFalse(by_device[20]["system_disk"])
+        payload = _item_payload(system)
+        self.assertEqual(payload["device_id"], 10)
+        self.assertEqual(payload["updater_status"], "same_version_residue")
+        self.assertIn("installed=1.0", _item_annotations(system))
+
     def test_help_is_stdout_only_and_explains_safety_contracts(self) -> None:
         cases = (
             (("--help",), "macOS 清理工具"),
+            (("--help",), "只读诊断"),
             (("scan", "--help"), "仅本次运行"),
             (("clean", "--help"), "永久操作"),
             (("purge", "--help"), "同卷 Trash"),

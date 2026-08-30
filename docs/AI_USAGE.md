@@ -29,9 +29,9 @@ openclean analyze "$ROOT" --top 20 --no-interactive --json
 
 | 域 | 典型内容 | AI 的处理方式 |
 |---|---|---|
-| `system` | `~/Library/Caches`、`~/Library/Logs`、Xcode、失效启动项 | 报告候选和阻断原因，不绕过特权或应用保护。 |
-| `developer` | pip、uv、npm、Cargo、Homebrew、Docker 报告 | 普通缓存只建议审阅；Docker 只报告。 |
-| `ai` | `~/.claude/cache`、`~/.codex/tmp`、`~/.gemini/tmp`、OpenCode、Cursor | 报告大小和保护状态，不自动清理。 |
+| `system` | `~/Library/Caches`、updater、日志、Xcode、失效启动项 | 报告候选和阻断原因，不绕过特权、应用或版本保护。 |
+| `developer` | pip、uv、npm、Go、Cargo、Homebrew、Docker 报告 | 普通缓存只建议审阅；Docker 只报告。 |
+| `ai` | Claude、Codex `.codex/{tmp,.tmp}`、Gemini、Chrome DevTools MCP、OpenCode、Cursor 缓存 | 报告大小和保护状态，不自动清理。 |
 | `project` | `node_modules`、`.venv`、`target`、DerivedData 等可重建产物 | 只分析明确的项目根，不扩大范围。 |
 | `trash` | `~/.Trash` 与挂载卷 Trash | 只报告；清空是永久操作。 |
 
@@ -43,7 +43,7 @@ openclean analyze "$ROOT" --top 20 --no-interactive --json
 | 内容 | 判读规则 |
 |---|---|
 | `potential_bytes` | 本次发现的物理占用。 |
-| `reclaimable_bytes` | 当前 `actionable=true` 候选的占用，不代表已经释放。 |
+| `reclaimable_bytes` | 清理域中当前 `actionable=true` 候选的占用；`analyze` 固定为 `0`，也不代表已经释放。 |
 | `requires_privilege_bytes` | 需要尚未实现的特权 helper，只能报告。 |
 | `unsupported_bytes` | 当前明确不支持执行的占用。 |
 | `complete`、`issues` | `complete=true` 仍需检查全部 `issues`；有 blocking issue 时不得宣称扫描完整。 |
@@ -51,6 +51,19 @@ openclean analyze "$ROOT" --top 20 --no-interactive --json
 | `safety` | `safe` 也只是候选；`confirm`、`critical` 必须单独提示风险。 |
 | `requires_privilege`、`is_cloud_file` | 特权项和云占位项只能报告。 |
 | `requires_explicit_selection`、`preselected` | 精确选择要求和默认预选都不等于用户授权。 |
+| `cross_device_paths` | 非零表示递归时跳过了其它文件系统挂载点；其容量未计入，候选不可执行。 |
+| `volumes`、`device_id` | 按卷区分系统盘和外置盘收益；`device_id` 只在当前启动中有意义。 |
+| `updater_status` | 新版待安装、应用缺失或未知状态只能报告；同版/旧版仍要求 critical 精确选择。 |
+| `diagnostic_kind=retention` | 读取文件数、句柄及 7/14/30 天物理容量；阈值不是删除授权。 |
+| `diagnostic_kind=sqlite_freelist` | 读取内部空闲页/比例及 WAL；不得建议删除 DB 或在线 `VACUUM`。 |
+| `diagnostic_kind=updater_temp` | Darwin temp 中的完整 app 只读可见；版本判断不构成删除授权。 |
+
+运行中的已知应用缓存仍会出现在结果中，但 `actionable=false`。这条保护也适用于通用
+`~/Library/Caches` 入口；AI 不应因为候选仍可见就建议绕过阻断原因。
+updater 的 installed/staged 版本必须同时判读；不得把 `pending_update` 或
+`installed_app_missing` 改写成“可安全删除”。
+只读诊断项固定 `actionable=false`。retention 报告只能用于选择后续保留策略；SQLite
+freelist 只有在应用完全退出、无 WAL/句柄、有备份和足够临时空间时才可能进入独立压缩任务。
 
 默认 JSON 包含绝对路径。输出需要离开本机会话时使用 `--json --redact-paths`；脱敏后的
 `path:0001` 只能用于报告，不能作为后续 selector。

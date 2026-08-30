@@ -358,6 +358,7 @@ def _development_region(
                 ),
                 task=task,
                 path=info_path,
+                blocking=False,
             )
         )
         return None
@@ -368,6 +369,7 @@ def _development_region(
                 message="CFBundleDevelopmentRegion 无效，已跳过应用语言审计",
                 task=task,
                 path=info_path,
+                blocking=False,
             )
         )
         return None

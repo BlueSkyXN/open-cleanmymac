@@ -38,6 +38,30 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
   暴露 `zip(strict=True)` traceback；help/version 仍可读取。
 - `analyze --top` 在单层文本、行式浏览器和 curses TUI 中都明确显示截断数量，并说明
   百分比基于全部候选。
+- `analyze` 现在按每个一级候选的 device + filesystem 双边界遍历，跳过外部卷/挂载点；
+  `statvfs().f_fsid` 避免 macOS APFS root/Data 因相同 `st_dev` 被重复扫描。JSON 顶层和
+  entry 的 `reclaimable_bytes` 固定为 `0`，候选统一为 critical 精确选择。
+- 空知识库不再对每个文件重复构造 file URL、规范化路径和执行空规则匹配；知识库仍在
+  普通谓词和文件元数据读取之前保留最外层保护顺序。
+- Codex 缓存扫描补充真实 `.codex/.tmp`，Chrome DevTools MCP 同时兼容旧根布局和
+  Chromium `Default/` profile 缓存布局。
+- 已知 updater 缓存新增版本状态机：待安装新版、应用缺失和未知状态不可执行；同版/旧版
+  残留为 critical 精确选择，并报告 installed/staged 版本与外置安装提示。
+- JSON 新增 per-volume 汇总和 item `device_id`，可分别查看系统盘与外置卷收益；Developer
+  扫描补充 Go module、Cargo Git、npm `_npx`/`_prebuilds`/`_logs`。
+- ApplicationLanguages 缺少或无效 `CFBundleDevelopmentRegion` 改为非阻断 skip，仍不猜测
+  默认语言；缺失/损坏 `Info.plist` 继续阻断该审计。
+- 新增 retention-aware 日志/trace 只读诊断：WorkBuddy、Lark SDK、Shadowrocket 和 TRAE
+  分别报告文件数、物理块、7/14/30 天容量、进程与打开句柄，不读取正文或提供批量删除器。
+- 新增 Codex SQLite freelist 只读诊断：报告 page/freelist、内部空闲比例、数据库总大小、
+  WAL/SHM/journal 和句柄；不自动 `VACUUM`，也不把数据库文件当成垃圾。
+- 新增 `DARWIN_USER_TEMP_DIR` Qoder ShipIt 临时副本诊断：动态完整 app 复用 updater 版本
+  状态机，应用缺失或状态未知时只读可见且固定不可执行。
+- retention 诊断补充 Codex runtime/macOS logs、WorkBuddy macOS/audit logs，以及 UURemote
+  application/updater logs 和历史安装包；全部只读取 metadata 并固定不可执行。
+- 通过 `getconf` 动态识别 Darwin `T/X` 下的 Go/Node 临时构建目录、Qoder CLI 版本化
+  runtime/updater 解压目录、AI toolhost snapshots、UURemote temp 和 `*.code_sign_clone`，
+  只报告 7/14/30 天占用、进程和句柄，不根据真实机器容量硬编码阈值。
 - 隔离 preview 用两个合成 Trash 根验证精确选择不会产生 collateral selection。
 - 文本清理报告现在准确区分只读预览和执行结果，并把精确选择统一标为“当前选择”。
 - `clean`/`purge`/`optimize` help 直接说明永久操作、同卷 Trash 和预期退出码；临时
@@ -67,6 +91,15 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
   失败不再把已安装 sequence 报成失败，替换前的临时文件仍固定为 `0600` 并完成 fsync。
 - macOS 扫描优先使用 Darwin `SF_DATALESS`，并保留 zero-block 启发式；dataless 目录、
   startup plist、应用 metadata/Resources/localization 会在枚举或读取前 fail-closed。
+- 扫描文件系统调用现在对 `EINTR` 透明重试；运行中的应用缓存不再整类消失，而是保留
+  只读容量并标记不可执行。已知应用归属保护同时覆盖通用 `~/Library/Caches` 一级候选，
+  进程状态无法读取时保持 fail-closed。
+- updater 执行前重新读取版本状态；扫描后的暂存版本、已安装版本或状态变化会在任何移动
+  开始前取消整批。ZIP 只读取受限大小的顶层 app plist，不运行第三方内容。
+- 通用 Darwin user cache 一级候选现在按公开 bundle/helper 名称继承应用进程保护；新增
+  UURemote user-cache 归属，运行中或进程探测失败时仍可见但不可执行。
+- 日志诊断只读取 no-follow 文件 metadata；SQLite 通过 `mode=ro&immutable=1` 查询并在前后
+  复核文件身份/大小/mtime，两类结果都固定不可执行。
 - 清理后代审计改为 no-follow 目录 fd + `fstat` + `scandir(fd)`，并复核类型、owner、device
   与 dataless 状态；不会跟随扫描后替换的后代 symlink。
 - startup item 在每次 plist 读取前后重新检查 identity 与占位状态；最终 path/fd source

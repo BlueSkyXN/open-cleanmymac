@@ -43,6 +43,10 @@ flowchart TD
 | `models.py` | `Item`、身份快照、issue 和聚合指标 | 扫描策略 |
 | `scanpoints.py` | 五域静态扫描点和安全元数据 | 文件系统访问 |
 | `engine.py` | 根展开、并发扫描、计量、重叠归属、项目发现 | 用户交互 |
+| `filesystem.py` | `lstat` / `scandir` / `statvfs` 的 EINTR-safe 只读封装 | 路径策略或删除 |
+| `application_ownership.py` | 公开缓存路径到应用进程 marker 的保守归属 | 私有厂商规则或进程枚举 |
+| `updater.py` | 已知 updater 根、app/ZIP bundle metadata、版本状态比较 | 执行暂存代码或自动安装 |
+| `storage_diagnostics.py` | 日志/runtime/download retention、Darwin transient 与 SQLite freelist 只读诊断 | 删除诊断对象、`VACUUM` 或读取正文/包内容 |
 | `task_graph.py` | DAG 校验、就绪调度、依赖失败传播 | 业务规则 |
 | `progress.py` | 固定权重、单调快照、TTY renderer | 任务执行 |
 | `predicates.py` | 组合谓词、KB 优先的保护闸 | 规则持久化 |
@@ -54,8 +58,8 @@ flowchart TD
 | `tui.py` | clean/purge 分组复选与确认 | 直接执行文件操作 |
 | `space_tui.py` | analyze 导航、跨层选择、Finder reveal | 绕过 `cleanup.py` |
 
-`application_languages.py` 和 `startup_items.py` 是专项扫描器。它们返回统一的 `Item` 和
-`ScanIssue`，但不能自行删除目标。
+`application_languages.py`、`startup_items.py` 和 `storage_diagnostics.py` 是专项扫描器。
+它们返回统一的 `Item` 和 `ScanIssue`，但不能自行删除目标。
 
 ## 3. 核心数据模型
 
@@ -64,15 +68,18 @@ flowchart TD
 `Item` 同时描述“发现了什么”和“当前能否执行”。关键字段包括：
 
 - `path` 或资源 `identifier`；
-- 物理 `size`、逻辑大小、dataless/疑似云占位计数；
+- 物理 `size`、逻辑大小、dataless/疑似云占位计数、`cross_device_paths`；
 - `safety`、`actionable`、`requires_privilege`、阻断原因；
 - `preselected`、`requires_explicit_selection`；
 - 扫描来源 `path_source`，例如 builtin/environment；
 - 扫描时记录的 device/inode/owner 身份；
+- updater installed/staged 版本、状态和外置安装提示；
+- `diagnostic_kind`、日志 7/14/30 天容量/文件数/句柄，或 SQLite page/freelist/WAL 指标；
 - project、Docker、startup item 等领域元数据。
 
 扫描结果不等于删除计划。任何不可执行项的 `reclaimable_bytes` 都是 0；其占用只计入
-`potential_bytes`，并按特权或不支持原因单独聚合。
+`potential_bytes`，并按特权或不支持原因单独聚合。`analyze` 更严格：它只描述空间占用，
+因此即使候选可供用户精确选择，顶层和 entry 的 `reclaimable_bytes` 也固定为 0。
 
 ### ScanIssue
 
@@ -100,7 +107,25 @@ issue 使用稳定 code、message、task、path 和 `blocking`。`complete=true`
    `st_blocks * 512` 计量。
 6. Darwin `SF_DATALESS` 与 zero-block 启发式会在目录枚举前阻止 dataless/疑似云占位；
    它们不计入可回收空间，重叠父子候选最终只归属一次容量。
-7. 保护规则在读取候选细节前尽早短路，结果按声明顺序稳定汇总。
+7. `analyze` 按一级候选同时固定 `st_dev` 与 `statvfs().f_fsid`，其它文件系统挂载点不会
+   被递归计入；后者覆盖 macOS APFS root/Data 可能共享 `st_dev` 的情况。发生跳过时候选
+   保留只读容量但不可执行。
+8. 已知应用归属保护既作用于专用扫描点，也作用于通用用户缓存入口；运行中或进程状态
+   未知时保留候选并置为不可执行。
+9. `lstat` / `scandir` 的 `EINTR` 会透明重试；保护规则在读取候选细节前尽早短路，结果按
+   声明顺序稳定汇总。
+10. 已知 updater 只读取受限 `Info.plist` 或 ZIP 顶层 bundle metadata；待安装新版、应用
+    缺失和未知状态不可执行，同版/旧版降为 critical 精确选择。
+11. retention 扫描只读取文件 metadata 并报告 7/14/30 天物理容量；SQLite 使用 immutable
+    read-only PRAGMA。两类诊断始终不可执行，也不进入 cleanup 状态机。
+12. Qoder ShipIt 的 Darwin temp 根由 `getconf` 动态发现，复用 updater 版本判定，但完整
+    app 副本始终只读报告，避免把暂存状态或应用缺失误当作清理授权。
+13. Darwin `T/X` 仅按公开名称模式发现构建临时目录、版本化 runtime、toolhost snapshot、
+    UURemote temp 与 code-sign clone；通用 Darwin cache 直接子项按公开 bundle/helper 名称
+    继承应用进程保护，不从真实机器数据生成私有路径规则。
+
+JSON 的 `volumes` 按 scan-time device 分组文件系统候选，分别汇总系统盘与外置盘容量。
+Docker 等非文件系统资源不进入卷汇总；`device_id` 不是跨重启的持久标识。
 
 ## 5. 写操作状态机
 
@@ -113,6 +138,7 @@ stateDiagram-v2
     Selected --> Rejected: 风险门/规则/身份/路径复核失败
     Selected --> Audited: 显式 --yes 且全部预检通过
     Audited --> Rejected: live inode/owner/symlink/进程变化
+    Audited --> Rejected: updater 版本或安装状态变化
     Audited --> Trashed: 普通文件系统项
     Audited --> PermanentlyDeleted: 清空 Trash
     Audited --> DockerPruned: 固定白名单资源
@@ -137,6 +163,12 @@ stateDiagram-v2
 - 从可信 anchor 到候选逐组件拒绝 symlink ancestor。
 - 环境变量扫描根只允许位于 `~/Library/Caches` 或 `~/.cache`，并标记为
   `environment + confirm + requires_explicit_selection`。
+- `analyze` 的每个一级候选限制在其自身 device + filesystem identity；跨边界后代只产生
+  非阻断 issue 和计数，不计容量且使包含它的候选不可执行。
+- 公开维护的应用归属规则会给通用 `~/Library/Caches` 候选附加进程 marker，避免从通用
+  扫描入口绕过运行中进程保护。
+- updater 同版/旧版残留在批量预检时重新读取 installed/staged 版本；状态或版本变化会
+  取消整批执行，待安装新版和未知状态不会进入执行器。
 - 普通 Trash 移动逐组件用 `O_NOFOLLOW | O_DIRECTORY` 打开目录 fd；最终使用
   Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)` 原子拒绝覆盖。
 - per-user Trash 必须由当前 uid 所有且使用私有权限；新建目录通过可信父目录 fd 相对

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .engine import Control, IgnoreRules, scan_points
+from .filesystem import lstat_retry, scandir_entries
 from .macos import (
     discover_local_snapshots,
     nonprivileged_action_block_reason,
@@ -66,7 +67,7 @@ def analyze_path(
     protection = protection or IgnoreRules()
     control = control or Control()
     try:
-        root_stat = root.lstat()
+        root_stat = lstat_retry(root)
     except FileNotFoundError as exc:
         raise AnalyzeError(f"分析路径不存在：{root}") from exc
     except (PermissionError, OSError) as exc:
@@ -91,8 +92,7 @@ def analyze_path(
 
     analysis = SpaceAnalysis(root=root)
     try:
-        with os.scandir(root) as iterator:
-            candidate_paths = tuple(entry.path for entry in iterator)
+        candidate_paths = tuple(entry.path for entry in scandir_entries(root))
     except (PermissionError, FileNotFoundError, OSError) as exc:
         analysis.issues.append(
             ScanIssue(
@@ -113,9 +113,10 @@ def analyze_path(
             ScanPoint(
                 "空间占用",
                 candidate_paths,
-                "confirm",
-                "只读空间分析",
+                "critical",
+                "空间分析只表示实际占用，不代表垃圾或可回收空间",
                 domain="analyze",
+                stay_on_device=True,
             )
         ],
         ctl=control,
@@ -124,18 +125,22 @@ def analyze_path(
     )
     analysis.issues.extend(scan_result.issues)
     analysis.cancelled = scan_result.cancelled
-    scan_result.items = [
-        replace(
+    prepared_items: list[Item] = []
+    for item in scan_result.items:
+        prepared = replace(
             item,
-            actionable=False,
-            action_block_reason=reason,
             preselected=False,
             safety="critical",
+            requires_explicit_selection=True,
         )
-        if (reason := nonprivileged_action_block_reason(item.path))
-        else item
-        for item in scan_result.items
-    ]
+        if reason := nonprivileged_action_block_reason(item.path):
+            prepared = replace(
+                prepared,
+                actionable=False,
+                action_block_reason=reason,
+            )
+        prepared_items.append(prepared)
+    scan_result.items = prepared_items
     total = scan_result.total
     analysis.entries = [
         SpaceEntry(

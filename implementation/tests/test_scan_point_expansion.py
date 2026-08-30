@@ -16,7 +16,13 @@ from openclean.engine import (
     scan_points,
 )
 from openclean.knowledge_base import KnowledgeBase
-from openclean.scanpoints import DOMAINS, SYSTEM_JUNK, ScanPoint
+from openclean.scanpoints import (
+    AI_TOOL_JUNK,
+    DEVELOPER_JUNK,
+    DOMAINS,
+    SYSTEM_JUNK,
+    ScanPoint,
+)
 
 
 class ScanPointContractTests(unittest.TestCase):
@@ -42,6 +48,18 @@ class ScanPointContractTests(unittest.TestCase):
 
         self.assertTrue(points["用户缓存"].expand_children)
         self.assertEqual(points["用户缓存"].safety, "confirm")
+        self.assertTrue(points["用户缓存"].process_owner_protection)
+        self.assertTrue(points["用户缓存"].updater_protection)
+        self.assertTrue(points["Lark 更新缓存"].updater_protection)
+        self.assertEqual(points["Lark 更新缓存"].safety, "critical")
+        self.assertEqual(
+            points["日志/runtime 保留期"].scanner,
+            "retention-diagnostics",
+        )
+        self.assertEqual(
+            points["Darwin updater 临时副本"].scanner,
+            "darwin-temp-updater",
+        )
         self.assertTrue(points["系统缓存"].requires_privilege)
         self.assertTrue(points["系统缓存"].expand_children)
         self.assertTrue(points["系统日志"].requires_privilege)
@@ -73,6 +91,28 @@ class ScanPointContractTests(unittest.TestCase):
         self.assertEqual(
             points["失效启动项"].scanner,
             "broken-startup-items",
+        )
+
+    def test_ai_points_include_read_only_sqlite_diagnostic(self) -> None:
+        points = {point.category: point for point in AI_TOOL_JUNK}
+
+        self.assertEqual(
+            points["Codex SQLite 内部空闲页"].scanner,
+            "sqlite-freelist",
+        )
+
+    def test_developer_points_include_rebuildable_secondary_caches(self) -> None:
+        points = {point.category: point for point in DEVELOPER_JUNK}
+
+        self.assertEqual(points["Go module cache"].paths, ("~/go/pkg/mod",))
+        self.assertEqual(points["Go module cache"].safety, "confirm")
+        self.assertEqual(
+            points["Cargo Git 缓存"].paths,
+            ("~/.cargo/git/checkouts", "~/.cargo/git/db"),
+        )
+        self.assertEqual(
+            points["npm 临时与日志缓存"].paths,
+            ("~/.npm/_npx", "~/.npm/_prebuilds", "~/.npm/_logs"),
         )
 
 

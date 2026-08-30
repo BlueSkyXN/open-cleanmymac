@@ -5,7 +5,7 @@
 [安全](SECURITY.md) · [规格索引](specs/_index.md) ·
 [实现说明](implementation/README.md)
 
-> 版本：`0.23.0` · 日期：2026-07-31 · 状态：public GitHub Alpha 基线 · [GPL-3.0](LICENSE)
+> 版本：`0.23.0` · 日期：2026-08-30 · 状态：public GitHub Alpha 基线 · [GPL-3.0](LICENSE)
 
 ## 立即上手
 
@@ -36,13 +36,24 @@ make release-check
 - System Junk 精细候选、Darwin cache、broken startup items；
 - ApplicationLanguages 保守只读审计；
 - 任务 DAG、加权进度、运行中进程保护；
+- `analyze` 按一级候选限制 device/filesystem 双边界、EINTR-safe 文件枚举、占用与
+  reclaimable 语义分离；
+- 已知应用缓存从专用、通用 UserCache 或动态 Darwin user cache 入口发现时均保留可见、
+  运行中不可执行；
+- 已知 updater 区分待安装/同版/旧版/应用缺失/未知状态，并在执行前重新判定；
+- JSON 按 device 汇总系统盘和外置卷，Developer 补充 Go module、Cargo Git 和 npm 次级缓存；
+- retention 日志/trace/runtime/download 与 Codex SQLite freelist 结构化只读诊断，固定
+  不可执行；
+- Qoder ShipIt Darwin temp 完整 app 副本动态发现和版本判定，固定不可执行；
+- Darwin `T/X` 公开命名的构建 temp、版本化 runtime、toolhost snapshot、UURemote temp
+  和 code-sign clone 动态发现，固定不可执行；
 - JSON schema v2、机器错误 envelope、显式 `--redact-paths` 单文档脱敏、标准 Python 包装
   和 release archive audit；
 - Docker scan-time CLI realpath、context/host、endpoint 和 Engine ID binding；CLI
   realpath 变化或执行前即时复核发现不一致会 fail-closed，多 CLI 进程间仍有已记录的
   TOCTOU 边界。
 
-最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，319 个单元测试通过，
+最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，353 个单元测试通过，
 19/19 隔离预览通过且 `real_user_data_modified=false`。这是本地快照；远端状态必须读取
 GitHub exact commit 的 Actions 结果后另行确认。
 
@@ -73,13 +84,15 @@ GitHub exact commit 的 Actions 结果后另行确认。
 | 领域 | 文件 |
 |---|---|
 | CLI/JSON | `implementation/openclean/cli.py` |
-| 扫描/项目 | `engine.py`、`scanpoints.py` |
+| 扫描/项目 | `engine.py`、`scanpoints.py`、`filesystem.py`、`application_ownership.py` |
+| updater 状态 | `updater.py`、`engine.py`、`cleanup.py` |
+| 存储结构诊断 | `storage_diagnostics.py`、`processes.py`、`engine.py` |
 | 模型/指标 | `models.py` |
 | 规则/更新 | `predicates.py`、`knowledge_base.py`、`knowledge_update.py` |
 | 执行安全 | `cleanup.py`、`macos.py`、`processes.py` |
 | TUI | `tui.py`、`space_tui.py`、`navigator.py` |
 | DAG/进度 | `task_graph.py`、`progress.py` |
-| 专项扫描 | `docker.py`、`startup_items.py`、`application_languages.py` |
+| 专项扫描 | `docker.py`、`startup_items.py`、`application_languages.py`、`storage_diagnostics.py` |
 | 全功能预览 | `implementation/scripts/preview_all.py` |
 | TUI 文档资产 | `implementation/scripts/capture_tui_assets.py`、`docs/assets/` |
 | 归档检查 | `implementation/scripts/check_release_artifacts.py` |
