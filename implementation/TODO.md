@@ -116,13 +116,17 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
 
 ### 9. 浏览器 origin 与版本化 CLI 缓存
 
-- Chrome `Service Worker/CacheStorage` 应按 profile/origin 只读汇总；不删除 Cookies、
-  Login Data、IndexedDB 或整个 profile，运行中固定不可执行。
+- Chrome/Brave/Edge/Comet `Service Worker/CacheStorage` 的 profile 级只读汇总已完成；只
+  发现 Default/Profile 用户根，不删除 Cookies、Login Data、IndexedDB 或整个 profile，
+  运行中固定不可执行。origin 级汇总仍需先确认稳定、结构化且可脱敏的数据源，不使用
+  `strings` 或临时正则解析 LevelDB。
 - Claude/Copilot 等版本目录应先解析当前 symlink/安装版本，只报告非当前完整旧版本；
   零字节更新 marker、当前 binary 和 session state 必须保留。
 - UURemote application/updater logs、历史 `.pkg` 和 Darwin temp 已纳入只读 retention
   诊断；若未来允许删除单个 `.pkg`，仍需读取可信 package version、比较已安装版本并在
   执行前复核句柄，再纳入 updater 状态机。
+- Codex 相邻原子写 temp 与 disabled feature cache 仍未做通用判定；目标缺失、JSON 截断或
+  当前配置关闭都不能单独证明可删除，后续必须先定义 primary/backup/feature ownership。
 
 ## 当前已完成的交付门
 
@@ -137,6 +141,10 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
   7/14/30 天只读保留期诊断，并报告进程与打开句柄状态；不读取正文或批量删除；
 - Codex `logs_2.sqlite` 使用 `mode=ro&immutable=1` 输出 page/freelist、内部空闲页比例、
   WAL/SHM/journal 和句柄状态；不自动 `VACUUM` 或删除数据库；
+- Codex `.tmp` 整根已退出普通缓存候选；marketplace staging、严格空 Git 骨架和 Crashpad
+  orphan/paired sidecar 关系进入只读结构诊断，未提供目录或 sidecar 删除执行器；
+- Codex macOS logs 的有效 `YYYY/MM/DD` 目录按日期分区进入 retention 诊断；日期和年龄不
+  自动转化为删除策略；
 - `DARWIN_USER_TEMP_DIR` 中的 Qoder ShipIt 完整 app 副本按动态 updater 根读取版本；
   应用缺失等状态只读可见且固定不可执行；
 - Codex runtime/macOS logs、WorkBuddy macOS/audit logs、UURemote logs/download，以及
@@ -144,6 +152,10 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
   clone 均进入只读 retention 诊断；
 - 通用 Darwin user cache 一级候选按公开 bundle/helper 名称继承应用进程保护；
 - JSON per-volume 汇总，以及 Go module、Cargo Git、npm 次级缓存扫描；
+- AI 扫描点的安全等级和默认选择已解耦，AI 缓存统一默认不选；
+- Chrome/Brave/Edge/Comet 用户 Profile CacheStorage 进入只读 retention 诊断；
+- deleted-open 文件通过 `lsof +L1` 字段模式按 device/inode 去重并按卷报告，只保留进程名
+  和逻辑大小上限，不读取路径或命令行参数；
 - 任务 DAG、加权进度、动态扫描并发；
 - System Junk、Darwin cache、broken startup items、Time Machine、ApplicationLanguages；
 - JSON schema v2 和统一机器错误 envelope；重复 domain/root 去重，显式 project root

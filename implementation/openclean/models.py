@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 SAFETY_LEVELS = frozenset({"safe", "confirm", "critical"})
-RESOURCE_KINDS = frozenset({"filesystem", "docker"})
+FILESYSTEM_RESOURCE_KINDS = frozenset({"filesystem", "filesystem_subset"})
+RESOURCE_KINDS = frozenset({*FILESYSTEM_RESOURCE_KINDS, "docker"})
 CLEANUP_SCOPES = frozenset({"", "darwin-user-cache"})
 PATH_SOURCES = frozenset({"builtin", "environment"})
 UPDATER_STATUSES = frozenset(
@@ -25,7 +26,18 @@ UPDATER_STATUSES = frozenset(
     }
 )
 DIAGNOSTIC_KINDS = frozenset(
-    {"", "retention", "sqlite_freelist", "updater_temp"}
+    {
+        "",
+        "retention",
+        "sqlite_freelist",
+        "updater_temp",
+        "open_unlinked",
+        "codex_transient",
+        "crashpad_pairing",
+    }
+)
+FILESYSTEM_SUBSET_DIAGNOSTIC_KINDS = frozenset(
+    {"open_unlinked", "codex_transient", "crashpad_pairing"}
 )
 
 # ``SF_DATALESS`` is part of the public macOS ``sys/stat.h`` contract.  Older
@@ -177,6 +189,9 @@ class Item:
     sqlite_internal_free_bytes: int | None = None
     sqlite_internal_free_ratio: float | None = None
     sqlite_wal_bytes: int | None = None
+    related_process_count: int | None = None
+    paired_artifact_count: int | None = None
+    recent_artifact_count: int | None = None
 
     def __post_init__(self) -> None:
         if self.safety not in SAFETY_LEVELS:
@@ -191,10 +206,19 @@ class Item:
             raise ValueError(f"未知诊断类型：{self.diagnostic_kind}")
         if self.cleanup_scope not in CLEANUP_SCOPES:
             raise ValueError(f"未知 cleanup_scope：{self.cleanup_scope}")
-        if self.resource_kind == "filesystem" and self.path is None:
+        if self.resource_kind in FILESYSTEM_RESOURCE_KINDS and self.path is None:
             raise ValueError("文件系统资源必须包含 path")
-        if self.resource_kind != "filesystem" and not self.identifier:
+        if self.resource_kind not in FILESYSTEM_RESOURCE_KINDS and not self.identifier:
             raise ValueError("非文件系统资源必须包含 identifier")
+        if self.resource_kind == "filesystem_subset" and (
+            self.diagnostic_kind not in FILESYSTEM_SUBSET_DIAGNOSTIC_KINDS
+        ):
+            raise ValueError("filesystem_subset 只能用于已知只读子集诊断")
+        if (
+            self.diagnostic_kind in FILESYSTEM_SUBSET_DIAGNOSTIC_KINDS
+            and self.resource_kind != "filesystem_subset"
+        ):
+            raise ValueError("子集诊断必须使用 filesystem_subset 资源类型")
         if self.size < 0:
             raise ValueError("size 不能为负数")
         if self.excluded_paths < 0:
@@ -222,6 +246,9 @@ class Item:
             self.sqlite_freelist_count,
             self.sqlite_internal_free_bytes,
             self.sqlite_wal_bytes,
+            self.related_process_count,
+            self.paired_artifact_count,
+            self.recent_artifact_count,
         )
         if any(value is not None and value < 0 for value in diagnostic_counts):
             raise ValueError("诊断计数和容量不能为负数")
@@ -244,7 +271,7 @@ class Item:
             raise ValueError("PATH 启动程序引用不能为空")
         if self.startup_program and self.resource_kind != "filesystem":
             raise ValueError("启动项程序引用只能用于文件系统资源")
-        if self.resource_binding and self.resource_kind == "filesystem":
+        if self.resource_binding and self.resource_kind in FILESYSTEM_RESOURCE_KINDS:
             raise ValueError("文件系统资源不能携带外部资源 binding")
         if self.updater_status and self.resource_kind != "filesystem":
             raise ValueError("updater 状态只能用于文件系统资源")
@@ -282,6 +309,24 @@ class Item:
             self.diagnostic_kind != "sqlite_freelist"
         ):
             raise ValueError("SQLite 元数据必须使用 sqlite_freelist 诊断类型")
+        if self.related_process_count is not None and (
+            self.diagnostic_kind != "open_unlinked"
+        ):
+            raise ValueError("关联进程计数必须使用 open_unlinked 诊断类型")
+        pairing_values = (
+            self.paired_artifact_count,
+            self.recent_artifact_count,
+        )
+        if any(value is not None for value in pairing_values) and (
+            self.diagnostic_kind != "crashpad_pairing"
+        ):
+            raise ValueError("配对计数必须使用 crashpad_pairing 诊断类型")
+        if (
+            self.recent_artifact_count is not None
+            and self.total_count is not None
+            and self.recent_artifact_count > self.total_count
+        ):
+            raise ValueError("最近 artifact 计数不能超过候选总数")
         if (
             self.sqlite_page_count is not None
             and self.sqlite_freelist_count is not None

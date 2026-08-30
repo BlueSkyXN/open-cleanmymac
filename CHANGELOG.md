@@ -11,6 +11,13 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
 
 ### Changed
 
+- AI 扫描点的安全等级与默认选择策略解耦；Claude、Codex、Gemini、OpenCode、Cursor 和
+  Chrome DevTools MCP 缓存即使可重建也不再默认勾选，与官方 CLI 的保守 AI 审阅行为一致。
+- 新增 Chrome、Brave、Edge、Comet 用户 Profile `Service Worker/CacheStorage` 只读保留期
+  诊断；只读取文件 metadata，不读取 origin、Cookies、Login Data、IndexedDB 或整个 Profile。
+- 新增 deleted-open 按卷诊断：解析 `lsof +L1` 字段输出，按 device/inode 去重，只保留
+  process name、句柄计数和逻辑大小上限；逻辑上限只进入 `logical_bytes`，不计入
+  物理 `potential_bytes`。该项固定不可执行，只建议退出应用或重启。
 - 新增 AI agent 只读调用指南；开发工具版本集中到 `requirements-dev.txt`，避免本地与 CI
   使用不同 Ruff 默认规则。包装元数据改用 SPDX license expression，wheel/sdist 都携带
   完整 GPL-3.0 文本，release archive audit 会拒绝缺失或不一致的许可证。
@@ -43,8 +50,12 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
   entry 的 `reclaimable_bytes` 固定为 `0`，候选统一为 critical 精确选择。
 - 空知识库不再对每个文件重复构造 file URL、规范化路径和执行空规则匹配；知识库仍在
   普通谓词和文件元数据读取之前保留最外层保护顺序。
-- Codex 缓存扫描补充真实 `.codex/.tmp`，Chrome DevTools MCP 同时兼容旧根布局和
-  Chromium `Default/` profile 缓存布局。
+- Chrome DevTools MCP 同时兼容旧根布局和 Chromium `Default/` profile 缓存布局。
+- Codex 扫描不再把 `.codex/tmp` 或 `.codex/.tmp` 整根作为普通缓存候选；新增只读专项
+  诊断，精确汇总 marketplace upgrade staging、无对象 Git 空壳和 Crashpad 孤立 sidecar，
+  保留 installed marketplace、plugin source、真实仓库与 dump 配对。
+- Codex macOS logs 新增有效 `YYYY/MM/DD` 分区发现；同路径 generic 日志与专项诊断重叠时
+  由专项诊断取得所有权，避免只读 retention 结果被 actionable 父规则覆盖。
 - 已知 updater 缓存新增版本状态机：待安装新版、应用缺失和未知状态不可执行；同版/旧版
   残留为 critical 精确选择，并报告 installed/staged 版本与外置安装提示。
 - JSON 新增 per-volume 汇总和 item `device_id`，可分别查看系统盘与外置卷收益；Developer

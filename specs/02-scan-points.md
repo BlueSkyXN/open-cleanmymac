@@ -50,12 +50,25 @@ Qoder ShipIt/Qoder updater、Lark update 和 TRAE updater。`staged > installed`
 Shadowrocket logs、TRAE logs，以及 UURemote application/updater logs 和历史安装包做
 retention-aware 只读诊断：只读取目录项、物理块、mtime、文件数量、进程和打开句柄状态，
 分别报告 7/14/30 天容量；不读取正文或安装包内容，不把任一阈值设为默认删除策略，也不
-提供批量执行器。
+提供批量执行器。Codex macOS logs 额外识别有效的 `YYYY/MM/DD` 直接日期分区，使当前
+日期、历史日期和打开句柄可以分区显示；日期本身仍不构成删除授权。
 
 `getconf` 发现的 Darwin `T/X` 根额外匹配公开命名的 Go/Node 构建临时目录、Qoder CLI
 版本化 runtime/updater 解压目录、AI toolhost snapshots、UURemote temp 和
 `*.code_sign_clone`。这些路径只进入 retention 诊断，固定不可执行。Darwin user cache 的
 直接子项按公开 bundle/helper 名称应用进程保护；任意其它位置的同名目录不匹配。
+
+已知 Chromium 浏览器（Chrome、Brave、Edge、Comet）的 `Default` 与 `Profile *` 用户
+Profile 仅对 `Service Worker/CacheStorage` 做 retention 诊断。实现不得读取 origin、Cookies、
+Login Data、IndexedDB 或整个 Profile，也不得把该项变成自动清理候选；运行中仍报告容量，
+但固定 `actionable=false`。
+
+系统域另通过 `lsof +L1` 字段模式识别已 unlink 但仍被进程持有的文件。结果必须按
+`(device, inode)` 去重并映射到挂载卷，只保留 process name，不保留路径、完整命令行或
+环境变量。lsof 只能提供逻辑大小上限，不能承诺等量 APFS 物理释放；该诊断只能建议退出
+应用或重启，固定不可执行。该项使用 `resource_kind=filesystem_subset`；`size`、
+`potential_bytes` 和 `reclaimable_bytes` 均为 0，逻辑上限只进入 `logical_bytes`，进程名数量进入
+`related_process_count`，不复用 `active_count`。
 
 ### 其它系统垃圾
 - **BrokenStartupItems**：失效的启动项（指向已不存在二进制的 LaunchAgents/Daemons）。
@@ -134,7 +147,6 @@ Claude:    .claude/cache  .claude/debug  .claude/telemetry
           .claude/stats-cache.json  .claude/mcp-needs-auth-cache.json
           .claude/plugins/install-counts-cache.json
 Codex:     .codex/cache/codex_apps_server_info  .codex/cache/codex_apps_tools
-           .codex/tmp  .codex/.tmp
 Gemini:    .gemini/tmp  .gemini/antigravity-browser-profile/**(Cache/Code Cache/GPUCache/
           DawnGraphiteCache/DawnWebGPUCache/Service Worker·CacheStorage/GraphiteDawnCache/
           component_crx_cache/extensions_crx_cache)
@@ -148,6 +160,16 @@ chrome-devtools-mcp: .cache/chrome-devtools-mcp/chrome-profile/{,Default/}**
 Codex `~/.codex/logs_2.sqlite` 另使用 `mode=ro&immutable=1` 读取 page size/count/freelist，
 仅报告内部空闲页、比例和 WAL/SHM/journal/句柄状态。该结果固定不可执行，不删除数据库，
 也不自动运行 `VACUUM`。
+
+Codex 的 `.codex/tmp` 与 `.codex/.tmp` 不再作为整根缓存候选：后者同时承载已安装
+marketplace、bundled marketplace 和 plugin source。专项诊断只匹配
+`.tmp/marketplaces/.staging/marketplace-upgrade-*`、精确结构的 `.tmp/git-*` 空壳，以及
+`~/Library/Application Support/Codex/Crashpad/pending` 中无同名 `.dmp` 的
+`*_sidecar.json`。普通/bare/worktree/partial clone、已配对 crash dump 和整个父根均保持
+保护；三类结果固定 `critical + actionable=false`。
+
+AI 域的缓存即使 `safety=safe` 也统一默认不选；`safety` 只表达授权等级，默认选择由独立
+策略控制。显式选择和实际执行仍遵守进程保护与 `--yes` 门槛。
 
 关联 bundleID（事实，用于定位容器）：`com.anthropic.claudefordesktop`、
 `com.openai.codex`、`com.openai.sky.CUAService`、`com.google.antigravity`、`com.todesktop.230313mzl4w4u92`

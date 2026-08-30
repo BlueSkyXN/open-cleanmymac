@@ -6,29 +6,51 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 import sqlite3
 import stat
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
 from .filesystem import lstat_retry, scandir_entries
-from .macos import discover_darwin_user_cache, discover_darwin_user_temp
+from .macos import (
+    discover_darwin_user_cache,
+    discover_darwin_user_temp,
+    scan_symlink_anchor,
+    symlink_component,
+)
 from .models import FileFacts, FileIdentity, Item, ScanIssue, ScanResult, normalize_path
 from .predicates import Predicate, ProtectionGate
 from .processes import (
+    DeletedOpenFile,
+    DeletedOpenFileSnapshot,
     OpenFileDetectionError,
     OpenFileSnapshot,
     ProcessDetectionError,
     ProcessSnapshot,
+    capture_deleted_open_file_snapshot,
     capture_open_file_snapshot,
     capture_process_snapshot,
 )
 from .updater import UpdaterAssessment, assess_updater_staging_root
 
 RETENTION_DAYS = (7, 14, 30)
+_CODEX_PROCESS_MARKERS = ("ChatGPT.app", "Codex.app", "codex")
+_CODEX_LOG_CATEGORY = "Codex macOS logs 保留期"
+_CODEX_MARKETPLACE_STAGING = "~/.codex/.tmp/marketplaces/.staging"
+_CODEX_GIT_TEMP_ROOT = "~/.codex/.tmp"
+_CODEX_CRASHPAD_PENDING = (
+    "~/Library/Application Support/Codex/Crashpad/pending"
+)
+_CODEX_LOG_RELATIVE_ROOT = "Library/Logs/com.openai.codex"
+_MAX_CODEX_LOG_PARTITIONS = 128
+_MAX_CODEX_STAGING_ROOTS = 2048
+_MAX_CODEX_GIT_ROOTS = 8192
+_MAX_CRASHPAD_ENTRIES = 100_000
 
 
 @dataclass(frozen=True)
@@ -44,6 +66,13 @@ class SQLiteRule:
     path: str
     process_markers: tuple[str, ...]
     minimum_free_bytes: int = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class BrowserStorageRoot:
+    category: str
+    relative_root: str
+    process_markers: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -75,7 +104,7 @@ RETENTION_RULES: tuple[RetentionRule, ...] = (
         ("WorkBuddy.app",),
     ),
     RetentionRule(
-        "Codex macOS logs 保留期",
+        _CODEX_LOG_CATEGORY,
         "~/Library/Logs/com.openai.codex",
         ("ChatGPT.app", "Codex.app", "codex"),
     ),
@@ -116,6 +145,30 @@ RETENTION_RULES: tuple[RetentionRule, ...] = (
         "UURemote 历史安装包保留期",
         "~/Library/Application Support/com.netease.uuremote.updater/download",
         ("UURemote.app", "UURemoteService", "UURemoteServer"),
+    ),
+)
+
+
+BROWSER_STORAGE_ROOTS: tuple[BrowserStorageRoot, ...] = (
+    BrowserStorageRoot(
+        "Google Chrome Service Worker CacheStorage 保留期",
+        "Library/Application Support/Google/Chrome",
+        ("Google Chrome.app", "Google Chrome Helper"),
+    ),
+    BrowserStorageRoot(
+        "Brave Service Worker CacheStorage 保留期",
+        "Library/Application Support/BraveSoftware/Brave-Browser",
+        ("Brave Browser.app", "Brave Browser Helper"),
+    ),
+    BrowserStorageRoot(
+        "Microsoft Edge Service Worker CacheStorage 保留期",
+        "Library/Application Support/Microsoft Edge",
+        ("Microsoft Edge.app", "Microsoft Edge Helper"),
+    ),
+    BrowserStorageRoot(
+        "Comet Service Worker CacheStorage 保留期",
+        "Library/Application Support/Comet",
+        ("Comet.app", "Comet Helper"),
     ),
 )
 
@@ -182,6 +235,8 @@ DARWIN_CODE_SIGN_RETENTION_PATTERNS: tuple[DarwinTransientPattern, ...] = (
 
 
 _MAX_DYNAMIC_RETENTION_ROOTS = 128
+_MAX_VOLUME_ROOTS = 128
+_MAX_BROWSER_PROFILES = 64
 
 
 SQLITE_RULES: tuple[SQLiteRule, ...] = (
@@ -373,6 +428,183 @@ def discover_darwin_transient_retention_rules(
     )
 
 
+def discover_browser_storage_retention_rules(
+    *,
+    home: Path | None = None,
+    roots: Sequence[BrowserStorageRoot] = BROWSER_STORAGE_ROOTS,
+) -> tuple[tuple[RetentionRule, ...], tuple[ScanIssue, ...]]:
+    """发现已知 Chromium 浏览器的用户 profile CacheStorage 根。"""
+
+    base = normalize_path(home or Path.home())
+    rules: list[RetentionRule] = []
+    issues: list[ScanIssue] = []
+    for browser in roots:
+        browser_root = normalize_path(base / browser.relative_root)
+        try:
+            if symlink_component(browser_root, anchor=base) is not None:
+                continue
+            browser_stat = lstat_retry(browser_root)
+            if stat.S_ISLNK(browser_stat.st_mode) or not stat.S_ISDIR(
+                browser_stat.st_mode
+            ):
+                continue
+            entries = sorted(
+                scandir_entries(browser_root),
+                key=lambda item: item.name,
+            )
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            _append_filesystem_issue(
+                issues,
+                exc,
+                browser_root,
+                browser.category,
+            )
+            continue
+        for entry in entries:
+            if entry.name != "Default" and not fnmatch.fnmatchcase(
+                entry.name, "Profile *"
+            ):
+                continue
+            if len(rules) >= _MAX_BROWSER_PROFILES:
+                issues.append(
+                    ScanIssue(
+                        code="diagnostic_limit_reached",
+                        message=(
+                            "浏览器 profile 数量超过安全上限，"
+                            "其余 profile 未进入本次诊断"
+                        ),
+                        task="浏览器 CacheStorage 保留期",
+                        path=browser_root,
+                        blocking=False,
+                    )
+                )
+                return tuple(rules), tuple(issues)
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            cache_storage = (
+                Path(entry.path) / "Service Worker" / "CacheStorage"
+            )
+            try:
+                if (
+                    symlink_component(cache_storage, anchor=browser_root)
+                    is not None
+                ):
+                    continue
+                cache_stat = lstat_retry(cache_storage)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                _append_filesystem_issue(
+                    issues,
+                    exc,
+                    cache_storage,
+                    browser.category,
+                )
+                continue
+            if stat.S_ISLNK(cache_stat.st_mode) or not stat.S_ISDIR(
+                cache_stat.st_mode
+            ):
+                continue
+            rules.append(
+                RetentionRule(
+                    browser.category,
+                    str(cache_storage),
+                    browser.process_markers,
+                )
+            )
+    return tuple(rules), tuple(issues)
+
+
+def discover_codex_log_partition_rules(
+    *,
+    home: Path | None = None,
+    limit: int = _MAX_CODEX_LOG_PARTITIONS,
+) -> tuple[tuple[RetentionRule, ...], tuple[ScanIssue, ...]]:
+    """发现 Codex ``YYYY/MM/DD`` 日志分区，不把日期当成删除策略。"""
+
+    base = normalize_path(home or Path.home())
+    root = normalize_path(base / _CODEX_LOG_RELATIVE_ROOT)
+    issues: list[ScanIssue] = []
+    try:
+        if symlink_component(root, anchor=base) is not None:
+            return (), ()
+        root_stat = lstat_retry(root)
+        if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+            return (), ()
+        year_entries = sorted(scandir_entries(root), key=lambda item: item.name)
+    except FileNotFoundError:
+        return (), ()
+    except OSError as exc:
+        _append_filesystem_issue(issues, exc, root, "Codex 日志日期分区")
+        return (), tuple(issues)
+
+    rules: list[RetentionRule] = []
+    for year_entry in year_entries:
+        if len(year_entry.name) != 4 or not year_entry.name.isdigit():
+            continue
+        try:
+            if not year_entry.is_dir(follow_symlinks=False):
+                continue
+            month_entries = sorted(
+                scandir_entries(Path(year_entry.path)),
+                key=lambda item: item.name,
+            )
+        except OSError:
+            continue
+        for month_entry in month_entries:
+            if len(month_entry.name) != 2 or not month_entry.name.isdigit():
+                continue
+            try:
+                if not month_entry.is_dir(follow_symlinks=False):
+                    continue
+                day_entries = sorted(
+                    scandir_entries(Path(month_entry.path)),
+                    key=lambda item: item.name,
+                )
+            except OSError:
+                continue
+            for day_entry in day_entries:
+                if len(day_entry.name) != 2 or not day_entry.name.isdigit():
+                    continue
+                try:
+                    partition_date = date(
+                        int(year_entry.name),
+                        int(month_entry.name),
+                        int(day_entry.name),
+                    )
+                    if not day_entry.is_dir(follow_symlinks=False):
+                        continue
+                except (OSError, ValueError):
+                    continue
+                if len(rules) >= limit:
+                    issues.append(
+                        ScanIssue(
+                            code="diagnostic_limit_reached",
+                            message=(
+                                "Codex 日志日期分区超过安全上限，"
+                                "其余分区未进入本次诊断"
+                            ),
+                            task="Codex 日志日期分区",
+                            path=root,
+                            blocking=False,
+                        )
+                    )
+                    return tuple(rules), tuple(issues)
+                rules.append(
+                    RetentionRule(
+                        f"Codex macOS logs {partition_date.isoformat()}",
+                        day_entry.path,
+                        _CODEX_PROCESS_MARKERS,
+                    )
+                )
+    return tuple(rules), tuple(issues)
+
+
 def _measure_retention_root(
     root_facts: FileFacts,
     protection: Predicate,
@@ -453,6 +685,18 @@ def scan_retention_rules(
     for rule in rules:
         root = normalize_path(rule.path)
         if _knowledge_base_ignores(protection, root):
+            continue
+        component = symlink_component(root, anchor=scan_symlink_anchor(root))
+        if component is not None:
+            result.issues.append(
+                ScanIssue(
+                    code="unsafe_symlink_ancestor",
+                    message="保留期诊断根包含符号链接组件，已拒绝扫描",
+                    task=rule.category,
+                    path=component,
+                    blocking=False,
+                )
+            )
             continue
         try:
             root_stat = lstat_retry(root)
@@ -581,12 +825,21 @@ def scan_retention_diagnostics(protection: Predicate) -> ScanResult:
     result = ScanResult()
     dynamic_rules, discovery_issues = discover_darwin_transient_retention_rules()
     result.issues.extend(discovery_issues)
+    browser_rules, browser_issues = discover_browser_storage_retention_rules()
+    result.issues.extend(browser_issues)
+    codex_log_rules, codex_log_issues = discover_codex_log_partition_rules()
+    result.issues.extend(codex_log_issues)
     processes, open_files = _capture_runtime_snapshots(
         result,
         task="日志/runtime 保留期",
     )
     scanned = scan_retention_rules(
-        (*RETENTION_RULES, *dynamic_rules),
+        (
+            *RETENTION_RULES,
+            *codex_log_rules,
+            *browser_rules,
+            *dynamic_rules,
+        ),
         protection,
         process_snapshot=processes,
         open_files=open_files,
@@ -712,6 +965,859 @@ def scan_darwin_temp_updater_diagnostics(protection: Predicate) -> ScanResult:
                     open_handle_count=open_handles,
                 )
             )
+    return result
+
+
+def _diagnostic_directory_facts(
+    root: Path,
+    protection: Predicate,
+    issues: list[ScanIssue],
+    *,
+    task: str,
+    anchor: Path | None = None,
+) -> FileFacts | None:
+    if _knowledge_base_ignores(protection, root):
+        return None
+    if anchor is not None and symlink_component(root, anchor=anchor) is not None:
+        issues.append(
+            ScanIssue(
+                code="diagnostic_root_invalid",
+                message="结构诊断根包含符号链接路径组件",
+                task=task,
+                path=root,
+                blocking=False,
+            )
+        )
+        return None
+    component = symlink_component(root, anchor=scan_symlink_anchor(root))
+    if component is not None:
+        issues.append(
+            ScanIssue(
+                code="unsafe_symlink_ancestor",
+                message="结构诊断根包含符号链接组件，已拒绝扫描",
+                task=task,
+                path=component,
+                blocking=False,
+            )
+        )
+        return None
+    try:
+        root_stat = lstat_retry(root)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        _append_filesystem_issue(issues, exc, root, task)
+        return None
+    facts = FileFacts(path=root, stat=root_stat)
+    if _predicates_ignore_after_knowledge_base(protection, facts):
+        return None
+    if (
+        stat.S_ISLNK(root_stat.st_mode)
+        or not stat.S_ISDIR(root_stat.st_mode)
+        or facts.is_probable_cloud_placeholder
+    ):
+        issues.append(
+            ScanIssue(
+                code="diagnostic_root_invalid",
+                message="结构诊断根必须是本地非符号链接目录",
+                task=task,
+                path=root,
+                blocking=False,
+            )
+        )
+        return None
+    return facts
+
+
+def _runtime_diagnostic_notes(
+    process_snapshot: ProcessSnapshot | None,
+    markers: tuple[str, ...],
+    open_handles: int | None,
+) -> list[str]:
+    notes: list[str] = []
+    if process_snapshot is None:
+        notes.append("进程状态未知")
+    elif process_snapshot.any_running(markers):
+        notes.append("相关 Codex 进程正在运行")
+    if open_handles is None:
+        notes.append("打开句柄状态未知")
+    elif open_handles:
+        notes.append(f"检测到 {open_handles} 个打开句柄")
+    return notes
+
+
+def _candidate_directory_facts(
+    path: Path,
+    root_device: int,
+    protection: Predicate,
+    issues: list[ScanIssue],
+    *,
+    task: str,
+) -> FileFacts | None:
+    if _knowledge_base_ignores(protection, path):
+        return None
+    try:
+        path_stat = lstat_retry(path)
+    except OSError as exc:
+        _append_filesystem_issue(issues, exc, path, task)
+        return None
+    facts = FileFacts(path=path, stat=path_stat)
+    if _predicates_ignore_after_knowledge_base(protection, facts):
+        return None
+    if (
+        stat.S_ISLNK(path_stat.st_mode)
+        or not stat.S_ISDIR(path_stat.st_mode)
+        or facts.is_probable_cloud_placeholder
+        or path_stat.st_dev != root_device
+    ):
+        return None
+    return facts
+
+
+def _candidate_measurement(
+    path: Path,
+    root_device: int,
+    protection: Predicate,
+    issues: list[ScanIssue],
+    *,
+    task: str,
+    now: float,
+) -> _RetentionMeasurement | None:
+    facts = _candidate_directory_facts(
+        path,
+        root_device,
+        protection,
+        issues,
+        task=task,
+    )
+    if facts is None:
+        return None
+    return _measure_retention_root(
+        facts,
+        protection,
+        issues,
+        task=task,
+        now=now,
+    )
+
+
+def scan_codex_marketplace_staging(
+    root: Path,
+    protection: Predicate,
+    *,
+    process_snapshot: ProcessSnapshot | None,
+    open_files: OpenFileSnapshot | None,
+    now: float | None = None,
+    anchor: Path | None = None,
+) -> ScanResult:
+    """聚合 Codex marketplace 升级 staging；不处理 marketplace 本体。"""
+
+    result = ScanResult()
+    task = "Codex marketplace 升级 staging"
+    root = normalize_path(root)
+    root_facts = _diagnostic_directory_facts(
+        root,
+        protection,
+        result.issues,
+        task=task,
+        anchor=anchor,
+    )
+    if root_facts is None or root_facts.stat is None:
+        return result
+    try:
+        entries = sorted(scandir_entries(root), key=lambda item: item.name)
+    except OSError as exc:
+        _append_filesystem_issue(result.issues, exc, root, task)
+        return result
+    matching = [
+        entry
+        for entry in entries
+        if fnmatch.fnmatchcase(entry.name, "marketplace-upgrade-*")
+    ]
+    if len(matching) > _MAX_CODEX_STAGING_ROOTS:
+        result.issues.append(
+            ScanIssue(
+                code="diagnostic_limit_reached",
+                message="marketplace staging 数量超过安全上限，已放弃本次汇总",
+                task=task,
+                path=root,
+                blocking=False,
+            )
+        )
+        return result
+
+    observed_at = time.time() if now is None else now
+    count = logical_bytes = allocated_bytes = 0
+    open_handles = 0 if open_files is not None else None
+    newest_mtime: float | None = None
+    excluded_paths = cross_device_paths = cloud_file_count = 0
+    for entry in matching:
+        try:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+        except OSError:
+            continue
+        path = Path(entry.path)
+        measurement = _candidate_measurement(
+            path,
+            root_facts.stat.st_dev,
+            protection,
+            result.issues,
+            task=task,
+            now=observed_at,
+        )
+        if measurement is None:
+            continue
+        count += 1
+        logical_bytes += measurement.logical_bytes
+        allocated_bytes += measurement.allocated_bytes
+        excluded_paths += measurement.excluded_paths
+        cross_device_paths += measurement.cross_device_paths
+        cloud_file_count += measurement.cloud_file_count
+        if (
+            measurement.newest_mtime is not None
+            and (
+                newest_mtime is None
+                or measurement.newest_mtime > newest_mtime
+            )
+        ):
+            newest_mtime = measurement.newest_mtime
+        if open_files is not None:
+            candidate_handles = open_files.count_under(path)
+            assert open_handles is not None
+            open_handles += candidate_handles
+    if count == 0:
+        return result
+
+    notes = [f"{count} 个 marketplace-upgrade-* 目录"]
+    notes.extend(
+        _runtime_diagnostic_notes(
+            process_snapshot,
+            _CODEX_PROCESS_MARKERS,
+            open_handles,
+        )
+    )
+    notes.append("只报告 .staging 直接子项，不包含已安装 marketplace")
+    result.items.append(
+        Item(
+            root,
+            allocated_bytes,
+            task,
+            "critical",
+            "；".join(notes),
+            logical_size=logical_bytes,
+            allocated_size=allocated_bytes,
+            actionable=False,
+            action_block_reason="Codex marketplace staging 仅诊断",
+            identity=FileIdentity.from_stat(root_facts.stat),
+            latest_mtime=newest_mtime,
+            age_days=(
+                max(0, int((observed_at - newest_mtime) // 86400))
+                if newest_mtime is not None
+                else None
+            ),
+            preselected=False,
+            resource_kind="filesystem_subset",
+            excluded_paths=excluded_paths,
+            cross_device_paths=cross_device_paths,
+            cloud_file_count=cloud_file_count,
+            total_count=count,
+            running_process_markers=_CODEX_PROCESS_MARKERS,
+            diagnostic_kind="codex_transient",
+            open_handle_count=open_handles,
+        )
+    )
+    return result
+
+
+def _directory_contains_only_ds_store(path: Path) -> bool:
+    try:
+        entries = scandir_entries(path)
+    except OSError:
+        return False
+    for entry in entries:
+        if entry.name != ".DS_Store":
+            return False
+        try:
+            entry_stat = lstat_retry(Path(entry.path))
+        except OSError:
+            return False
+        if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISREG(
+            entry_stat.st_mode
+        ):
+            return False
+    return True
+
+
+def _is_codex_git_skeleton(path: Path) -> bool:
+    try:
+        entries = {entry.name: entry for entry in scandir_entries(path)}
+    except OSError:
+        return False
+    required = {"HEAD", "objects", "refs"}
+    if not required.issubset(entries) or not set(entries).issubset(
+        {*required, ".DS_Store"}
+    ):
+        return False
+    if ".DS_Store" in entries:
+        try:
+            metadata_stat = lstat_retry(path / ".DS_Store")
+        except OSError:
+            return False
+        if stat.S_ISLNK(metadata_stat.st_mode) or not stat.S_ISREG(
+            metadata_stat.st_mode
+        ):
+            return False
+    try:
+        head_stat = lstat_retry(path / "HEAD")
+        objects_stat = lstat_retry(path / "objects")
+        refs_stat = lstat_retry(path / "refs")
+        ds_store_stat = (
+            lstat_retry(path / ".DS_Store")
+            if ".DS_Store" in entries
+            else None
+        )
+    except OSError:
+        return False
+    if (
+        stat.S_ISLNK(head_stat.st_mode)
+        or not stat.S_ISREG(head_stat.st_mode)
+        or head_stat.st_size > 64
+        or stat.S_ISLNK(objects_stat.st_mode)
+        or not stat.S_ISDIR(objects_stat.st_mode)
+        or stat.S_ISLNK(refs_stat.st_mode)
+        or not stat.S_ISDIR(refs_stat.st_mode)
+        or (
+            ds_store_stat is not None
+            and (
+                stat.S_ISLNK(ds_store_stat.st_mode)
+                or not stat.S_ISREG(ds_store_stat.st_mode)
+            )
+        )
+    ):
+        return False
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        return False
+    flags = os.O_RDONLY | no_follow | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path / "HEAD", flags)
+        try:
+            head = os.read(descriptor, 65)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        return False
+    if head not in {b"ref: refs/heads/main", b"ref: refs/heads/main\n"}:
+        return False
+    return _directory_contains_only_ds_store(
+        path / "objects"
+    ) and _directory_contains_only_ds_store(path / "refs")
+
+
+def scan_codex_git_skeletons(
+    root: Path,
+    protection: Predicate,
+    *,
+    process_snapshot: ProcessSnapshot | None,
+    open_files: OpenFileSnapshot | None,
+    now: float | None = None,
+    anchor: Path | None = None,
+) -> ScanResult:
+    """识别 Codex 临时根中的空 Git 骨架，不泛化到普通 Git 仓库。"""
+
+    result = ScanResult()
+    task = "Codex Git 临时空壳"
+    root = normalize_path(root)
+    root_facts = _diagnostic_directory_facts(
+        root,
+        protection,
+        result.issues,
+        task=task,
+        anchor=anchor,
+    )
+    if root_facts is None or root_facts.stat is None:
+        return result
+    try:
+        entries = sorted(scandir_entries(root), key=lambda item: item.name)
+    except OSError as exc:
+        _append_filesystem_issue(result.issues, exc, root, task)
+        return result
+    matching = [entry for entry in entries if entry.name.startswith("git-")]
+    if len(matching) > _MAX_CODEX_GIT_ROOTS:
+        result.issues.append(
+            ScanIssue(
+                code="diagnostic_limit_reached",
+                message="Codex git-* 数量超过安全上限，已放弃本次汇总",
+                task=task,
+                path=root,
+                blocking=False,
+            )
+        )
+        return result
+
+    observed_at = time.time() if now is None else now
+    count = logical_bytes = allocated_bytes = 0
+    open_handles = 0 if open_files is not None else None
+    newest_mtime: float | None = None
+    excluded_paths = cross_device_paths = cloud_file_count = 0
+    for entry in matching:
+        try:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+        except OSError:
+            continue
+        path = Path(entry.path)
+        candidate_facts = _candidate_directory_facts(
+            path,
+            root_facts.stat.st_dev,
+            protection,
+            result.issues,
+            task=task,
+        )
+        if candidate_facts is None:
+            continue
+        if not _is_codex_git_skeleton(path):
+            continue
+        measurement = _measure_retention_root(
+            candidate_facts,
+            protection,
+            result.issues,
+            task=task,
+            now=observed_at,
+        )
+        if measurement is None:
+            continue
+        if not _is_codex_git_skeleton(path):
+            continue
+        try:
+            rechecked_stat = lstat_retry(path)
+        except OSError:
+            continue
+        if (
+            stat.S_ISLNK(rechecked_stat.st_mode)
+            or not stat.S_ISDIR(rechecked_stat.st_mode)
+            or FileIdentity.from_stat(rechecked_stat) != candidate_facts.identity
+        ):
+            continue
+        count += 1
+        logical_bytes += measurement.logical_bytes
+        allocated_bytes += measurement.allocated_bytes
+        excluded_paths += measurement.excluded_paths
+        cross_device_paths += measurement.cross_device_paths
+        cloud_file_count += measurement.cloud_file_count
+        if (
+            measurement.newest_mtime is not None
+            and (
+                newest_mtime is None
+                or measurement.newest_mtime > newest_mtime
+            )
+        ):
+            newest_mtime = measurement.newest_mtime
+        if open_files is not None:
+            candidate_handles = open_files.count_under(path)
+            assert open_handles is not None
+            open_handles += candidate_handles
+    if count == 0:
+        return result
+
+    notes = [
+        f"{count} 个仅含 HEAD/objects/refs 的 git-* 目录",
+        "未匹配普通、bare、worktree、partial clone 或含对象的仓库",
+    ]
+    notes.extend(
+        _runtime_diagnostic_notes(
+            process_snapshot,
+            _CODEX_PROCESS_MARKERS,
+            open_handles,
+        )
+    )
+    result.items.append(
+        Item(
+            root,
+            allocated_bytes,
+            task,
+            "critical",
+            "；".join(notes),
+            logical_size=logical_bytes,
+            allocated_size=allocated_bytes,
+            actionable=False,
+            action_block_reason="Codex Git 临时空壳仅诊断",
+            identity=FileIdentity.from_stat(root_facts.stat),
+            latest_mtime=newest_mtime,
+            age_days=(
+                max(0, int((observed_at - newest_mtime) // 86400))
+                if newest_mtime is not None
+                else None
+            ),
+            preselected=False,
+            resource_kind="filesystem_subset",
+            excluded_paths=excluded_paths,
+            cross_device_paths=cross_device_paths,
+            cloud_file_count=cloud_file_count,
+            total_count=count,
+            running_process_markers=_CODEX_PROCESS_MARKERS,
+            diagnostic_kind="codex_transient",
+            open_handle_count=open_handles,
+        )
+    )
+    return result
+
+
+def scan_crashpad_orphan_sidecars(
+    root: Path,
+    protection: Predicate,
+    *,
+    process_snapshot: ProcessSnapshot | None,
+    open_files: OpenFileSnapshot | None,
+    now: float | None = None,
+    anchor: Path | None = None,
+) -> ScanResult:
+    """按文件名关系汇总 Crashpad 孤立 sidecar；不触碰配对 dump。"""
+
+    result = ScanResult()
+    task = "Codex Crashpad 孤立 sidecar"
+    root = normalize_path(root)
+    root_facts = _diagnostic_directory_facts(
+        root,
+        protection,
+        result.issues,
+        task=task,
+        anchor=anchor,
+    )
+    if root_facts is None or root_facts.stat is None:
+        return result
+    try:
+        entries = sorted(scandir_entries(root), key=lambda item: item.name)
+    except OSError as exc:
+        _append_filesystem_issue(result.issues, exc, root, task)
+        return result
+    if len(entries) > _MAX_CRASHPAD_ENTRIES:
+        result.issues.append(
+            ScanIssue(
+                code="diagnostic_limit_reached",
+                message="Crashpad pending 文件数超过安全上限，已放弃本次汇总",
+                task=task,
+                path=root,
+                blocking=False,
+            )
+        )
+        return result
+
+    names = {entry.name for entry in entries}
+    observed_at = time.time() if now is None else now
+    paired_count = orphan_count = recent_count = 0
+    logical_bytes = allocated_bytes = 0
+    open_handles = 0 if open_files is not None else None
+    newest_mtime: float | None = None
+    seen: set[tuple[int, int]] = set()
+    for entry in entries:
+        if not entry.name.endswith("_sidecar.json"):
+            continue
+        stem = entry.name[: -len("_sidecar.json")]
+        if f"{stem}.dmp" in names:
+            paired_count += 1
+            continue
+        dump_path = root / f"{stem}.dmp"
+        try:
+            dump_stat = lstat_retry(dump_path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            _append_filesystem_issue(result.issues, exc, dump_path, task)
+            continue
+        else:
+            if stat.S_ISREG(dump_stat.st_mode) and not stat.S_ISLNK(
+                dump_stat.st_mode
+            ):
+                paired_count += 1
+            continue
+        path = Path(entry.path)
+        if _knowledge_base_ignores(protection, path):
+            continue
+        try:
+            path_stat = lstat_retry(path)
+        except OSError as exc:
+            _append_filesystem_issue(result.issues, exc, path, task)
+            continue
+        facts = FileFacts(path=path, stat=path_stat)
+        if (
+            _predicates_ignore_after_knowledge_base(protection, facts)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or not stat.S_ISREG(path_stat.st_mode)
+            or path_stat.st_dev != root_facts.stat.st_dev
+            or facts.is_probable_cloud_placeholder
+        ):
+            continue
+        identity = (path_stat.st_dev, path_stat.st_ino)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        orphan_count += 1
+        logical_bytes += facts.logical_size
+        allocated_bytes += facts.allocated_size
+        recent_count += int(path_stat.st_mtime > observed_at - 86400)
+        if newest_mtime is None or path_stat.st_mtime > newest_mtime:
+            newest_mtime = path_stat.st_mtime
+        if open_files is not None:
+            assert open_handles is not None
+            open_handles += open_files.count_under(path)
+    if orphan_count == 0:
+        return result
+
+    notes = [
+        f"{orphan_count} 个无同名 .dmp 的 sidecar",
+        f"保留 {paired_count} 个与 .dmp 配对的 sidecar",
+    ]
+    if recent_count:
+        notes.append(f"其中 {recent_count} 个在 24 小时内更新")
+    notes.extend(
+        _runtime_diagnostic_notes(
+            process_snapshot,
+            _CODEX_PROCESS_MARKERS,
+            open_handles,
+        )
+    )
+    notes.append("仅按文件名和 metadata 配对，不读取崩溃内容")
+    result.items.append(
+        Item(
+            root,
+            allocated_bytes,
+            task,
+            "critical",
+            "；".join(notes),
+            logical_size=logical_bytes,
+            allocated_size=allocated_bytes,
+            actionable=False,
+            action_block_reason="Crashpad 配对诊断不提供删除执行器",
+            identity=FileIdentity.from_stat(root_facts.stat),
+            latest_mtime=newest_mtime,
+            age_days=(
+                max(0, int((observed_at - newest_mtime) // 86400))
+                if newest_mtime is not None
+                else None
+            ),
+            preselected=False,
+            resource_kind="filesystem_subset",
+            total_count=orphan_count,
+            paired_artifact_count=paired_count,
+            recent_artifact_count=recent_count,
+            running_process_markers=_CODEX_PROCESS_MARKERS,
+            diagnostic_kind="crashpad_pairing",
+            open_handle_count=open_handles,
+        )
+    )
+    return result
+
+
+def scan_codex_storage_artifact_diagnostics(
+    protection: Predicate,
+) -> ScanResult:
+    """汇总 Codex 精确临时结构和 Crashpad 配对关系。"""
+
+    result = ScanResult()
+    processes, open_files = _capture_runtime_snapshots(
+        result,
+        task="Codex 临时结构",
+    )
+    home = normalize_path(Path.home())
+    scans = (
+        scan_codex_marketplace_staging(
+            normalize_path(_CODEX_MARKETPLACE_STAGING),
+            protection,
+            process_snapshot=processes,
+            open_files=open_files,
+            anchor=home,
+        ),
+        scan_codex_git_skeletons(
+            normalize_path(_CODEX_GIT_TEMP_ROOT),
+            protection,
+            process_snapshot=processes,
+            open_files=open_files,
+            anchor=home,
+        ),
+        scan_crashpad_orphan_sidecars(
+            normalize_path(_CODEX_CRASHPAD_PENDING),
+            protection,
+            process_snapshot=processes,
+            open_files=open_files,
+            anchor=home,
+        ),
+    )
+    for scanned in scans:
+        result.items.extend(scanned.items)
+        result.issues.extend(scanned.issues)
+    return result
+
+
+def discover_mounted_volume_roots(
+) -> tuple[tuple[Path, ...], tuple[ScanIssue, ...]]:
+    """发现当前已挂载卷根，不读取卷内文件。"""
+
+    candidates = [Path("/System/Volumes/Data"), Path("/")]
+    issues: list[ScanIssue] = []
+    for parent in (Path("/System/Volumes"), Path("/Volumes")):
+        try:
+            entries = tuple(scandir_entries(parent))
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            _append_filesystem_issue(
+                issues,
+                exc,
+                parent,
+                "open-unlinked volume discovery",
+            )
+            continue
+        for entry in entries:
+            if len(candidates) >= _MAX_VOLUME_ROOTS:
+                issues.append(
+                    ScanIssue(
+                        code="diagnostic_limit_reached",
+                        message="挂载卷数量超过安全上限，其余卷未进入本次诊断",
+                        task="open-unlinked volume discovery",
+                        path=parent,
+                        blocking=False,
+                    )
+                )
+                break
+            try:
+                if entry.is_dir(follow_symlinks=False) and os.path.ismount(
+                    entry.path
+                ):
+                    candidates.append(Path(entry.path))
+            except OSError:
+                continue
+
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        normalized = normalize_path(candidate)
+        if normalized in seen or not os.path.ismount(normalized):
+            continue
+        seen.add(normalized)
+        roots.append(normalized)
+    return tuple(roots), tuple(issues)
+
+
+def scan_open_unlinked_snapshot(
+    snapshot: DeletedOpenFileSnapshot,
+    *,
+    volume_roots: Sequence[Path],
+) -> ScanResult:
+    """按卷汇总 deleted-open 文件；始终只读且不可执行。"""
+
+    result = ScanResult()
+    roots_by_device: dict[int, tuple[Path, os.stat_result]] = {}
+    for root in volume_roots:
+        normalized = normalize_path(root)
+        try:
+            root_stat = lstat_retry(normalized)
+        except OSError as exc:
+            _append_filesystem_issue(
+                result.issues,
+                exc,
+                normalized,
+                "open-unlinked volume mapping",
+            )
+            continue
+        if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+            continue
+        roots_by_device.setdefault(root_stat.st_dev, (normalized, root_stat))
+
+    files_by_device: dict[int, list[DeletedOpenFile]] = {}
+    for deleted_file in snapshot.files:
+        files_by_device.setdefault(deleted_file.device, []).append(deleted_file)
+
+    for device, deleted_files in sorted(files_by_device.items()):
+        mapped = roots_by_device.get(device)
+        if mapped is None:
+            result.issues.append(
+                ScanIssue(
+                    code="volume_mapping_failed",
+                    message=(
+                        f"无法把 device {device} 的 deleted-open 文件映射到挂载卷"
+                    ),
+                    task="已删除但仍打开的文件",
+                    blocking=False,
+                )
+            )
+            continue
+        mount_point, root_stat = mapped
+        logical_size = sum(item.logical_size for item in deleted_files)
+        if logical_size <= 0:
+            continue
+        command_stats: dict[str, list[int]] = {}
+        for deleted_file in deleted_files:
+            for command in deleted_file.commands:
+                stats = command_stats.setdefault(command, [0, 0])
+                stats[0] += 1
+                stats[1] += deleted_file.logical_size
+        top_commands = sorted(
+            command_stats.items(),
+            key=lambda item: (-item[1][1], -item[1][0], item[0]),
+        )[:5]
+        process_note = (
+            "；关联逻辑大小（进程间可重复） "
+            + ", ".join(
+                f"{command}({_format_bytes(stats[1])})"
+                for command, stats in top_commands
+            )
+            if top_commands
+            else ""
+        )
+        handle_count = sum(item.handle_count for item in deleted_files)
+        result.items.append(
+            Item(
+                mount_point,
+                0,
+                "已删除但仍打开的文件",
+                "critical",
+                (
+                    f"{len(deleted_files)} 个 device/inode 唯一文件，"
+                    f"{handle_count} 个打开记录，逻辑大小上限 "
+                    f"{_format_bytes(logical_size)}{process_note}；"
+                    "lsof 仅提供逻辑大小上限，APFS 实际可释放块可能更少；"
+                    "退出相关应用或重启后由系统释放"
+                ),
+                logical_size=logical_size,
+                allocated_size=None,
+                actionable=False,
+                action_block_reason="文件仍由进程打开，只能退出应用或重启释放",
+                identity=FileIdentity.from_stat(root_stat),
+                preselected=False,
+                resource_kind="filesystem_subset",
+                total_count=len(deleted_files),
+                related_process_count=len(command_stats),
+                diagnostic_kind="open_unlinked",
+                open_handle_count=handle_count,
+            )
+        )
+    return result
+
+
+def scan_open_unlinked_diagnostics(_protection: Predicate) -> ScanResult:
+    result = ScanResult()
+    try:
+        snapshot = capture_deleted_open_file_snapshot()
+    except OpenFileDetectionError as exc:
+        result.issues.append(
+            ScanIssue(
+                code="open_unlinked_detection_failed",
+                message=str(exc),
+                task="已删除但仍打开的文件",
+                blocking=False,
+            )
+        )
+        return result
+    volume_roots, discovery_issues = discover_mounted_volume_roots()
+    result.issues.extend(discovery_issues)
+    scanned = scan_open_unlinked_snapshot(
+        snapshot,
+        volume_roots=volume_roots,
+    )
+    result.items.extend(scanned.items)
+    result.issues.extend(scanned.issues)
     return result
 
 

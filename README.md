@@ -101,8 +101,14 @@ python3 -m venv .venv
 - 已知 updater 区分待安装、同版本、旧版本、应用缺失和未知状态；执行前重新判定
 - JSON 按运行时 device 汇总各卷容量，外置 Trash 不再与系统盘收益混为一个数字
 - WorkBuddy、Codex、Lark、Shadowrocket、TRAE、UURemote 的公开日志/runtime/download
-  根只按元数据报告 7/14/30 天保留期容量和句柄状态
+  根只按元数据报告 7/14/30 天保留期容量和句柄状态；Codex `YYYY/MM/DD` 日志另按日期分区
+- Chrome、Brave、Edge、Comet 的用户 Profile `Service Worker/CacheStorage` 按 profile
+  只读报告物理占用和 7/14/30 天容量；不读取 origin、Cookies、Login Data 或 IndexedDB
 - Codex SQLite 只读报告内部 freelist；不自动 `VACUUM`，也不把数据库当作垃圾文件
+- Codex 不再把整个 `.codex/.tmp` 当缓存；marketplace staging、Git 空壳和 Crashpad
+  sidecar 配对按精确结构只读报告，已安装 marketplace/plugin root 固定保护
+- deleted-open 文件按卷和 device/inode 去重，报告 lsof 逻辑大小上限与关联进程名；只能
+  退出应用或重启释放，不进入清理执行器
 - Darwin 用户临时目录中的 Qoder ShipIt 完整 app 副本会按版本报告，但固定不可执行
 - Darwin `T/X` 中公开命名的构建临时目录、版本化 runtime 和 `*.code_sign_clone` 只读可见；
   通用 Darwin user cache 也会继承已知应用的运行状态保护
@@ -120,7 +126,10 @@ python3 -m venv .venv
 | Time Machine 本地快照 | 是 | 否 | 只显示数量/名称；公开列表不提供精确大小 |
 | 应用 updater 缓存 | 是 | 受限 | 新版本/应用缺失/未知状态强制保护；同版/旧版仅 critical 精确选择 |
 | 日志/runtime/download 保留期 | 是 | 否 | 只读 7/14/30 天物理占用、文件数、进程和句柄；不读取正文或包内容 |
+| 浏览器 CacheStorage 保留期 | 是 | 否 | 仅发现已知浏览器的 Default/Profile 用户缓存根；不读取 origin 或其它 Profile 数据 |
 | SQLite 内部空闲页 | 是 | 否 | immutable read-only page/freelist；不执行 `VACUUM` 或删除数据库 |
+| Codex 临时结构与 Crashpad 配对 | 是 | 否 | 仅精确 staging/Git 空壳/孤立 sidecar；父根、真实仓库和 dump 配对保持保护 |
+| deleted-open 卷占用 | 是 | 否 | `lsof +L1` 字段模式、device/inode 去重；需退出应用或重启释放 |
 | Darwin updater 临时副本 | 是 | 否 | `getconf` 动态发现、版本判定；不自动删除 temp 中的完整 app |
 | Darwin 临时/运行副本 | 是 | 否 | `getconf` 派生 `T/X`；只匹配公开名称模式，固定不可执行 |
 | 签名托管知识库 | 客户端完成 | 显式更新 | 需用户提供 HTTPS URL 和钉住的公钥；项目不内置服务端 |
@@ -132,7 +141,7 @@ python3 -m venv .venv
 
 | 域 | 典型内容 |
 |---|---|
-| system | 用户/Darwin 缓存、日志与 runtime 保留期诊断、updater、Xcode、失效启动项、应用语言只读审计 |
+| system | 用户/Darwin 缓存、浏览器与日志保留期、deleted-open、updater、Xcode、失效启动项、应用语言只读审计 |
 | developer | pip、uv、npm、Go、Cargo、Homebrew、Docker daemon 报告 |
 | ai | Claude、Codex、Gemini、OpenCode、Cursor 缓存 |
 | project | `node_modules`、`.venv`、`target`、DerivedData 等可重建产物 |
@@ -179,7 +188,13 @@ Docker 等非文件系统资源不归入卷。updater 候选另含 `updater_stat
 版本和 `updater_external_install`。只读诊断项使用 `diagnostic_kind`；retention 项报告
 文件数、打开句柄及 `retention_7d_bytes`、`retention_14d_bytes`、`retention_30d_bytes`，
 SQLite 项报告 page、freelist、内部空闲容量/比例和 WAL/SHM/journal 容量。这些诊断项固定
-`actionable=false`。
+`actionable=false`。`resource_kind=filesystem_subset` 表示 `path` 只是聚合锚点，
+`potential_bytes` 仅是实际命中子集的物理块，不是整个目录。`open_unlinked` 没有可验证的
+物理块数，因此 `potential_bytes=0`；其 `logical_bytes`、`total_count`、
+`related_process_count` 和 `open_handle_count` 分别表示 lsof 逻辑上限、去重文件、
+去重进程名和打开记录，不承诺等量 APFS 释放。`codex_transient` 使用
+`total_count` 与 `open_handle_count`；`crashpad_pairing` 另使用 `paired_artifact_count`、
+`recent_artifact_count` 表示受保护配对和近期 orphan，均不提供执行器。
 
 默认 JSON 保留精确绝对路径，供 `--select`、恢复审计和配置 readback 使用。分享输出时
 加 `--redact-paths`：同一文档内的路径映射为稳定的 `path:0001` opaque ref，并标记
@@ -251,7 +266,7 @@ make package
 make release-check
 ```
 
-当前本地基线通过 353 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
+当前本地基线通过 383 个 `unittest` 和 19/19 隔离预览场景；最终事实以 CI 和当前
 checkout 的实际运行结果为准。CI 在 macOS / Python 3.11 上执行 lint、测试、预览、构建、
 归档审计和隔离 wheel 安装，不发布 PyPI、Homebrew 或 GitHub Release。
 

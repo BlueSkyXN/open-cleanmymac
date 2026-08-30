@@ -55,6 +55,57 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(payload["updater_status"], "same_version_residue")
         self.assertIn("installed=1.0", _item_annotations(system))
 
+    def test_data_volume_is_classified_as_system_disk(self) -> None:
+        item = Item(
+            Path("/System/Volumes/Data"),
+            0,
+            "open-unlinked",
+            "critical",
+            logical_size=100,
+            actionable=False,
+            action_block_reason="diagnostic",
+            identity=FileIdentity(10, 1, 0),
+            resource_kind="filesystem_subset",
+            total_count=1,
+            related_process_count=1,
+            diagnostic_kind="open_unlinked",
+        )
+        with mock.patch(
+            "openclean.cli.volume_mount_point",
+            return_value=Path("/System/Volumes/Data"),
+        ):
+            volumes = _volume_summaries((item,))
+
+        self.assertTrue(volumes[0]["system_disk"])
+        self.assertEqual(volumes[0]["potential_bytes"], 0)
+        self.assertIn("逻辑大小上限", _item_annotations(item))
+        payload = _item_payload(item)
+        self.assertEqual(payload["resource_kind"], "filesystem_subset")
+        self.assertEqual(payload["logical_bytes"], 100)
+        self.assertEqual(payload["related_process_count"], 1)
+
+    def test_filesystem_subset_requires_supported_diagnostic_metadata(self) -> None:
+        with self.assertRaisesRegex(ValueError, "filesystem_subset"):
+            Item(
+                Path("/tmp/subset"),
+                0,
+                "invalid subset",
+                actionable=False,
+                resource_kind="filesystem_subset",
+            )
+        with self.assertRaisesRegex(ValueError, "最近 artifact"):
+            Item(
+                Path("/tmp/crashpad"),
+                0,
+                "invalid pairing",
+                "critical",
+                actionable=False,
+                resource_kind="filesystem_subset",
+                total_count=1,
+                recent_artifact_count=2,
+                diagnostic_kind="crashpad_pairing",
+            )
+
     def test_help_is_stdout_only_and_explains_safety_contracts(self) -> None:
         cases = (
             (("--help",), "macOS 清理工具"),

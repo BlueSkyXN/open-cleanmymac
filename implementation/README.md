@@ -70,8 +70,9 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 ## 选择与执行
 
 - 没有 `--yes` 时，`clean`/`purge`/`analyze` 即使带选择参数也只预览。
-- 没有 `--select` 时，`safe` 可默认预选，`--all`/`--include-confirm`/
-  `--include-critical` 分别扩展对应批量层级。
+- 没有 `--select` 时，普通 `safe` 扫描点可默认预选；扫描点可以独立关闭默认选择，AI 域
+  即使是可重建缓存也统一默认不选。`--all`/`--include-confirm`/`--include-critical`
+  分别扩展对应批量层级。
 - 一旦指定 `--select`，选择集从空开始，不继承默认预选；confirm/critical 精确目标仍需
   对应 `--include-confirm`/`--include-critical` 作为风险授权，但不会顺带选择同等级其他项。
 - `--select` 与 `--all` 语义冲突，CLI 在扫描前返回 exit 2。
@@ -86,8 +87,10 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
   `--select`，全屏执行在 `Y` 后还需按 `!` 完成 critical 二次确认。
 - updater 候选统一为 critical 且要求精确选择；`pending_update`、`installed_app_missing`
   和 `version_unknown` 不可执行，同版/旧版残留在执行前仍会重新比较版本。
-- retention 与 SQLite freelist 项固定为只读诊断：不接受选择，不进入通用 cleanup executor。
-  retention 同时覆盖公开日志/runtime/download 根和 `getconf` 发现的 Darwin `T/X` 维护模式。
+- retention、SQLite freelist、Codex transient/Crashpad 配对与 open-unlinked 项固定为只读
+  诊断：不接受选择，不进入通用 cleanup executor。retention 同时覆盖公开
+  日志/runtime/download、Codex 日期分区、已知 Chromium 用户 Profile CacheStorage，以及
+  `getconf` 发现的 Darwin `T/X` 维护模式。
 
 ## TUI
 
@@ -118,7 +121,11 @@ TUI 的选择只是选择；实际执行仍要求启动命令带 `--yes`，并�
 `diagnostic_kind=retention` 额外返回文件数、打开句柄以及 7/14/30 天物理容量；
 `diagnostic_kind=sqlite_freelist` 返回 page/freelist、内部空闲容量与比例、数据库总大小和
 WAL/SHM/journal 容量。`diagnostic_kind=updater_temp` 报告动态 ShipIt app 的版本状态。
-三类都固定 `actionable=false`、`reclaimable_bytes=0`。
+`resource_kind=filesystem_subset` 的 `path` 只是聚合锚点，字节数仅覆盖命中子集。
+`open_unlinked` 通过 `logical_bytes`、`total_count`、`related_process_count` 和
+`open_handle_count` 报告逻辑上限；其 `potential_bytes=0`。`codex_transient` 使用
+`total_count`/`open_handle_count`；`crashpad_pairing` 另使用 `paired_artifact_count` 和
+`recent_artifact_count`。所有诊断均固定 `actionable=false`、`reclaimable_bytes=0`。
 `optimize --json` 返回：
 
 ```json
@@ -214,6 +221,8 @@ best effort，不会把已经安装的 sequence 报成失败。托管 `knowledge
   暂存代码。版本状态不明时 fail-closed，同版/旧版残留在执行前重新判定；
 - 日志/runtime/download 保留期扫描只遍历文件 metadata，不读取正文或包内容；SQLite 使用
   `mode=ro&immutable=1` PRAGMA 且不创建、checkpoint 或修改 WAL/SHM；
+- `.codex/.tmp` 整根不作为缓存；专项 scanner 只汇总 marketplace staging、结构严格为空的
+  `git-*` 和 Crashpad 孤立 sidecar，且三类结果均固定不可执行；
 - `analyze` 同时比较每个一级候选的 `st_dev` 与 `statvfs().f_fsid`，不进入其它卷或文件
   系统挂载点；后者用于识别 macOS 上 `st_dev` 相同的 APFS root/Data 挂载边界；
 - 只读 `lstat` / `scandir` 遇到 `EINTR` 时重试，其它访问错误继续按 issue 报告；
@@ -282,7 +291,7 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 
 剩余工作见 [TODO.md](TODO.md)。
 
-当前本地验证基线为 353 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
+当前本地验证基线为 383 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
 checkout 的 `make check` 输出为准。
 
 ## 许可证

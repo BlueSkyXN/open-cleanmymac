@@ -103,7 +103,7 @@ ScanTask =
 | **失效启动项** | LaunchAgents/Daemons plist 指向的可执行路径**不存在** → 判为 broken。 |
 | **失效偏好** | plist 对应应用已不存在 → 判为残留偏好。 |
 | **Xcode** | DerivedData/DeviceSupport/Archives/ModuleCaches/Simulator runtimes 等，按 KB 忽略 + 是否当前用 SDK 判定。 |
-| **AI 工具** | 按工具固定相对路径（cache/debug/telemetry/tmp）定位，过 AIJunkIgnoreRules 判可删；Codex 同时识别 `.codex/tmp` 与 `.codex/.tmp`，Chrome DevTools MCP 同时兼容根布局与 `Default/` profile。 |
+| **AI 工具** | 按工具固定相对路径（cache/debug/telemetry/tmp）定位，过 AIJunkIgnoreRules 判可删；Codex 只保留精确 app/tool catalog cache 子项，临时结构走 §7.3 只读诊断；Chrome DevTools MCP 同时兼容根布局与 `Default/` profile。 |
 
 ---
 
@@ -147,6 +147,24 @@ ScanTask =
 4. `potential_bytes` 最多为内部空闲页和当前物理分配量的较小值，但
    `reclaimable_bytes=0`；同时报告数据库总大小、空闲比例、WAL/SHM/journal 和句柄；
 5. 不创建/修改 sidecar，不 checkpoint，不运行 `VACUUM`，不删除数据库。
+
+### 7.3 Codex 临时结构与 Crashpad 配对
+
+1. 不把 `~/.codex/tmp` 或 `~/.codex/.tmp` 整根判为垃圾；installed marketplace、bundled
+   marketplace、plugin source、session、配置和恢复状态不进入该扫描器；
+2. marketplace 只匹配精确 `.staging` 根的直接子项 `marketplace-upgrade-*`，按物理块、
+   mtime、进程和句柄汇总，不据名称或年龄断言升级已经失败；
+3. Git 空壳只在 Codex 精确临时根中匹配 `git-*`，并要求结构仅含指向
+   `refs/heads/main` 的小型 `HEAD`、空 `objects`、空 `refs` 和可选 `.DS_Store`；存在
+   config、object、ref、worktree 或其它成员即不匹配；
+4. Crashpad 只通过同一目录内的公开文件名关系配对 `<id>.dmp` 与
+   `<id>_sidecar.json`；只汇总没有同名 dump 的普通 sidecar，同时独立报告 paired、
+   最近更新和打开句柄数量，不读取崩溃正文；
+5. 所有结果固定 `critical + actionable=false`。未来执行器必须保存扫描时 identity 清单，
+   并在逐项操作前重新确认进程、句柄和配对关系；不能复用通用目录删除器。
+6. 三类结果使用 `resource_kind=filesystem_subset`：path 只是聚合锚点，物理容量只覆盖
+   精确命中子集；Crashpad 配对/近期计数分别使用 `paired_artifact_count` 和
+   `recent_artifact_count`，不复用 Docker 语义的 `active_count`。
 
 ---
 

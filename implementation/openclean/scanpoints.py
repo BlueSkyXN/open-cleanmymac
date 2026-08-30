@@ -29,8 +29,13 @@ class ScanPoint:
     process_owner_protection: bool = False
     updater_protection: bool = False
     stay_on_device: bool = False
+    default_selected: bool | None = None
 
     def __post_init__(self) -> None:
+        if self.default_selected is not None and not isinstance(
+            self.default_selected, bool
+        ):
+            raise ValueError("default_selected 必须是 bool 或 None")
         if (self.child_globs or self.child_extensions) and not self.expand_children:
             raise ValueError("child 过滤器只能用于 expand_children 扫描点")
         if any("**" in pattern for pattern in self.path_globs):
@@ -165,6 +170,14 @@ SYSTEM_JUNK: list[ScanPoint] = [
         "critical",
         "通过 DARWIN_USER_TEMP_DIR 只读发现 Qoder ShipIt 完整应用副本",
         scanner="darwin-temp-updater",
+    ),
+    ScanPoint(
+        "已删除但仍打开的文件",
+        (),
+        "critical",
+        "按卷报告 lsof 可见的 deleted-open 逻辑大小；只能退出应用或重启释放",
+        default_selected=False,
+        scanner="open-unlinked",
     ),
     ScanPoint(
         "系统日志",
@@ -326,16 +339,16 @@ AI_TOOL_JUNK: list[ScanPoint] = [
             "~/.claude/mcp-needs-auth-cache.json",
             "~/.claude/plugins/install-counts-cache.json",
         ),
+        default_selected=False,
         running_process_markers=("claude",),
     ),
     ScanPoint(
         "Codex 缓存",
         (
-            "~/.codex/tmp",
-            "~/.codex/.tmp",
             "~/.codex/cache/codex_apps_server_info",
             "~/.codex/cache/codex_apps_tools",
         ),
+        default_selected=False,
         running_process_markers=("codex",),
     ),
     ScanPoint(
@@ -343,7 +356,16 @@ AI_TOOL_JUNK: list[ScanPoint] = [
         (),
         "critical",
         "使用 immutable read-only PRAGMA 报告 freelist，不执行 VACUUM",
+        default_selected=False,
         scanner="sqlite-freelist",
+    ),
+    ScanPoint(
+        "Codex 临时结构与 Crashpad 配对",
+        (),
+        "critical",
+        "只读识别 marketplace staging、Git 空壳和孤立 Crashpad sidecar",
+        default_selected=False,
+        scanner="codex-storage-artifacts",
     ),
     ScanPoint(
         "Gemini 临时",
@@ -361,17 +383,20 @@ AI_TOOL_JUNK: list[ScanPoint] = [
                 "extensions_crx_cache",
             )),
         ),
+        default_selected=False,
         running_process_markers=("gemini", "antigravity"),
     ),
     ScanPoint(
         "OpenCode",
         ("~/.cache/opencode", "~/.local/share/opencode/log"),
+        default_selected=False,
         running_process_markers=("opencode",),
     ),
     ScanPoint(
         "Cursor agent",
         ("~/.local/share/cursor-agent",),
         "confirm",
+        default_selected=False,
         running_process_markers=("Cursor.app", "cursor-agent"),
     ),
     ScanPoint(
@@ -386,6 +411,7 @@ AI_TOOL_JUNK: list[ScanPoint] = [
                 "extensions_crx_cache",
             )
         ),
+        default_selected=False,
         running_process_markers=("chrome-devtools-mcp",),
     ),
 ]

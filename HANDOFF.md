@@ -42,8 +42,8 @@ make release-check
   运行中不可执行；
 - 已知 updater 区分待安装/同版/旧版/应用缺失/未知状态，并在执行前重新判定；
 - JSON 按 device 汇总系统盘和外置卷，Developer 补充 Go module、Cargo Git 和 npm 次级缓存；
-- retention 日志/trace/runtime/download 与 Codex SQLite freelist 结构化只读诊断，固定
-  不可执行；
+- retention 日志/trace/runtime/download、Codex 日志日期分区、SQLite freelist、精确
+  transient/Git 空壳与 Crashpad 配对结构化只读诊断，固定不可执行；
 - Qoder ShipIt Darwin temp 完整 app 副本动态发现和版本判定，固定不可执行；
 - Darwin `T/X` 公开命名的构建 temp、版本化 runtime、toolhost snapshot、UURemote temp
   和 code-sign clone 动态发现，固定不可执行；
@@ -53,7 +53,7 @@ make release-check
   realpath 变化或执行前即时复核发现不一致会 fail-closed，多 CLI 进程间仍有已记录的
   TOCTOU 边界。
 
-最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，353 个单元测试通过，
+最近完整本地验证：`ruff` 通过，告警升级的 `py_compile` 通过，383 个单元测试通过，
 19/19 隔离预览通过且 `real_user_data_modified=false`。这是本地快照；远端状态必须读取
 GitHub exact commit 的 Actions 结果后另行确认。
 

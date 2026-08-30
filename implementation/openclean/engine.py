@@ -26,7 +26,14 @@ from .macos import (
     scan_symlink_anchor,
     symlink_component,
 )
-from .models import FileFacts, Item, ScanIssue, ScanResult, normalize_path
+from .models import (
+    FILESYSTEM_RESOURCE_KINDS,
+    FileFacts,
+    Item,
+    ScanIssue,
+    ScanResult,
+    normalize_path,
+)
 from .predicates import Predicate, ProtectionGate, SubstringPathPredicate
 from .processes import (
     ProcessDetectionError,
@@ -50,7 +57,9 @@ from .scanpoints import (
 )
 from .startup_items import scan_broken_startup_items
 from .storage_diagnostics import (
+    scan_codex_storage_artifact_diagnostics,
     scan_darwin_temp_updater_diagnostics,
+    scan_open_unlinked_diagnostics,
     scan_retention_diagnostics,
     scan_sqlite_diagnostics,
 )
@@ -866,6 +875,11 @@ def _scan_point(
                 action_block_reason = "无法确认相关应用是否正在运行"
             else:
                 action_block_reason = ""
+            default_selected = (
+                safety == "safe"
+                if sp.default_selected is None
+                else sp.default_selected
+            )
             result.items.append(
                 Item(
                     facts.path,
@@ -883,7 +897,7 @@ def _scan_point(
                     requires_privilege=sp.requires_privilege,
                     identity=facts.identity,
                     preselected=(
-                        safety == "safe"
+                        default_selected
                         and actionable
                         and size > 0
                     ),
@@ -978,6 +992,10 @@ def _scan_dynamic_point_with_progress(
             result = scan_darwin_temp_updater_diagnostics(protection)
         elif point.scanner == "sqlite-freelist":
             result = scan_sqlite_diagnostics(protection)
+        elif point.scanner == "open-unlinked":
+            result = scan_open_unlinked_diagnostics(protection)
+        elif point.scanner == "codex-storage-artifacts":
+            result = scan_codex_storage_artifact_diagnostics(protection)
         else:
             result = ScanResult(
                 issues=[
@@ -1267,6 +1285,14 @@ _DOMAIN_SPECIFICITY = {
     "trash": 30,
 }
 
+def _overlap_ownership_priority(item: Item) -> tuple[int, bool]:
+    """同路径先按域具体度归属，同域时优先保留专用只读诊断。"""
+
+    return (
+        _DOMAIN_SPECIFICITY.get(item.domain, 0),
+        bool(item.diagnostic_kind),
+    )
+
 
 def _is_descendant(candidate: Path, root: Path) -> bool:
     if candidate == root:
@@ -1277,21 +1303,89 @@ def _is_descendant(candidate: Path, root: Path) -> bool:
         return False
 
 
+def _residual_metric(
+    item: Item,
+    descendants: list[Item],
+    field: str,
+) -> int | None:
+    parent_value = getattr(item, field)
+    child_values = [getattr(child, field) for child in descendants]
+    if parent_value is None or any(value is None for value in child_values):
+        return None
+    return max(0, parent_value - sum(child_values))
+
+
+def _retention_residual_updates(
+    item: Item,
+    descendants: list[Item],
+) -> dict[str, object]:
+    if item.diagnostic_kind != "retention":
+        return {}
+    updates: dict[str, object] = {
+        "retention_file_count": _residual_metric(
+            item, descendants, "retention_file_count"
+        ),
+        "open_handle_count": _residual_metric(
+            item, descendants, "open_handle_count"
+        ),
+        "retention_7d_bytes": _residual_metric(
+            item, descendants, "retention_7d_bytes"
+        ),
+        "retention_14d_bytes": _residual_metric(
+            item, descendants, "retention_14d_bytes"
+        ),
+        "retention_30d_bytes": _residual_metric(
+            item, descendants, "retention_30d_bytes"
+        ),
+        "latest_mtime": None,
+        "age_days": None,
+    }
+    buckets = tuple(
+        updates[field]
+        for field in (
+            "retention_7d_bytes",
+            "retention_14d_bytes",
+            "retention_30d_bytes",
+        )
+    )
+    if all(value is not None for value in buckets) and not (
+        buckets[0] >= buckets[1] >= buckets[2]
+    ):
+        updates.update(
+            retention_7d_bytes=None,
+            retention_14d_bytes=None,
+            retention_30d_bytes=None,
+        )
+    return updates
+
+
 def finalize_overlapping_result(result: ScanResult) -> ScanResult:
     """把重叠扫描点分配给最具体项，避免 clean 汇总重复计数。"""
     by_path: dict[Path, Item] = {}
-    non_filesystem_items: list[Item] = []
+    non_overlapping_items: list[Item] = []
     for item in result.items:
-        if item.path is None or item.resource_kind != "filesystem":
-            non_filesystem_items.append(item)
+        if (
+            item.path is None
+            or item.resource_kind not in FILESYSTEM_RESOURCE_KINDS
+        ):
+            non_overlapping_items.append(item)
             continue
         current = by_path.get(item.path)
-        if current is None or _DOMAIN_SPECIFICITY.get(
-            item.domain, 0
-        ) > _DOMAIN_SPECIFICITY.get(current.domain, 0):
+        if current is None or _overlap_ownership_priority(
+            item
+        ) > _overlap_ownership_priority(current):
             by_path[item.path] = item
 
-    items = list(by_path.values())
+    items = [
+        item
+        for item in by_path.values()
+        if item.resource_kind == "filesystem"
+    ]
+    subset_items = [
+        item
+        for item in by_path.values()
+        if item.resource_kind == "filesystem_subset"
+    ]
     finalized: list[Item] = []
     for item in items:
         descendants = sorted(
@@ -1357,6 +1451,10 @@ def finalize_overlapping_result(result: ScanResult) -> ScanResult:
             f"{len(direct_descendants)} 个子路径已归入更具体分类，父项默认不选"
         )
         note = f"{item.note}；{suffix}" if item.note else suffix
+        residual_updates = _retention_residual_updates(
+            item,
+            direct_descendants,
+        )
         finalized.append(
             replace(
                 item,
@@ -1369,10 +1467,12 @@ def finalize_overlapping_result(result: ScanResult) -> ScanResult:
                 action_block_reason="与更具体的清理分类重叠",
                 preselected=False,
                 note=note,
+                **residual_updates,
             )
         )
 
-    finalized.extend(non_filesystem_items)
+    finalized.extend(subset_items)
+    finalized.extend(non_overlapping_items)
     finalized.sort(
         key=lambda item: (
             item.domain,

@@ -46,7 +46,7 @@ flowchart TD
 | `filesystem.py` | `lstat` / `scandir` / `statvfs` 的 EINTR-safe 只读封装 | 路径策略或删除 |
 | `application_ownership.py` | 公开缓存路径到应用进程 marker 的保守归属 | 私有厂商规则或进程枚举 |
 | `updater.py` | 已知 updater 根、app/ZIP bundle metadata、版本状态比较 | 执行暂存代码或自动安装 |
-| `storage_diagnostics.py` | 日志/runtime/download retention、Darwin transient 与 SQLite freelist 只读诊断 | 删除诊断对象、`VACUUM` 或读取正文/包内容 |
+| `storage_diagnostics.py` | 日志/浏览器 CacheStorage retention、Codex transient/Crashpad 配对、Darwin transient、deleted-open 与 SQLite freelist 只读诊断 | 删除诊断对象、`VACUUM` 或读取正文/浏览器 origin/包内容 |
 | `task_graph.py` | DAG 校验、就绪调度、依赖失败传播 | 业务规则 |
 | `progress.py` | 固定权重、单调快照、TTY renderer | 任务执行 |
 | `predicates.py` | 组合谓词、KB 优先的保护闸 | 规则持久化 |
@@ -74,11 +74,14 @@ flowchart TD
 - 扫描来源 `path_source`，例如 builtin/environment；
 - 扫描时记录的 device/inode/owner 身份；
 - updater installed/staged 版本、状态和外置安装提示；
-- `diagnostic_kind`、日志 7/14/30 天容量/文件数/句柄，或 SQLite page/freelist/WAL 指标；
+- `diagnostic_kind`、日志/浏览器 7/14/30 天容量/文件数/句柄、SQLite page/freelist/WAL、
+  Codex transient/Crashpad 专用计数，或 deleted-open 去重文件数/关联进程名数量/打开记录数；
+- `resource_kind=filesystem_subset` 表示 path 是聚合锚点，容量不代表整个目录；
 - project、Docker、startup item 等领域元数据。
 
-扫描结果不等于删除计划。任何不可执行项的 `reclaimable_bytes` 都是 0；其占用只计入
-`potential_bytes`，并按特权或不支持原因单独聚合。`analyze` 更严格：它只描述空间占用，
+扫描结果不等于删除计划。任何不可执行项的 `reclaimable_bytes` 都是 0；只有可验证的
+物理占用才计入 `potential_bytes`。open-unlinked 仅有 lsof 逻辑上限，因此保留在
+`logical_bytes` 而不进入 potential/unsupported 容量。`analyze` 更严格：它只描述空间占用，
 因此即使候选可供用户精确选择，顶层和 entry 的 `reclaimable_bytes` 也固定为 0。
 
 ### ScanIssue
@@ -116,13 +119,18 @@ issue 使用稳定 code、message、task、path 和 `blocking`。`complete=true`
    声明顺序稳定汇总。
 10. 已知 updater 只读取受限 `Info.plist` 或 ZIP 顶层 bundle metadata；待安装新版、应用
     缺失和未知状态不可执行，同版/旧版降为 critical 精确选择。
-11. retention 扫描只读取文件 metadata 并报告 7/14/30 天物理容量；SQLite 使用 immutable
-    read-only PRAGMA。两类诊断始终不可执行，也不进入 cleanup 状态机。
+11. retention 扫描只读取文件 metadata 并报告 7/14/30 天物理容量；浏览器诊断只进入
+    Default/Profile 的 CacheStorage，不读取 origin 或其它 Profile 数据。SQLite 使用
+    immutable read-only PRAGMA。deleted-open 使用 lsof 字段模式且不采集路径或完整命令行；
+    所有诊断始终不可执行，也不进入 cleanup 状态机。
 12. Qoder ShipIt 的 Darwin temp 根由 `getconf` 动态发现，复用 updater 版本判定，但完整
     app 副本始终只读报告，避免把暂存状态或应用缺失误当作清理授权。
 13. Darwin `T/X` 仅按公开名称模式发现构建临时目录、版本化 runtime、toolhost snapshot、
     UURemote temp 与 code-sign clone；通用 Darwin cache 直接子项按公开 bundle/helper 名称
     继承应用进程保护，不从真实机器数据生成私有路径规则。
+14. Codex `.tmp` 父根不进入普通缓存清理；专项 scanner 只汇总精确 marketplace staging、
+    无对象 Git 空壳和 Crashpad dump/sidecar 关系。日期日志按有效 `YYYY/MM/DD` 子分区显示，
+    但名称、年龄、主文件缺失或功能停用都不能单独解锁写操作。
 
 JSON 的 `volumes` 按 scan-time device 分组文件系统候选，分别汇总系统盘与外置盘容量。
 Docker 等非文件系统资源不进入卷汇总；`device_id` 不是跨重启的持久标识。
