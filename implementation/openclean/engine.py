@@ -1447,10 +1447,16 @@ def finalize_overlapping_result(result: ScanResult) -> ScanResult:
         )
         if residual_size == 0 and residual_cloud_file_count == 0:
             continue
-        suffix = (
-            f"{len(direct_descendants)} 个子路径已归入更具体分类，父项默认不选"
-        )
-        note = f"{item.note}；{suffix}" if item.note else suffix
+        if item.diagnostic_kind == "retention":
+            note = (
+                f"已扣除 {len(direct_descendants)} 个更具体子路径；"
+                "当前父项仅表示剩余内容，默认不选"
+            )
+        else:
+            suffix = (
+                f"{len(direct_descendants)} 个子路径已归入更具体分类，父项默认不选"
+            )
+            note = f"{item.note}；{suffix}" if item.note else suffix
         residual_updates = _retention_residual_updates(
             item,
             direct_descendants,

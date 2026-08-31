@@ -106,9 +106,9 @@ python3 -m venv .venv
   只读报告物理占用和 7/14/30 天容量；不读取 origin、Cookies、Login Data 或 IndexedDB
 - Codex SQLite 只读报告内部 freelist；不自动 `VACUUM`，也不把数据库当作垃圾文件
 - Codex 不再把整个 `.codex/.tmp` 当缓存；marketplace staging、Git 空壳和 Crashpad
-  sidecar 配对按精确结构只读报告，已安装 marketplace/plugin root 固定保护
-- deleted-open 文件按卷和 device/inode 去重，报告 lsof 逻辑大小上限与关联进程名；只能
-  退出应用或重启释放，不进入清理执行器
+  sidecar 配对按精确结构只读报告；staging 超限时返回有界部分容量和完整计数，不会消失
+- deleted-open 文件按卷和 device/inode 去重，报告 lsof 逻辑大小上限与关联进程名；路径
+  只在内存中用于 protect/ignore 后丢弃，只能退出应用或重启释放，不进入清理执行器
 - Darwin 用户临时目录中的 Qoder ShipIt 完整 app 副本会按版本报告，但固定不可执行
 - Darwin `T/X` 中公开命名的构建临时目录、版本化 runtime 和 `*.code_sign_clone` 只读可见；
   通用 Darwin user cache 也会继承已知应用的运行状态保护
@@ -192,8 +192,10 @@ SQLite 项报告 page、freelist、内部空闲容量/比例和 WAL/SHM/journal 
 `potential_bytes` 仅是实际命中子集的物理块，不是整个目录。`open_unlinked` 没有可验证的
 物理块数，因此 `potential_bytes=0`；其 `logical_bytes`、`total_count`、
 `related_process_count` 和 `open_handle_count` 分别表示 lsof 逻辑上限、去重文件、
-去重进程名和打开记录，不承诺等量 APFS 释放。`codex_transient` 使用
-`total_count` 与 `open_handle_count`；`crashpad_pairing` 另使用 `paired_artifact_count`、
+去重进程名和打开记录，不承诺等量 APFS 释放。`codex_transient` 使用 `total_count` 与
+`open_handle_count`；marketplace staging 另使用 `measured_count` 和
+`measurement_complete` 明确区分已测数量和容量是否完整。`crashpad_pairing` 另使用
+`paired_artifact_count`、
 `recent_artifact_count` 表示受保护配对和近期 orphan，均不提供执行器。
 
 默认 JSON 保留精确绝对路径，供 `--select`、恢复审计和配置 readback 使用。分享输出时

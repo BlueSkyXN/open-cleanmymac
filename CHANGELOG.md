@@ -17,7 +17,8 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
   诊断；只读取文件 metadata，不读取 origin、Cookies、Login Data、IndexedDB 或整个 Profile。
 - 新增 deleted-open 按卷诊断：解析 `lsof +L1` 字段输出，按 device/inode 去重，只保留
   process name、句柄计数和逻辑大小上限；逻辑上限只进入 `logical_bytes`，不计入
-  物理 `potential_bytes`。该项固定不可执行，只建议退出应用或重启。
+  物理 `potential_bytes`。路径仅在内存中用于 protect/ignore 后丢弃，原始 stderr 不进入
+  JSON；该项固定不可执行，只建议退出应用或重启。
 - 新增 AI agent 只读调用指南；开发工具版本集中到 `requirements-dev.txt`，避免本地与 CI
   使用不同 Ruff 默认规则。包装元数据改用 SPDX license expression，wheel/sdist 都携带
   完整 GPL-3.0 文本，release archive audit 会拒绝缺失或不一致的许可证。
@@ -53,7 +54,8 @@ PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公�
 - Chrome DevTools MCP 同时兼容旧根布局和 Chromium `Default/` profile 缓存布局。
 - Codex 扫描不再把 `.codex/tmp` 或 `.codex/.tmp` 整根作为普通缓存候选；新增只读专项
   诊断，精确汇总 marketplace upgrade staging、无对象 Git 空壳和 Crashpad 孤立 sidecar，
-  保留 installed marketplace、plugin source、真实仓库与 dump 配对。
+  保留 installed marketplace、plugin source、真实仓库与 dump 配对。staging 超过测量上限
+  时仍输出完整计数、有界部分容量和不完整标记。
 - Codex macOS logs 新增有效 `YYYY/MM/DD` 分区发现；同路径 generic 日志与专项诊断重叠时
   由专项诊断取得所有权，避免只读 retention 结果被 actionable 父规则覆盖。
 - 已知 updater 缓存新增版本状态机：待安装新版、应用缺失和未知状态不可执行；同版/旧版

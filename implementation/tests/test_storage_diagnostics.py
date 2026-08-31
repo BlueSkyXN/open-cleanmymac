@@ -33,6 +33,7 @@ from openclean.storage_diagnostics import (
     scan_codex_marketplace_staging,
     scan_crashpad_orphan_sidecars,
     scan_darwin_temp_updater_diagnostics,
+    scan_open_unlinked_diagnostics,
     scan_open_unlinked_snapshot,
     scan_retention_diagnostics,
     scan_retention_rules,
@@ -98,6 +99,61 @@ class OpenUnlinkedDiagnosticTests(unittest.TestCase):
             self.assertEqual(result.items, [])
             self.assertEqual(result.issues[0].code, "volume_mapping_failed")
             self.assertFalse(result.issues[0].blocking)
+
+    def test_path_and_volume_protection_filter_open_unlinked_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            device = root.stat().st_dev
+            secret = root / "SecretProject/deleted.log"
+            public = root / "Public/deleted.log"
+            snapshot = DeletedOpenFileSnapshot(
+                (
+                    DeletedOpenFile(
+                        device,
+                        10,
+                        4096,
+                        1,
+                        ("SecretApp",),
+                        paths=(str(secret),),
+                    ),
+                    DeletedOpenFile(
+                        device,
+                        11,
+                        8192,
+                        1,
+                        ("PublicApp",),
+                        paths=(str(public),),
+                    ),
+                )
+            )
+
+            with mock.patch(
+                "openclean.storage_diagnostics.capture_deleted_open_file_snapshot",
+                return_value=snapshot,
+            ), mock.patch(
+                "openclean.storage_diagnostics.discover_mounted_volume_roots",
+                return_value=((root,), ()),
+            ):
+                filtered = scan_open_unlinked_diagnostics(
+                    IgnoreRules([str(secret.parent)])
+                )
+                volume_filtered = scan_open_unlinked_diagnostics(
+                    IgnoreRules(
+                        knowledge_base=KnowledgeBase.from_mapping(
+                            {
+                                "schema_version": 1,
+                                "protect": {"paths": [str(root)]},
+                            }
+                        )
+                    )
+                )
+
+            self.assertEqual(len(filtered.items), 1)
+            self.assertEqual(filtered.items[0].logical_size, 8192)
+            self.assertEqual(filtered.items[0].total_count, 1)
+            self.assertNotIn("SecretApp", filtered.items[0].note)
+            self.assertEqual(volume_filtered.items, [])
+            self.assertEqual(volume_filtered.issues, [])
 
     def test_open_unlinked_volume_item_is_not_absorbed_as_parent_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -420,6 +476,9 @@ class CodexStructuredStorageDiagnosticTests(unittest.TestCase):
             )
             self.assertEqual(by_path[root].retention_file_count, 1)
             self.assertIsNone(by_path[root].latest_mtime)
+            self.assertNotIn("2 个文件", by_path[root].note)
+            self.assertIn("扣除", by_path[root].note)
+            self.assertIn("剩余内容", by_path[root].note)
             self.assertEqual(by_path[partition].retention_file_count, 1)
             self.assertEqual(
                 finalized.total,
@@ -431,16 +490,19 @@ class CodexStructuredStorageDiagnosticTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / ".staging"
             upgrade = root / "marketplace-upgrade-example"
+            ignored = root / "marketplace-upgrade-ignored"
             installed = root / "installed-marketplace"
             upgrade.mkdir(parents=True)
+            ignored.mkdir()
             installed.mkdir()
             pack = upgrade / "objects.pack"
             pack.write_bytes(b"pack" * 1024)
+            (ignored / "private.bin").write_bytes(b"private" * 1024)
             (installed / "keep.bin").write_bytes(b"keep" * 1024)
 
             result = scan_codex_marketplace_staging(
                 root,
-                IgnoreRules(),
+                IgnoreRules([str(ignored)]),
                 process_snapshot=ProcessSnapshot(("codex app-server",)),
                 open_files=OpenFileSnapshot((str(pack),)),
             )
@@ -448,6 +510,8 @@ class CodexStructuredStorageDiagnosticTests(unittest.TestCase):
             self.assertEqual(len(result.items), 1)
             item = result.items[0]
             self.assertEqual(item.total_count, 1)
+            self.assertEqual(item.measured_count, 1)
+            self.assertTrue(item.measurement_complete)
             self.assertIsNone(item.active_count)
             self.assertEqual(item.resource_kind, "filesystem_subset")
             self.assertEqual(item.diagnostic_kind, "codex_transient")
@@ -459,6 +523,45 @@ class CodexStructuredStorageDiagnosticTests(unittest.TestCase):
                 item.allocated_size,
                 pack.stat().st_blocks * 512,
             )
+
+    def test_marketplace_limit_returns_bounded_partial_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".staging"
+            measured_paths = []
+            for index in range(3):
+                candidate = root / f"marketplace-upgrade-{index}"
+                candidate.mkdir(parents=True)
+                payload = candidate / "payload.bin"
+                payload.write_bytes(bytes([index + 1]) * 4096)
+                measured_paths.append(payload)
+
+            with mock.patch(
+                "openclean.storage_diagnostics._MAX_CODEX_STAGING_ROOTS",
+                2,
+            ):
+                result = scan_codex_marketplace_staging(
+                    root,
+                    IgnoreRules(),
+                    process_snapshot=ProcessSnapshot(()),
+                    open_files=OpenFileSnapshot(()),
+                )
+
+            self.assertFalse(result.complete)
+            self.assertEqual(len(result.items), 1)
+            item = result.items[0]
+            self.assertEqual(item.total_count, 3)
+            self.assertEqual(item.measured_count, 2)
+            self.assertFalse(item.measurement_complete)
+            self.assertEqual(
+                item.allocated_size,
+                sum(path.stat().st_blocks * 512 for path in measured_paths[:2]),
+            )
+            payload = _item_payload(item)
+            self.assertEqual(payload["measured_count"], 2)
+            self.assertFalse(payload["measurement_complete"])
+            self.assertIn("部分结果", item.note)
+            self.assertEqual(result.issues[0].code, "diagnostic_limit_reached")
+            self.assertTrue(result.issues[0].blocking)
 
     def test_codex_structure_rejects_symlink_ancestors(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

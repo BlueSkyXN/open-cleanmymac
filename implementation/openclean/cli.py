@@ -429,6 +429,8 @@ def _item_payload(item) -> dict[str, object]:
         "human": human(item.size),
         "resource_total_bytes": item.resource_total_size,
         "total_count": item.total_count,
+        "measured_count": item.measured_count,
+        "measurement_complete": item.measurement_complete,
         "active_count": item.active_count,
         "running_process_markers": list(item.running_process_markers),
         "cleanup_scope": item.cleanup_scope or None,

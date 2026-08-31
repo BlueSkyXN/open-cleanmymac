@@ -73,6 +73,7 @@ class DeletedOpenFile:
     logical_size: int
     handle_count: int
     commands: tuple[str, ...]
+    paths: tuple[str, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ class _DeletedOpenAggregate:
     logical_size: int = 0
     handle_count: int = 0
     commands: set[str] = field(default_factory=set)
+    paths: set[str] = field(default_factory=set)
 
 
 def _lsof_integer(value: str) -> int | None:
@@ -100,7 +102,7 @@ def _lsof_integer(value: str) -> int | None:
 
 
 def parse_deleted_open_files(output: str) -> DeletedOpenFileSnapshot:
-    """解析 ``lsof +L1 -FpcfDis``，不保留文件路径或完整命令行。"""
+    """解析 ``lsof +L1`` 字段输出，路径仅供内存中的保护规则判定。"""
 
     aggregates: dict[tuple[int, int], _DeletedOpenAggregate] = {}
     command = ""
@@ -108,6 +110,7 @@ def parse_deleted_open_files(output: str) -> DeletedOpenFileSnapshot:
     device: int | None = None
     inode: int | None = None
     logical_size: int | None = None
+    paths: set[str] = set()
 
     def invalid_output(reason: str) -> OpenFileDetectionError:
         return OpenFileDetectionError(
@@ -127,6 +130,7 @@ def parse_deleted_open_files(output: str) -> DeletedOpenFileSnapshot:
         aggregate.handle_count += 1
         if command:
             aggregate.commands.add(command)
+        aggregate.paths.update(paths)
 
     for raw_line in output.splitlines():
         if not raw_line:
@@ -137,6 +141,7 @@ def parse_deleted_open_files(output: str) -> DeletedOpenFileSnapshot:
             in_file_record = False
             device = inode = None
             logical_size = None
+            paths.clear()
             command = ""
         elif field == "c":
             command = " ".join(value.split())[:128]
@@ -145,6 +150,7 @@ def parse_deleted_open_files(output: str) -> DeletedOpenFileSnapshot:
             in_file_record = True
             device = inode = None
             logical_size = None
+            paths.clear()
         elif field == "D":
             if not in_file_record:
                 raise invalid_output("device 字段不在文件记录内")
@@ -163,6 +169,12 @@ def parse_deleted_open_files(output: str) -> DeletedOpenFileSnapshot:
             logical_size = _lsof_integer(value)
             if logical_size is None or logical_size < 0:
                 raise invalid_output("size 字段无效")
+        elif field == "n":
+            if not in_file_record:
+                raise invalid_output("name 字段不在文件记录内")
+            candidate = value.removesuffix(" (deleted)")
+            if os.path.isabs(candidate):
+                paths.add(candidate)
     flush_file()
 
     return DeletedOpenFileSnapshot(
@@ -173,6 +185,7 @@ def parse_deleted_open_files(output: str) -> DeletedOpenFileSnapshot:
                 logical_size=aggregate.logical_size,
                 handle_count=aggregate.handle_count,
                 commands=tuple(sorted(aggregate.commands)),
+                paths=tuple(sorted(aggregate.paths)),
             )
             for (device_id, inode_id), aggregate in sorted(aggregates.items())
         )
@@ -256,14 +269,15 @@ def capture_deleted_open_file_snapshot(
     timeout: float = DEFAULT_OPEN_FILE_TIMEOUT,
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> DeletedOpenFileSnapshot:
-    """读取 deleted-open 文件，不采集路径、参数或进程环境。"""
+    """读取 deleted-open 文件；路径仅暂存于快照供保护过滤。"""
 
     run = runner or subprocess.run
     command = [
         "/usr/sbin/lsof",
         "-nP",
+        "-w",
         "+L1",
-        "-FpcfDis",
+        "-FpcfDisn",
     ]
     try:
         completed = run(
@@ -281,14 +295,13 @@ def capture_deleted_open_file_snapshot(
         raise OpenFileDetectionError(
             f"无法启动 deleted-open 检测：{exc}"
         ) from exc
-    stderr = " ".join((completed.stderr or "").strip().split())
     if completed.returncode != 0 and not (
         completed.returncode == 1
         and not completed.stdout.strip()
-        and not stderr
+        and not (completed.stderr or "").strip()
     ):
         raise OpenFileDetectionError(
-            stderr or f"lsof +L1 退出码 {completed.returncode}"
+            f"lsof +L1 检测失败，退出码 {completed.returncode}"
         )
     snapshot = parse_deleted_open_files(completed.stdout)
     if completed.stdout.strip() and not snapshot.files:

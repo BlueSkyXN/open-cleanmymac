@@ -1129,34 +1129,37 @@ def scan_codex_marketplace_staging(
     except OSError as exc:
         _append_filesystem_issue(result.issues, exc, root, task)
         return result
-    matching = [
-        entry
-        for entry in entries
-        if fnmatch.fnmatchcase(entry.name, "marketplace-upgrade-*")
-    ]
-    if len(matching) > _MAX_CODEX_STAGING_ROOTS:
+    matching = []
+    for entry in entries:
+        if not fnmatch.fnmatchcase(entry.name, "marketplace-upgrade-*"):
+            continue
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                matching.append(entry)
+        except OSError:
+            continue
+    matched_count = len(matching)
+    limit_reached = matched_count > _MAX_CODEX_STAGING_ROOTS
+    candidates = matching[:_MAX_CODEX_STAGING_ROOTS]
+    if limit_reached:
         result.issues.append(
             ScanIssue(
                 code="diagnostic_limit_reached",
-                message="marketplace staging 数量超过安全上限，已放弃本次汇总",
+                message=(
+                    "marketplace staging 数量超过安全上限，"
+                    "容量仅包含有界的部分测量"
+                ),
                 task=task,
                 path=root,
-                blocking=False,
             )
         )
-        return result
 
     observed_at = time.time() if now is None else now
     count = logical_bytes = allocated_bytes = 0
     open_handles = 0 if open_files is not None else None
     newest_mtime: float | None = None
     excluded_paths = cross_device_paths = cloud_file_count = 0
-    for entry in matching:
-        try:
-            if not entry.is_dir(follow_symlinks=False):
-                continue
-        except OSError:
-            continue
+    for entry in candidates:
         path = Path(entry.path)
         measurement = _candidate_measurement(
             path,
@@ -1186,10 +1189,16 @@ def scan_codex_marketplace_staging(
             candidate_handles = open_files.count_under(path)
             assert open_handles is not None
             open_handles += candidate_handles
-    if count == 0:
+    if count == 0 and not limit_reached:
         return result
 
-    notes = [f"{count} 个 marketplace-upgrade-* 目录"]
+    total_count = matched_count if limit_reached else count
+    measurement_complete = not limit_reached
+    notes = [f"{total_count} 个 marketplace-upgrade-* 目录"]
+    if limit_reached:
+        notes.append(
+            f"有界前缀中完成 {count} 个目录测量，容量为部分结果"
+        )
     notes.extend(
         _runtime_diagnostic_notes(
             process_snapshot,
@@ -1221,7 +1230,9 @@ def scan_codex_marketplace_staging(
             excluded_paths=excluded_paths,
             cross_device_paths=cross_device_paths,
             cloud_file_count=cloud_file_count,
-            total_count=count,
+            total_count=total_count,
+            measured_count=count,
+            measurement_complete=measurement_complete,
             running_process_markers=_CODEX_PROCESS_MARKERS,
             diagnostic_kind="codex_transient",
             open_handle_count=open_handles,
@@ -1704,6 +1715,7 @@ def scan_open_unlinked_snapshot(
     snapshot: DeletedOpenFileSnapshot,
     *,
     volume_roots: Sequence[Path],
+    protection: Predicate | None = None,
 ) -> ScanResult:
     """按卷汇总 deleted-open 文件；始终只读且不可执行。"""
 
@@ -1711,6 +1723,10 @@ def scan_open_unlinked_snapshot(
     roots_by_device: dict[int, tuple[Path, os.stat_result]] = {}
     for root in volume_roots:
         normalized = normalize_path(root)
+        if protection is not None and _knowledge_base_ignores(
+            protection, normalized
+        ):
+            continue
         try:
             root_stat = lstat_retry(normalized)
         except OSError as exc:
@@ -1723,11 +1739,43 @@ def scan_open_unlinked_snapshot(
             continue
         if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
             continue
+        if protection is not None and _predicates_ignore_after_knowledge_base(
+            protection,
+            FileFacts(path=normalized, stat=root_stat),
+        ):
+            continue
         roots_by_device.setdefault(root_stat.st_dev, (normalized, root_stat))
 
     files_by_device: dict[int, list[DeletedOpenFile]] = {}
+    path_unavailable_count = 0
     for deleted_file in snapshot.files:
+        if protection is not None:
+            if deleted_file.paths and any(
+                protection.should_ignore(
+                    FileFacts(path=normalize_path(path), stat=None)
+                )
+                for path in deleted_file.paths
+            ):
+                continue
+            if (
+                not deleted_file.paths
+                and isinstance(protection, ProtectionGate)
+                and protection.has_active_filters
+            ):
+                path_unavailable_count += 1
+                continue
         files_by_device.setdefault(deleted_file.device, []).append(deleted_file)
+    if path_unavailable_count:
+        result.issues.append(
+            ScanIssue(
+                code="open_unlinked_path_unavailable",
+                message=(
+                    f"{path_unavailable_count} 个 deleted-open 文件缺少可用于"
+                    "保护规则判定的路径，已按 fail-closed 跳过"
+                ),
+                task="已删除但仍打开的文件",
+            )
+        )
 
     for device, deleted_files in sorted(files_by_device.items()):
         mapped = roots_by_device.get(device)
@@ -1796,7 +1844,7 @@ def scan_open_unlinked_snapshot(
     return result
 
 
-def scan_open_unlinked_diagnostics(_protection: Predicate) -> ScanResult:
+def scan_open_unlinked_diagnostics(protection: Predicate) -> ScanResult:
     result = ScanResult()
     try:
         snapshot = capture_deleted_open_file_snapshot()
@@ -1815,6 +1863,7 @@ def scan_open_unlinked_diagnostics(_protection: Predicate) -> ScanResult:
     scanned = scan_open_unlinked_snapshot(
         snapshot,
         volume_roots=volume_roots,
+        protection=protection,
     )
     result.items.extend(scanned.items)
     result.issues.extend(scanned.issues)

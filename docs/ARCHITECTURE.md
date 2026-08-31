@@ -121,8 +121,9 @@ issue 使用稳定 code、message、task、path 和 `blocking`。`complete=true`
     缺失和未知状态不可执行，同版/旧版降为 critical 精确选择。
 11. retention 扫描只读取文件 metadata 并报告 7/14/30 天物理容量；浏览器诊断只进入
     Default/Profile 的 CacheStorage，不读取 origin 或其它 Profile 数据。SQLite 使用
-    immutable read-only PRAGMA。deleted-open 使用 lsof 字段模式且不采集路径或完整命令行；
-    所有诊断始终不可执行，也不进入 cleanup 状态机。
+    immutable read-only PRAGMA。deleted-open 使用 lsof 字段模式，路径仅在内存中完成
+    protect/ignore 后丢弃，不进入结果、issue 或日志；所有诊断始终不可执行，也不进入
+    cleanup 状态机。
 12. Qoder ShipIt 的 Darwin temp 根由 `getconf` 动态发现，复用 updater 版本判定，但完整
     app 副本始终只读报告，避免把暂存状态或应用缺失误当作清理授权。
 13. Darwin `T/X` 仅按公开名称模式发现构建临时目录、版本化 runtime、toolhost snapshot、
@@ -131,6 +132,8 @@ issue 使用稳定 code、message、task、path 和 `blocking`。`complete=true`
 14. Codex `.tmp` 父根不进入普通缓存清理；专项 scanner 只汇总精确 marketplace staging、
     无对象 Git 空壳和 Crashpad dump/sidecar 关系。日期日志按有效 `YYYY/MM/DD` 子分区显示，
     但名称、年龄、主文件缺失或功能停用都不能单独解锁写操作。
+15. marketplace staging 超过固定测量上限时保留结构化部分结果：总数、已测数和完整性分别
+    输出，blocking issue 阻止调用方把部分容量解释为完整结果。
 
 JSON 的 `volumes` 按 scan-time device 分组文件系统候选，分别汇总系统盘与外置盘容量。
 Docker 等非文件系统资源不进入卷汇总；`device_id` 不是跨重启的持久标识。

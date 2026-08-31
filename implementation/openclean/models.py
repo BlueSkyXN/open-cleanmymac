@@ -192,6 +192,8 @@ class Item:
     related_process_count: int | None = None
     paired_artifact_count: int | None = None
     recent_artifact_count: int | None = None
+    measured_count: int | None = None
+    measurement_complete: bool | None = None
 
     def __post_init__(self) -> None:
         if self.safety not in SAFETY_LEVELS:
@@ -233,6 +235,23 @@ class Item:
             raise ValueError("resource_total_size 不能为负数")
         if self.total_count is not None and self.total_count < 0:
             raise ValueError("total_count 不能为负数")
+        if self.measured_count is not None and self.measured_count < 0:
+            raise ValueError("measured_count 不能为负数")
+        if self.measured_count is not None and self.total_count is None:
+            raise ValueError("measured_count 必须同时包含 total_count")
+        if (
+            self.measured_count is not None
+            and self.total_count is not None
+            and self.measured_count > self.total_count
+        ):
+            raise ValueError("measured_count 不能超过 total_count")
+        if self.measurement_complete is not None and self.measured_count is None:
+            raise ValueError("measurement_complete 必须同时包含 measured_count")
+        if (
+            self.measurement_complete is True
+            and self.measured_count != self.total_count
+        ):
+            raise ValueError("完整测量的 measured_count 必须等于 total_count")
         if self.active_count is not None and self.active_count < 0:
             raise ValueError("active_count 不能为负数")
         diagnostic_counts = (

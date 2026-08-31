@@ -57,7 +57,7 @@ openclean analyze "$ROOT" --top 20 --no-interactive --json
 | `diagnostic_kind=retention` | 读取文件数、句柄及 7/14/30 天物理容量；阈值不是删除授权。 |
 | `diagnostic_kind=sqlite_freelist` | 读取内部空闲页/比例及 WAL；不得建议删除 DB 或在线 `VACUUM`。 |
 | `diagnostic_kind=updater_temp` | Darwin temp 中的完整 app 只读可见；版本判断不构成删除授权。 |
-| `diagnostic_kind=codex_transient` | 只汇总精确 marketplace staging 或 Git 空壳；不得扩大到 `.codex/.tmp` 父根。 |
+| `diagnostic_kind=codex_transient` | 只汇总精确 marketplace staging 或 Git 空壳；不得扩大到 `.codex/.tmp` 父根。marketplace 同时检查 `total_count`、`measured_count`、`measurement_complete`；为 false 时容量只是有界部分结果，且顶层 `complete=false`。 |
 | `diagnostic_kind=crashpad_pairing` | `total_count` 是孤立 sidecar，`paired_artifact_count`/`recent_artifact_count` 是受保护配对/近期 orphan；不得删除 `.dmp`。 |
 | `diagnostic_kind=open_unlinked` | `potential_bytes=0`；只在 `logical_bytes`、`related_process_count` 和句柄字段报告上限，只能退出应用或重启释放。 |
 

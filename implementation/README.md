@@ -123,8 +123,11 @@ TUI 的选择只是选择；实际执行仍要求启动命令带 `--yes`，并�
 WAL/SHM/journal 容量。`diagnostic_kind=updater_temp` 报告动态 ShipIt app 的版本状态。
 `resource_kind=filesystem_subset` 的 `path` 只是聚合锚点，字节数仅覆盖命中子集。
 `open_unlinked` 通过 `logical_bytes`、`total_count`、`related_process_count` 和
-`open_handle_count` 报告逻辑上限；其 `potential_bytes=0`。`codex_transient` 使用
-`total_count`/`open_handle_count`；`crashpad_pairing` 另使用 `paired_artifact_count` 和
+`open_handle_count` 报告逻辑上限；其 `potential_bytes=0`。deleted-open 路径仅在内存中
+用于 protect/ignore，过滤后不进入 JSON。`codex_transient` 使用 `total_count` 和
+`open_handle_count`；marketplace staging 另使用 `measured_count` 和
+`measurement_complete`，超限时容量是已测部分且顶层 `complete=false`。
+`crashpad_pairing` 另使用 `paired_artifact_count` 和
 `recent_artifact_count`。所有诊断均固定 `actionable=false`、`reclaimable_bytes=0`。
 `optimize --json` 返回：
 

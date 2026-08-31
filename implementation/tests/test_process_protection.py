@@ -114,7 +114,7 @@ class ProcessSnapshotTests(unittest.TestCase):
         self.assertEqual(system.handle_count, 3)
         self.assertEqual(system.commands, ("Spotlight", "WorkBuddy Helper"))
 
-    def test_deleted_open_capture_uses_field_mode_without_paths(self) -> None:
+    def test_deleted_open_capture_uses_path_only_for_protection_filtering(self) -> None:
         calls = []
 
         def runner(command, **kwargs):
@@ -122,7 +122,10 @@ class ProcessSnapshotTests(unittest.TestCase):
             return subprocess.CompletedProcess(
                 command,
                 0,
-                "p10\ncFinder\nf7\nD0x100000d\ni99\ns4096\n",
+                (
+                    "p10\ncFinder\nf7\nD0x100000d\ni99\ns4096\n"
+                    "n/Users/alice/SecretProject/cache.bin (deleted)\n"
+                ),
                 "",
             )
 
@@ -130,10 +133,33 @@ class ProcessSnapshotTests(unittest.TestCase):
 
         self.assertEqual(
             calls[0][0],
-            ["/usr/sbin/lsof", "-nP", "+L1", "-FpcfDis"],
+            ["/usr/sbin/lsof", "-nP", "-w", "+L1", "-FpcfDisn"],
         )
         self.assertEqual(snapshot.files[0].logical_size, 4096)
         self.assertEqual(snapshot.files[0].commands, ("Finder",))
+        self.assertEqual(
+            snapshot.files[0].paths,
+            ("/Users/alice/SecretProject/cache.bin",),
+        )
+        self.assertNotIn("SecretProject", repr(snapshot))
+
+    def test_deleted_open_capture_never_exposes_raw_lsof_stderr(self) -> None:
+        secret = "/Users/alice/SecretProject"
+
+        with self.assertRaises(OpenFileDetectionError) as raised:
+            capture_deleted_open_file_snapshot(
+                runner=lambda command, **_: subprocess.CompletedProcess(
+                    command,
+                    1,
+                    "",
+                    f"lsof: WARNING: can't stat() {secret}\nsecond line",
+                )
+            )
+
+        message = str(raised.exception)
+        self.assertEqual(message, "lsof +L1 检测失败，退出码 1")
+        self.assertNotIn(secret, message)
+        self.assertNotIn("second line", message)
 
     def test_deleted_open_capture_accepts_empty_lsof_result(self) -> None:
         snapshot = capture_deleted_open_file_snapshot(

@@ -142,7 +142,8 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
 - Codex `logs_2.sqlite` 使用 `mode=ro&immutable=1` 输出 page/freelist、内部空闲页比例、
   WAL/SHM/journal 和句柄状态；不自动 `VACUUM` 或删除数据库；
 - Codex `.tmp` 整根已退出普通缓存候选；marketplace staging、严格空 Git 骨架和 Crashpad
-  orphan/paired sidecar 关系进入只读结构诊断，未提供目录或 sidecar 删除执行器；
+  orphan/paired sidecar 关系进入只读结构诊断；staging 超限仍返回有界部分容量、完整计数和
+  blocking issue，未提供目录或 sidecar 删除执行器；
 - Codex macOS logs 的有效 `YYYY/MM/DD` 目录按日期分区进入 retention 诊断；日期和年龄不
   自动转化为删除策略；
 - `DARWIN_USER_TEMP_DIR` 中的 Qoder ShipIt 完整 app 副本按动态 updater 根读取版本；
@@ -154,8 +155,8 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
 - JSON per-volume 汇总，以及 Go module、Cargo Git、npm 次级缓存扫描；
 - AI 扫描点的安全等级和默认选择已解耦，AI 缓存统一默认不选；
 - Chrome/Brave/Edge/Comet 用户 Profile CacheStorage 进入只读 retention 诊断；
-- deleted-open 文件通过 `lsof +L1` 字段模式按 device/inode 去重并按卷报告，只保留进程名
-  和逻辑大小上限，不读取路径或命令行参数；
+- deleted-open 文件通过 `lsof +L1` 字段模式按 device/inode 去重并按卷报告；路径只在内存
+  中用于 protect/ignore 后丢弃，原始 stderr 不进入 JSON，只保留进程名和逻辑大小上限；
 - 任务 DAG、加权进度、动态扫描并发；
 - System Junk、Darwin cache、broken startup items、Time Machine、ApplicationLanguages；
 - JSON schema v2 和统一机器错误 envelope；重复 domain/root 去重，显式 project root

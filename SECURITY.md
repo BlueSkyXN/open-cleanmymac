@@ -64,15 +64,17 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 - retention 诊断只读取文件 metadata，不读取日志/trace 正文；浏览器 CacheStorage 诊断只
   发现已知 Default/Profile 根，不读取 origin、Cookies、Login Data 或 IndexedDB。SQLite
   诊断使用 immutable read-only URI，并在查询前后复核文件状态。
-- deleted-open 诊断只解析 `lsof +L1` 的 process name、device、inode、size 和 FD 记录；按
-  device/inode 去重，不保留文件路径、完整命令行或进程环境。以上诊断固定不可执行，不进入
-  通用清理器。
+- deleted-open 诊断解析 `lsof +L1` 的 process name、device、inode、size、FD 和 name；
+  name 路径仅在内存中用于 protect/ignore，过滤后不进入 Item、Issue、JSON、日志或持久化
+  数据。原始 lsof stderr 也不会进入机器输出。以上诊断固定不可执行，不进入通用清理器。
 - deleted-open 的 lsof 逻辑上限不冒充物理可回收量：`potential_bytes=0`，仅在
   `logical_bytes` 和专用计数字段中报告。其它 `filesystem_subset` 诊断的 path 只是聚合锚点，
   不得把子集容量解读为整根可删。
 - Codex `.tmp` 整根、installed marketplace、plugin source 和 Crashpad `pending` 整根均不
   进入通用清理器。专项诊断只按精确直接子项或 dump/sidecar 文件名关系汇总；空 Git
   objects、主文件缺失、年龄超过阈值或目录名含 `tmp` 都不能单独解锁写操作。
+- marketplace staging 超过递归上限时只测量有界前缀，但仍报告实际直接子目录数量、已测
+  数量和 `measurement_complete=false`，并将整个扫描标为不完整。
 - 同 domain、同路径发生 generic/专项诊断重叠时，专项诊断拥有该路径；generic actionable
   结果不得覆盖更具体的 `diagnostic_kind` 保护边界。
 - Darwin temp updater 只匹配明确的 Qoder ShipIt 动态根并读取受限 app metadata；即使版本

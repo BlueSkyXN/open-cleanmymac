@@ -166,6 +166,21 @@ ScanTask =
    精确命中子集；Crashpad 配对/近期计数分别使用 `paired_artifact_count` 和
    `recent_artifact_count`，不复用 Docker 语义的 `active_count`。
 
+marketplace staging 的递归测量必须有固定上限。直接子目录超过上限时仍返回结构化项：
+`total_count` 是实际匹配数，`measured_count` 是完成测量数，
+`measurement_complete=false`，容量只表示已测部分；同时产生 blocking issue，使整个
+`ScanResult.complete=false`，不得把严重超限场景伪装成空且完整的结果。
+
+### 7.4 Deleted-open 路径保护与隐私
+
+1. `lsof +L1` 使用字段模式读取 process name、device、inode、size、FD 和 name；
+2. name 路径只存在于本次运行的内存快照，用于对每个 deleted-open 文件执行
+   KnowledgeBase protect 和用户 ignore；任一路径命中即跳过对应 device/inode 聚合；
+3. 保护规则启用而记录缺少路径时 fail-closed 跳过并把诊断标记为不完整；
+4. 过滤完成后路径立即丢弃，不进入 Item、ScanIssue、JSON、日志或持久化数据；
+5. 调用 `lsof` 时抑制非必要 warning，非零退出只报告固定错误和 exit code，绝不转发原始
+   stderr。
+
 ---
 
 ## 8. 知识库加载算法（格式思想层）

@@ -64,9 +64,11 @@ Login Data、IndexedDB 或整个 Profile，也不得把该项变成自动清理�
 但固定 `actionable=false`。
 
 系统域另通过 `lsof +L1` 字段模式识别已 unlink 但仍被进程持有的文件。结果必须按
-`(device, inode)` 去重并映射到挂载卷，只保留 process name，不保留路径、完整命令行或
-环境变量。lsof 只能提供逻辑大小上限，不能承诺等量 APFS 物理释放；该诊断只能建议退出
-应用或重启，固定不可执行。该项使用 `resource_kind=filesystem_subset`；`size`、
+`(device, inode)` 去重并映射到挂载卷。路径字段只允许在内存中用于最先执行的
+protect/ignore 过滤，过滤后立即丢弃；结果、issue、日志和持久化数据只保留 process name，
+不得保留路径、完整命令行或环境变量。lsof 只能提供逻辑大小上限，不能承诺等量 APFS
+物理释放；该诊断只能建议退出应用或重启，固定不可执行。该项使用
+`resource_kind=filesystem_subset`；`size`、
 `potential_bytes` 和 `reclaimable_bytes` 均为 0，逻辑上限只进入 `logical_bytes`，进程名数量进入
 `related_process_count`，不复用 `active_count`。
 

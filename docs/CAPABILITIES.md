@@ -47,8 +47,8 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 | 日志/runtime/download 保留期 | `scan/clean junk` | `read-only` | WorkBuddy、Codex、Lark、Shadowrocket、TRAE、UURemote 的公开根；Codex 另按 `YYYY/MM/DD` 分区；不读取正文/包内容或批量删除 |
 | 浏览器 CacheStorage 保留期 | `scan/clean junk` | `read-only` | Chrome/Brave/Edge/Comet Default/Profile 根；不读取 origin、Cookies、Login Data、IndexedDB 或整个 Profile |
 | SQLite freelist | `scan/clean ai` | `read-only` | immutable page/freelist/WAL/句柄；不 `VACUUM` 或删除数据库 |
-| Codex 临时结构与 Crashpad 配对 | `scan/clean ai` | `read-only` | `.tmp` 整根固定保护；只报告精确 staging、Git 空壳和无同名 dump 的 sidecar |
-| deleted-open 卷占用 | `scan/clean junk` | `read-only` | `lsof +L1` 字段模式、device/inode 去重和逻辑大小上限；只显示进程名，需退出应用或重启释放 |
+| Codex 临时结构与 Crashpad 配对 | `scan/clean ai` | `read-only` | `.tmp` 整根固定保护；只报告精确 staging、Git 空壳和无同名 dump 的 sidecar；staging 超限返回有界部分结果 |
+| deleted-open 卷占用 | `scan/clean junk` | `read-only` | `lsof +L1` 字段模式、device/inode 去重和逻辑大小上限；路径只用于内存保护过滤，结果只显示进程名 |
 | Darwin updater 临时副本 | `scan/clean junk` | `read-only` | getconf 动态根、Qoder ShipIt 版本状态；固定不可执行 |
 | Darwin 临时/运行副本 | `scan/clean junk` | `read-only` | `T/X` 公开名称模式、7/14/30 天容量、进程/句柄；固定不可执行 |
 | RAM/purgeable 能力状态 | `optimize ram / purgeable` | `guarded-unavailable` | 没有已验证、安全、公开的等价执行接口 |
