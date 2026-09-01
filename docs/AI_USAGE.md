@@ -99,7 +99,7 @@ AI 不得自行添加 `--yes`，也不得自动清空 Trash、执行 Docker prun
 
 - [项目 README](../README.md)：安装和总体安全边界。
 - [能力地图](CAPABILITIES.md)：能力状态与外部前提。
-- [隔离预览](PREVIEW.md)：19 个 TemporaryDirectory 场景和只读示例。
+- [隔离预览](PREVIEW.md)：TemporaryDirectory 场景和只读示例。
 - [实现说明](../implementation/README.md)：完整 CLI、JSON 和选择契约。
 
 文档与当前程序不一致时，以 `openclean <command> --help` 和实际 JSON 为准。

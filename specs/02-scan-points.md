@@ -1,8 +1,10 @@
 # 02 · 扫描点字典（核心规格）
 
-> 来源：`analysis/raw/*.txt`（从二进制 strings 提取的**事实**）。
-> 这是 CleanMyMac "判定什么该清"的扫描点全集。属功能性事实，可据此独立实现。
-> 说明：应用级精细规则由知识库动态提供（见 03），此处为**硬编码 + 类别框架**。
+> 来源：从参考对象公开字符串提取的功能性事实。
+> 这是 CleanMyMac "判定什么该清"的扫描点全集，可据此独立实现。
+> 应用级精细规则由知识库动态提供（见 03），此处为硬编码 + 类别框架。
+> 本项目实际交付的保守子集、只读诊断和有意不实现项见
+> [docs/CAPABILITIES.md](../docs/CAPABILITIES.md) 与 [_index.md](_index.md)。
 
 图例：`~`=用户主目录；`/`=系统根（需相应权限）；相对名=在项目/工具目录内匹配。
 
@@ -26,18 +28,6 @@
 | DocumentationCache / HardcodedPathCache | 文档缓存 / 硬编码路径缓存 |
 | XcodeCoreSimulatorCaches / XcodeModuleCaches / XcodeDeviceLogs | Xcode 模拟器缓存、模块缓存、设备日志 |
 
-本项目对 `~/Library/Caches` 按一级子项展示。命中公开维护的应用归属规则时，即使候选从
-通用 UserCache 入口发现，也必须应用对应的运行进程保护：运行中或无法读取进程状态时仍
-报告占用，但 `actionable=false`，退出应用后需重新扫描。未命中归属规则的普通缓存不伪造
-进程关联。
-
-已知 updater 根额外进行版本状态判定，包括 Codex Sparkle、WorkBuddy BundleMigration、
-Qoder ShipIt/Qoder updater、Lark update 和 TRAE updater。`staged > installed`、已安装应用
-缺失或版本不可确认时强制保护；同版/旧版残留统一为 critical、要求精确选择，并在执行前
-重判。只读取 app `Info.plist` 或 ZIP 顶层 bundle metadata，不执行暂存程序。
-`DARWIN_USER_TEMP_DIR` 中命名为 Qoder ShipIt 动态根的完整 app 副本也会复用版本判定，
-但该类临时副本固定只读、不可执行。
-
 ### 日志类（Logs）
 | 类别标识 | 说明 |
 |---|---|
@@ -46,38 +36,11 @@ Qoder ShipIt/Qoder updater、Lark update 和 TRAE updater。`staged > installed`
 | DiagnosticLogs | `~/Library/Logs/DiagnosticReports`、`/Library/Logs/DiagnosticReports`（`.ips`/`.crash`/`.panic`/`.diag`） |
 | SandboxLogs / QuarantineLogs | 沙盒日志；`~/Library/Preferences/com.apple.LaunchServices.QuarantineEvents*` |
 
-本项目额外对 WorkBuddy logs/traces/audit、Codex logs/runtime、Lark SDK logs、
-Shadowrocket logs、TRAE logs，以及 UURemote application/updater logs 和历史安装包做
-retention-aware 只读诊断：只读取目录项、物理块、mtime、文件数量、进程和打开句柄状态，
-分别报告 7/14/30 天容量；不读取正文或安装包内容，不把任一阈值设为默认删除策略，也不
-提供批量执行器。Codex macOS logs 额外识别有效的 `YYYY/MM/DD` 直接日期分区，使当前
-日期、历史日期和打开句柄可以分区显示；日期本身仍不构成删除授权。
-
-`getconf` 发现的 Darwin `T/X` 根额外匹配公开命名的 Go/Node 构建临时目录、Qoder CLI
-版本化 runtime/updater 解压目录、AI toolhost snapshots、UURemote temp 和
-`*.code_sign_clone`。这些路径只进入 retention 诊断，固定不可执行。Darwin user cache 的
-直接子项按公开 bundle/helper 名称应用进程保护；任意其它位置的同名目录不匹配。
-
-已知 Chromium 浏览器（Chrome、Brave、Edge、Comet）的 `Default` 与 `Profile *` 用户
-Profile 仅对 `Service Worker/CacheStorage` 做 retention 诊断。实现不得读取 origin、Cookies、
-Login Data、IndexedDB 或整个 Profile，也不得把该项变成自动清理候选；运行中仍报告容量，
-但固定 `actionable=false`。
-
-系统域另通过 `lsof +L1` 字段模式识别已 unlink 但仍被进程持有的文件。结果必须按
-`(device, inode)` 去重并映射到挂载卷。路径字段只允许在内存中用于最先执行的
-protect/ignore 过滤，过滤后立即丢弃；结果、issue、日志和持久化数据只保留 process name，
-不得保留路径、完整命令行或环境变量。lsof 只能提供逻辑大小上限，不能承诺等量 APFS
-物理释放；该诊断只能建议退出应用或重启，固定不可执行。该项使用
-`resource_kind=filesystem_subset`；`size`、
-`potential_bytes` 和 `reclaimable_bytes` 均为 0，逻辑上限只进入 `logical_bytes`，进程名数量进入
-`related_process_count`，不复用 `active_count`。
-
 ### 其它系统垃圾
 - **BrokenStartupItems**：失效的启动项（指向已不存在二进制的 LaunchAgents/Daemons）。
 - **SystemMigration**：`/Library/SystemMigration/History`（系统迁移残留）。
 - **dyld 缓存**：`/private/var/db/dyld`（QuarantineRoot 下）。
-- **ApplicationLanguages**：应用内多余语言包（`.lproj`，按用户语言判断）。本项目只做
-  保守只读审计；修改签名 app 的删除执行不在当前范围。
+- **ApplicationLanguages**：应用内多余语言包（`.lproj`，按用户语言判断）。
 - **Universal binary 瘦身**：识别 universal 二进制中非本机架构（x86_64/arm64）切片。
 
 ### 应用级缓存定位样例（事实，知识库命中）
@@ -92,8 +55,8 @@ protect/ignore 过滤，过滤后立即丢弃；结果、issue、日志和持久
 ~/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram
 ```
 
-> 净室说明：上述为二进制中提取的**事实**；具体的"厂商→路径"全量明细由实现侧
-> 按 macOS 通用约定**独立采集**，不复用 MacPaw 的应用指纹库（见 specs/03 红线）。
+> 净室说明：上述为功能性路径事实；具体的"厂商→路径"全量明细由实现侧按 macOS
+> 通用约定独立采集，不复用参考软件的应用指纹库（见 specs/03 红线）。
 
 ---
 
@@ -159,20 +122,6 @@ chrome-devtools-mcp: .cache/chrome-devtools-mcp/chrome-profile/{,Default/}**
 杂项:      *.log
 ```
 
-Codex `~/.codex/logs_2.sqlite` 另使用 `mode=ro&immutable=1` 读取 page size/count/freelist，
-仅报告内部空闲页、比例和 WAL/SHM/journal/句柄状态。该结果固定不可执行，不删除数据库，
-也不自动运行 `VACUUM`。
-
-Codex 的 `.codex/tmp` 与 `.codex/.tmp` 不再作为整根缓存候选：后者同时承载已安装
-marketplace、bundled marketplace 和 plugin source。专项诊断只匹配
-`.tmp/marketplaces/.staging/marketplace-upgrade-*`、精确结构的 `.tmp/git-*` 空壳，以及
-`~/Library/Application Support/Codex/Crashpad/pending` 中无同名 `.dmp` 的
-`*_sidecar.json`。普通/bare/worktree/partial clone、已配对 crash dump 和整个父根均保持
-保护；三类结果固定 `critical + actionable=false`。
-
-AI 域的缓存即使 `safety=safe` 也统一默认不选；`safety` 只表达授权等级，默认选择由独立
-策略控制。显式选择和实际执行仍遵守进程保护与 `--yes` 门槛。
-
 关联 bundleID（事实，用于定位容器）：`com.anthropic.claudefordesktop`、
 `com.openai.codex`、`com.openai.sky.CUAService`、`com.google.antigravity`、`com.todesktop.230313mzl4w4u92`
 
@@ -189,14 +138,7 @@ AI 域的缓存即使 `safety=safe` 也统一默认不选；`safety` 只表达�
 能力:    卷备份大小缓存（VolumeBackupSizeCacher，Time Machine 本地快照感知）
 ```
 行为契约：递归统计目录大小 → 大文件/大目录排序 → 区分“真实占用”与“可清除/可 purge
-空间”。本项目的 `analyze` 只将一级候选视为占用项：每项同时固定自身 `st_dev` 与
-`statvfs().f_fsid`，从而识别 macOS 上 device 相同但文件系统挂载不同的 APFS root/Data
-边界；跳过其它挂载点并报告 `cross_device_paths`。顶层和 entry 的
-`reclaimable_bytes` 固定为 `0`。候选统一为 critical、要求精确选择；跨卷跳过项存在时
-该候选不可执行。只读 `lstat` / `scandir` 遇到 `EINTR` 时透明重试。
-
-扫描/清理 JSON 按 scan-time device 输出 `volumes`，使系统盘与外置卷的 potential、
-reclaimable、preselected、privileged 和 unsupported 容量分别可见。device ID 不是持久 ID。
+空间”。
 
 ---
 
@@ -213,8 +155,7 @@ reclaimable、preselected、privileged 和 unsupported 容量分别可见。devi
 
 ## 域 G · 应用与残留（Applications / Leftovers）
 
-> 本节是 Desktop/关联模块的背景功能事实，**不属于当前公开 CLI 对齐范围**。本项目不据此
-> 实现应用卸载、跨应用残留删除或 helper 移除；只能在后续独立立项和公开规格确认后评估。
+> 本节是 Desktop/关联模块的背景功能事实，**不属于当前公开 CLI 对齐范围**。
 
 应用枚举与关联残留定位（事实）：
 

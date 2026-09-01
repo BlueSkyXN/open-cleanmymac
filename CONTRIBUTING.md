@@ -68,14 +68,22 @@ Pull request 应列出行为变化、安全影响、验证命令与结果、未�
 
 | 文档 | 读者 | 写什么 |
 |---|---|---|
-| [README.md](README.md) | 用户、审阅者 | 安装、命令、能力边界、许可证 |
-| [docs/AI_USAGE.md](docs/AI_USAGE.md) | AI agent 接入方 | 只读调用、JSON 判读和停止边界 |
+| [README.md](README.md) | 用户、审阅者 | 安装、命令、能力总表、许可证 |
 | [docs/PREVIEW.md](docs/PREVIEW.md) | 想先看效果的人 | 隔离预览、合成 TUI、退出码 |
 | [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | 要核对范围的人 | 能力状态、来源、验证证据 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 开发者 | 模块、数据流、信任边界 |
-| [SECURITY.md](SECURITY.md) | 安全审阅 | 威胁模型、报告渠道 |
+| [docs/AI_USAGE.md](docs/AI_USAGE.md) | AI agent 接入方 | 只读调用、JSON 判读和停止边界 |
+| [implementation/README.md](implementation/README.md) | 实现者 / 自动化 | 选择语义、JSON schema、规则格式 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 开发者 | 模块、数据流、路径/外部边界 |
+| [SECURITY.md](SECURITY.md) | 安全审阅 | 报告渠道、威胁模型、支持范围 |
 | [specs/_index.md](specs/_index.md) | 实现者 | 净室规格与实现缺口 |
 | [AGENTS.md](AGENTS.md) | 接手的 AI | 开工顺序与硬性约束 |
+| [HANDOFF.md](HANDOFF.md) | 旧入口 | 已并入 AGENTS.md 的短跳转 |
+| [implementation/TODO.md](implementation/TODO.md) | 开发者 | 未完成或需外部验收的工作 |
+| [CHANGELOG.md](CHANGELOG.md) | 用户、审阅者 | 用户可见变更 |
+
+不要把同一段实现细节同时写进 README、规格和能力地图。规格记录参考对象；本项目差异
+写在 `_index.md` / CAPABILITIES；CLI 契约写在 `implementation/README.md`。检查结果以
+当前 `make check` 为准，不要把测试计数写进常驻文档。
 
 修改公开 CLI、JSON schema 或安全级时，至少同步 README、相关 `docs/` 页和 CHANGELOG。
 
