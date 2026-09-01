@@ -7,8 +7,9 @@
 `openclean` 会枚举、移动，并在特定命令下永久删除文件。安全缺陷可能导致数据丢失。
 请不要在公开 issue 中提交可利用细节、真实目录树、规则文件、用户名、token 或其他隐私数据。
 
-当前公开源码基线是 `0.23.0` Alpha，许可证为 [GPL-3.0](LICENSE)。尚未发布签名安装包、
-PyPI、Homebrew 或 GitHub Release；只有仓库 exact commit 和 CI artifact 能作为当前构建来源。
+当前公开源码基线是 `0.23.0` Alpha，许可证为 [GPL-3.0](LICENSE)。GitHub Release 是唯一计划的
+正式发布渠道，当前尚未创建 Release；项目不通过 PyPI、Homebrew 或其他包管理器分发。在 Release
+创建前，只有仓库 exact commit 和 CI artifact 能作为当前构建来源。
 
 路径竞态、Trash 身份、Docker binding、知识库安装和只读诊断的实现细节见
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。CLI 选择语义与 JSON 字段见

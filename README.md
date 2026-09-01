@@ -29,7 +29,8 @@ fail-closed，不会伪报成功。
 
 当前基线是 **0.23.0 Alpha**。用户态扫描、预览、选择、同卷 Trash、空间分析和 TUI
 已实现。Docker prune 仅有受限代码路径与隔离验证，真实 daemon 尚未验收。特权帮助器和
-`optimize ram / purgeable` 执行器不可用。尚未发布 PyPI、Homebrew 或 GitHub Release。
+`optimize ram / purgeable` 执行器不可用。GitHub Release 是唯一计划的正式发布渠道；当前尚未创建
+Release，也不计划通过 PyPI、Homebrew 或其他包管理器分发。
 
 <p align="center">
   <img src="docs/assets/tui-clean-review.svg" alt="Clean TUI 候选审阅，使用固定合成数据" width="920">

@@ -4,8 +4,9 @@
 [功能预览](docs/PREVIEW.md) · [架构](docs/ARCHITECTURE.md) ·
 [安全](SECURITY.md) · [规格索引](specs/_index.md)
 
-本文件记录用户可见变化，格式参考 Keep a Changelog。项目尚未创建 tag、GitHub Release、
-PyPI 或 Homebrew 发布；以下版本表示代码基线，不代表已经公开发布。
+本文件记录用户可见变化，格式参考 Keep a Changelog。GitHub Release 是唯一计划的正式发布渠道，
+当前尚未创建 Release；项目不通过 PyPI、Homebrew 或其他包管理器分发。以下版本表示代码基线，
+不代表已经创建 GitHub Release。
 
 ## [Unreleased]
 

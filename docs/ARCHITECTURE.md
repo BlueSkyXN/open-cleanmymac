@@ -144,5 +144,6 @@ actionable Item 传到 cleanup，不进入 JSON。prune 前即时复核；Volume
 
 - wheel 只包含运行时包和 console script；
 - sdist 有意包含 tests、隔离 preview、release checker 和 checkout 便捷入口；
-- CI 只构建短期 artifact，不创建 tag、GitHub Release、PyPI 或 Homebrew 发布；
+- CI 只构建短期 artifact，不自动创建 tag 或 GitHub Release；正式版本仅通过 GitHub Release 发布，
+  项目不通过 PyPI、Homebrew 或其他包管理器分发；
 - 仓库以 [GNU GPL v3](../LICENSE) 许可。

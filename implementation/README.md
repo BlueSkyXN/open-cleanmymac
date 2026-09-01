@@ -234,4 +234,5 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 `openclean_cli.py`、README 和 TODO。剩余工作见 [TODO.md](TODO.md)。检查结果以当前
 checkout 的 `make check` 为准。
 
-本包随仓库以 [GNU GPL v3](LICENSE) 许可。PyPI / Homebrew / GitHub Release 渠道尚未开通。
+本包随仓库以 [GNU GPL v3](LICENSE) 许可。GitHub Release 是唯一计划的正式发布渠道，当前尚未创建
+Release；项目不通过 PyPI、Homebrew 或其他包管理器分发。
