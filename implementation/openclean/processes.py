@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_PROCESS_TIMEOUT = 5.0
@@ -62,6 +62,134 @@ class OpenFileSnapshot:
             f"{normalized}-wal",
         }
         return sum(candidate in family for candidate in self.paths)
+
+
+@dataclass(frozen=True)
+class DeletedOpenFile:
+    """一个已 unlink、但仍被至少一个进程持有的文件事实。"""
+
+    device: int
+    inode: int
+    logical_size: int
+    handle_count: int
+    commands: tuple[str, ...]
+    paths: tuple[str, ...] = field(default=(), repr=False)
+
+
+@dataclass(frozen=True)
+class DeletedOpenFileSnapshot:
+    """按 device/inode 去重后的 deleted-open 文件快照。"""
+
+    files: tuple[DeletedOpenFile, ...]
+
+
+@dataclass
+class _DeletedOpenAggregate:
+    logical_size: int = 0
+    handle_count: int = 0
+    commands: set[str] = field(default_factory=set)
+    paths: set[str] = field(default_factory=set)
+
+
+def _lsof_integer(value: str) -> int | None:
+    try:
+        return int(value, 0)
+    except ValueError:
+        try:
+            return int(value, 10)
+        except ValueError:
+            return None
+
+
+def parse_deleted_open_files(output: str) -> DeletedOpenFileSnapshot:
+    """解析 ``lsof +L1`` 字段输出，路径仅供内存中的保护规则判定。"""
+
+    aggregates: dict[tuple[int, int], _DeletedOpenAggregate] = {}
+    command = ""
+    in_file_record = False
+    device: int | None = None
+    inode: int | None = None
+    logical_size: int | None = None
+    paths: set[str] = set()
+
+    def invalid_output(reason: str) -> OpenFileDetectionError:
+        return OpenFileDetectionError(
+            f"无法解析 lsof +L1 字段输出：{reason}"
+        )
+
+    def flush_file() -> None:
+        if not in_file_record:
+            return
+        if device is None or inode is None or logical_size is None:
+            raise invalid_output("文件记录缺少 device、inode 或 size")
+        aggregate = aggregates.setdefault(
+            (device, inode),
+            _DeletedOpenAggregate(),
+        )
+        aggregate.logical_size = max(aggregate.logical_size, logical_size)
+        aggregate.handle_count += 1
+        if command:
+            aggregate.commands.add(command)
+        aggregate.paths.update(paths)
+
+    for raw_line in output.splitlines():
+        if not raw_line:
+            continue
+        field, value = raw_line[0], raw_line[1:]
+        if field == "p":
+            flush_file()
+            in_file_record = False
+            device = inode = None
+            logical_size = None
+            paths.clear()
+            command = ""
+        elif field == "c":
+            command = " ".join(value.split())[:128]
+        elif field == "f":
+            flush_file()
+            in_file_record = True
+            device = inode = None
+            logical_size = None
+            paths.clear()
+        elif field == "D":
+            if not in_file_record:
+                raise invalid_output("device 字段不在文件记录内")
+            device = _lsof_integer(value)
+            if device is None or device < 0:
+                raise invalid_output("device 字段无效")
+        elif field == "i":
+            if not in_file_record:
+                raise invalid_output("inode 字段不在文件记录内")
+            inode = _lsof_integer(value)
+            if inode is None or inode < 0:
+                raise invalid_output("inode 字段无效")
+        elif field == "s":
+            if not in_file_record:
+                raise invalid_output("size 字段不在文件记录内")
+            logical_size = _lsof_integer(value)
+            if logical_size is None or logical_size < 0:
+                raise invalid_output("size 字段无效")
+        elif field == "n":
+            if not in_file_record:
+                raise invalid_output("name 字段不在文件记录内")
+            candidate = value.removesuffix(" (deleted)")
+            if os.path.isabs(candidate):
+                paths.add(candidate)
+    flush_file()
+
+    return DeletedOpenFileSnapshot(
+        tuple(
+            DeletedOpenFile(
+                device=device_id,
+                inode=inode_id,
+                logical_size=aggregate.logical_size,
+                handle_count=aggregate.handle_count,
+                commands=tuple(sorted(aggregate.commands)),
+                paths=tuple(sorted(aggregate.paths)),
+            )
+            for (device_id, inode_id), aggregate in sorted(aggregates.items())
+        )
+    )
 
 
 def capture_process_snapshot(
@@ -134,3 +262,48 @@ def capture_open_file_snapshot(
         if line.startswith("n") and Path(line[1:]).is_absolute()
     )
     return OpenFileSnapshot(paths)
+
+
+def capture_deleted_open_file_snapshot(
+    *,
+    timeout: float = DEFAULT_OPEN_FILE_TIMEOUT,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> DeletedOpenFileSnapshot:
+    """读取 deleted-open 文件；路径仅暂存于快照供保护过滤。"""
+
+    run = runner or subprocess.run
+    command = [
+        "/usr/sbin/lsof",
+        "-nP",
+        "-w",
+        "+L1",
+        "-FpcfDisn",
+    ]
+    try:
+        completed = run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OpenFileDetectionError(
+            f"deleted-open 检测在 {timeout:g} 秒内未完成"
+        ) from exc
+    except OSError as exc:
+        raise OpenFileDetectionError(
+            f"无法启动 deleted-open 检测：{exc}"
+        ) from exc
+    if completed.returncode != 0 and not (
+        completed.returncode == 1
+        and not completed.stdout.strip()
+        and not (completed.stderr or "").strip()
+    ):
+        raise OpenFileDetectionError(
+            f"lsof +L1 检测失败，退出码 {completed.returncode}"
+        )
+    snapshot = parse_deleted_open_files(completed.stdout)
+    if completed.stdout.strip() and not snapshot.files:
+        raise OpenFileDetectionError("无法解析 lsof +L1 字段输出")
+    return snapshot

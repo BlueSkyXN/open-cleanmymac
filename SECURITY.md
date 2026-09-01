@@ -7,8 +7,13 @@
 `openclean` 会枚举、移动，并在特定命令下永久删除文件。安全缺陷可能导致数据丢失。
 请不要在公开 issue 中提交可利用细节、真实目录树、规则文件、用户名、token 或其他隐私数据。
 
-当前公开源码基线是 `0.23.0` Alpha，许可证为 [GPL-3.0](LICENSE)。尚未发布签名安装包、
-PyPI、Homebrew 或 GitHub Release；只有仓库 exact commit 和 CI artifact 能作为当前构建来源。
+当前公开源码基线是 `0.23.0` Alpha，许可证为 [GPL-3.0](LICENSE)。GitHub Release 是唯一计划的
+正式发布渠道，当前尚未创建 Release；项目不通过 PyPI、Homebrew 或其他包管理器分发。在 Release
+创建前，只有仓库 exact commit 和 CI artifact 能作为当前构建来源。
+
+路径竞态、Trash 身份、Docker binding、知识库安装和只读诊断的实现细节见
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。CLI 选择语义与 JSON 字段见
+[implementation/README.md](implementation/README.md)。
 
 ## 报告漏洞
 
@@ -28,72 +33,39 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 
 支持范围覆盖当前 Git 基线，不覆盖自行修改后的 fork 或未审阅的第三方构建。
 
-## 安全模型
+## 威胁模型
 
-- 默认扫描和预览只读；清理候选文件必须显式 `--yes`。ignore/config 写入只由对应的
-  显式配置子命令触发。
-- `confirm`/`critical` 需要额外选择授权；不可执行项不能被参数强制解锁。
-- `clean`/`purge --select` 从空选择集开始，不继承默认项；tier flag 在精确模式中只解锁
-  指定目标，不批量扩大选择范围。`--select` 与 `--all` 被拒绝组合。
-- 用户态文件通常移动到同卷 Trash；清空 Trash 和 Docker prune 是永久操作。
-- Docker Build Cache、Images、Containers 均要求 identifier 精确选择，不参与默认或批量
-  选择。actionable 候选还必须携带内部 scan-time binding；容量读取和 prune 使用扫描时
-  解析的同一 CLI realpath、明确 context 或 effective host，执行前重新复核 endpoint、
-  `SkipTLSVerify` 和 Engine ID。binding 缺失、畸形、CLI realpath 变化，或执行前即时复核
-  发现不一致时均 fail-closed。
-- `--redact-paths` 只在最终 JSON 序列化边界替换绝对路径和相关自由文本；默认精确路径
-  合同保持不变，脱敏输出明确标记为不可用于 selector replay。
+默认信任当前用户明确授权的操作，不信任扫描与执行之间的文件系统变化、环境变量、
+Docker context 元数据、未签名规则和未实现的特权路径。
+
+| 威胁 | 默认对策 |
+|---|---|
+| 误删用户数据 | 扫描/预览只读；写操作必须 `--yes`；`confirm`/`critical` 需额外授权 |
+| 扩大选择范围 | `--select` 从空集开始；不可执行项不能被参数解锁 |
+| 路径替换 / symlink | 拒绝目标与 ancestor symlink；执行前复核 device/inode/owner/mount |
+| 清空 Trash / Docker prune | 永久操作，不经过可恢复 Trash；prune 需精确 identifier |
+| 云占位误删 | dataless/疑似占位不计入可回收量且不可执行 |
+| 规则投毒 | 知识库只接受显式 HTTPS、钉住公钥、递增 sequence 和有效签名 |
+| 信息泄漏 | 默认 JSON 含绝对路径；分享时用 `--redact-paths`；错误 envelope 不带 traceback |
+| 特权越权 | 无 helper 时特权项 fail-closed；不用 sudo wrapper 冒充 XPC |
+
+## 安全默认
+
+- 默认扫描和预览只读；ignore/config 写入只由对应的显式配置子命令触发。
+- 用户态普通文件通常移动到同卷 Trash；清空 Trash 和 Docker prune 是永久操作。
 - KnowledgeBase 保护闸在扫描和执行前重复运行。
-- 扫描和执行拒绝 symlink 目标与 symlink ancestor，并复核 device/inode/owner/mount。
-- fd-relative `O_NOFOLLOW` 和 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`
-  用于普通 Trash 移动；目标竞态时拒绝覆盖，批量预检失败时不开始整批执行。
-- 普通 Trash 目标目录必须属于当前用户并使用私有权限；新建目录在可信父目录 fd 下相对
-  创建，no-follow 打开并绑定 path/fd identity 后才执行 `fchmod`。最终目录 fd 会再次复核
-  device/inode/owner/mode，拒绝 symlink、外置卷共享 `.Trashes` 下预先放置或并发替换的
-  用户目录。
-- Trash rename 成功后的 fd 清理错误返回 `partial` 并保留已移动事实；两个目录 fd 独立
-  尝试关闭，不会让第一个 close 错误阻止第二个。
-- Trash 永久清空只处理最终审计得到的 inode 快照；审计后新增项保留，部分删除以
-  `partial` 明确报告不可逆副作用。
-- 后代目录审计使用 no-follow fd + `fstat` + `scandir(fd)`，拒绝扫描后替换的 symlink、
-  类型、owner、device 或 dataless 变化。
-- 环境变量缓存根受可信目录约束，并要求精确选择。
-- updater 候选只读取受限大小的 bundle metadata，不执行暂存代码；待安装新版、应用缺失或
-  未知版本状态固定不可执行。同版/旧版残留要求 critical 精确选择，执行前重新比较版本，
-  任一变化都会取消整批。
-- retention 诊断只读取文件 metadata，不读取日志/trace 正文；SQLite 诊断使用 immutable
-  read-only URI，并在查询前后复核文件状态。两类结果固定不可执行，不进入通用清理器。
-- Darwin temp updater 只匹配明确的 Qoder ShipIt 动态根并读取受限 app metadata；即使版本
-  可判断也固定不可执行，避免临时下载/解压竞态进入通用清理器。
-- Darwin `T/X` 扩展只匹配公开维护的目录名/glob，读取 no-follow metadata、进程和句柄；
-  不读取 runtime、安装包、toolhost snapshot 或 code-sign clone 内容，所有结果固定不可执行。
-- 通用 Darwin user cache 仅在 `getconf` 发现根的直接子项上按公开 bundle/helper 名称应用
-  进程归属，不会把任意位置的同名目录当作应用缓存。
-- macOS `SF_DATALESS` 在目录枚举和最终移动前优先检查；zero-block 规则作为保守兜底，
-  dataless/疑似云占位对象不计入可回收空间且不可执行。
-- 特权路径、Docker volumes、ApplicationLanguages 修改和 universal binary thinning保持
-  fail-closed。
-- 托管知识库只接受显式 HTTPS、钉住公钥、递增 sequence 和有效签名；sequence/key 检查
-  与安装由稳定 `0600` 目标锁跨进程序列化。`os.replace` 是安装提交边界，后置目录同步或
-  fd 清理只做 best effort，不会把已安装规则伪报为未安装失败。
-- Docker prune 一旦启动，timeout 或非零退出按副作用未知的 `partial` 报告，不会假定
-  daemon 尚未删除任何资源。
+- 特权路径、Docker volumes、ApplicationLanguages 修改和 universal binary thinning
+  保持 fail-closed。
+- Full Disk Access、admin helper 和 SIP 是不同能力，不互相替代。
 
 ## 已知边界
 
 - 当前没有 SMAppService/XPC helper，不能清理需要 admin helper 的系统项。
-- Full Disk Access、admin helper 和 SIP 是不同能力；本项目不把其中一个当成另一个。
-- Docker 标准 CLI 的 identity probe 与 prune 是不同进程；显式 target 和即时复核会缩小
-  context metadata TOCTOU 窗口，但不宣称具有同一 API connection 的原子绑定保证。
-- CLI binding 固定并在 prune 前即时复核解析后的 realpath，但 realpath 复核与 `exec`
-  不是原子操作，也不对同一路径下就地替换的二进制内容做 hash 或 code-signature
-  pinning；真实 CLI 升级仍需重新扫描和兼容验收。
 - Python 用户态进程无法对同 UID 恶意进程提供绝对竞态隔离。
-- `SF_DATALESS` 和 zero-block 启发式不能识别所有已经 materialized 的 cloud-synced 文件；
-  当前只承诺 dataless/疑似占位保护，不承诺完整云同步来源识别。
+- `SF_DATALESS` 和 zero-block 启发式不能识别所有已经 materialized 的 cloud-synced 文件。
+- Docker CLI 的 identity probe 与 prune 是不同进程；即时复核缩小窗口，但不提供同一 API
+  connection 的原子绑定。realpath 复核与 `exec` 也不是原子操作。
 - `complete=true` 只表示没有 blocking issue；调用方还应检查所有 `issues`。
-- 默认 JSON 输出含完整绝对路径，可能暴露用户名、项目名和目录结构；分享时应显式使用
-  `--redact-paths`，并注意 URL、snapshot name 和 process marker 不属于该 profile。
 - Docker prune、Trash 永久清空和未来任何特权操作都需要独立风险评估。
 
 ## 安全测试要求
@@ -103,11 +75,9 @@ report 中提供：受影响版本和 macOS 版本、最小复现步骤、预期
 - 根路径、home、home 祖先、挂载点和跨卷路径；
 - 目标 symlink、ancestor symlink、扫描后替换和 inode 变化；
 - 保护路径与保护后代、云占位和运行中进程；
-- updater 新版/同版/旧版、应用缺失、损坏 ZIP、多版本冲突和扫描后版本变化；
-- retention 年龄桶/ignore/进程/句柄，以及 SQLite immutable 查询、sidecar 不变和畸形文件；
-- 环境变量指向 Documents、`/`、受信缓存根和受保护路径；
 - 未带 `--yes`、批量选择扩大、critical 二次确认；
 - Trash 与 Docker 的可恢复性差异；
 - JSON error envelope 不泄漏 traceback 或密钥内容。
 
-不得使用真实用户数据作为公开 fixture 或测试快照。
+不得使用真实用户数据作为公开 fixture 或测试快照。专项诊断、updater 和知识库安装的测试
+面见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与仓库测试。

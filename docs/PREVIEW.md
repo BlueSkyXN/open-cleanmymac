@@ -46,24 +46,24 @@ PYTHONPATH=. python3 scripts/preview_all.py --json
 open-cleanmymac · 隔离功能预览
 所有写操作均限制在 TemporaryDirectory；不会修改真实 HOME。
 PASS  version                            exit=0   openclean 0.23.0
-PASS  scan-all-domains                   exit=0   隔离扫描得到 9 个候选，覆盖五域
+PASS  scan-all-domains                   exit=0   隔离扫描得到 8 个候选，覆盖五域
 PASS  clean-junk-preview                 exit=0   junk 只读预览 2 个候选
 PASS  clean-dev-preview                  exit=0   dev 只读预览 2 个候选
-PASS  clean-ai-preview                   exit=0   ai 只读预览 2 个候选
+PASS  clean-ai-preview                   exit=0   ai 只读预览 1 个候选
 PASS  clean-trash-preview                exit=0   trash 只读预览 2 个候选
 PASS  purge-preview                      exit=0   项目产物按项目分组，只读预览成功
 PASS  analyze-preview                    exit=0   一级空间分析、排序和卷信息预览成功
-PASS  ignore-lifecycle                   exit=0   临时 rules.json 完成增查删
-PASS  config-lifecycle                   exit=0   analytics 仅写入临时 0600 配置
+PASS  ignore-lifecycle                   exit=0   忽略规则仅在临时 rules.json 中完成增查删
+PASS  config-lifecycle                   exit=0   analytics 偏好仅写入临时 0600 配置
 PASS  cat                                exit=0   终端猫 JSON 输出成功
-PASS  clean-junk-temp-execution          exit=0   临时同卷 Trash 执行成功
-PASS  clean-dev-temp-execution           exit=0   临时同卷 Trash 执行成功
-PASS  clean-ai-temp-execution            exit=0   临时同卷 Trash 执行成功
-PASS  clean-trash-temp-execution         exit=0   精确清空一个 Trash；第二个保持未选
-PASS  purge-temp-execution               exit=0   旧项目产物移到临时同卷 Trash
-PASS  analyze-temp-execution             exit=0   精确选择项移到临时同卷 Trash
-PASS  optimize-ram-guard                 exit=1   无安全公开执行器时明确拒绝
-PASS  optimize-purgeable-guard           exit=1   无安全公开执行器时明确拒绝
+PASS  clean-junk-temp-execution          exit=0   仅在 TemporaryDirectory 中移动到同卷 Trash
+PASS  clean-dev-temp-execution           exit=0   仅在 TemporaryDirectory 中移动到同卷 Trash
+PASS  clean-ai-temp-execution            exit=0   仅在 TemporaryDirectory 中移动到同卷 Trash
+PASS  clean-trash-temp-execution         exit=0   精确清空一个临时 Trash；第二个 Trash 保持未选
+PASS  purge-temp-execution               exit=0   旧项目产物仅移动到临时同卷 Trash
+PASS  analyze-temp-execution             exit=0   精确选择项仅移动到临时同卷 Trash
+PASS  optimize-ram-guard                 exit=1   无安全公开执行器时明确拒绝且非零退出
+PASS  optimize-purgeable-guard           exit=1   无安全公开执行器时明确拒绝且非零退出
 结果：19/19 个可执行预览场景通过。
 ```
 

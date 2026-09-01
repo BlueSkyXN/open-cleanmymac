@@ -16,6 +16,7 @@ from openclean.engine import (
     scan_points,
 )
 from openclean.knowledge_base import KnowledgeBase
+from openclean.models import Item, ScanResult
 from openclean.scanpoints import (
     AI_TOOL_JUNK,
     DEVELOPER_JUNK,
@@ -31,6 +32,16 @@ class ScanPointContractTests(unittest.TestCase):
             ScanPoint("invalid", (), child_globs=("*.log",))
         with self.assertRaisesRegex(ValueError, "expand_children"):
             ScanPoint("invalid", (), child_extensions=(".log",))
+
+    def test_default_selected_contract_rejects_non_boolean_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "default_selected"):
+            ScanPoint("invalid", (), default_selected=1)  # type: ignore[arg-type]
+
+    def test_default_selected_does_not_shift_existing_positional_fields(self) -> None:
+        point = ScanPoint("compatible", (), "confirm", "note", "ai")
+
+        self.assertEqual(point.domain, "ai")
+        self.assertIsNone(point.default_selected)
 
     def test_glob_and_extension_contract_rejects_unsafe_shapes(self) -> None:
         with self.assertRaisesRegex(ValueError, "递归"):
@@ -59,6 +70,10 @@ class ScanPointContractTests(unittest.TestCase):
         self.assertEqual(
             points["Darwin updater 临时副本"].scanner,
             "darwin-temp-updater",
+        )
+        self.assertEqual(
+            points["已删除但仍打开的文件"].scanner,
+            "open-unlinked",
         )
         self.assertTrue(points["系统缓存"].requires_privilege)
         self.assertTrue(points["系统缓存"].expand_children)
@@ -100,6 +115,9 @@ class ScanPointContractTests(unittest.TestCase):
             points["Codex SQLite 内部空闲页"].scanner,
             "sqlite-freelist",
         )
+        self.assertTrue(
+            all(point.default_selected is False for point in AI_TOOL_JUNK)
+        )
 
     def test_developer_points_include_rebuildable_secondary_caches(self) -> None:
         points = {point.category: point for point in DEVELOPER_JUNK}
@@ -117,6 +135,43 @@ class ScanPointContractTests(unittest.TestCase):
 
 
 class ScanPointExpansionTests(unittest.TestCase):
+    def test_default_selection_can_be_disabled_without_changing_safety(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            default_path = root / "default"
+            unselected_path = root / "unselected"
+            default_path.write_bytes(b"default")
+            unselected_path.write_bytes(b"unselected")
+
+            result = scan_points(
+                [
+                    ScanPoint("default", (str(default_path),)),
+                    ScanPoint(
+                        "unselected",
+                        (str(unselected_path),),
+                        default_selected=False,
+                    ),
+                ],
+                workers=1,
+            )
+
+            by_category = {item.category: item for item in result.items}
+            self.assertTrue(by_category["default"].preselected)
+            self.assertFalse(by_category["unselected"].preselected)
+            self.assertEqual(by_category["unselected"].safety, "safe")
+            self.assertTrue(by_category["unselected"].actionable)
+            self.assertEqual(
+                select_cleanup_items([by_category["unselected"]]),
+                [],
+            )
+            self.assertEqual(
+                select_cleanup_items(
+                    [by_category["unselected"]],
+                    select_all_safe=True,
+                ),
+                [by_category["unselected"]],
+            )
+
     def test_expand_children_reports_direct_items_instead_of_parent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "Caches"
@@ -427,6 +482,37 @@ class FineGrainedOverlapTests(unittest.TestCase):
                 residual.action_block_reason,
                 "与更具体的清理分类重叠",
             )
+
+    def test_same_path_readonly_diagnostic_owns_generic_candidate(self) -> None:
+        path = Path("/Users/example/Library/Logs/com.openai.codex")
+        generic = Item(
+            path,
+            4096,
+            "用户日志",
+            "confirm",
+            domain="system",
+            preselected=False,
+        )
+        diagnostic = Item(
+            path,
+            4096,
+            "Codex macOS logs 保留期",
+            "critical",
+            actionable=False,
+            action_block_reason="保留期诊断仅只读",
+            domain="system",
+            diagnostic_kind="retention",
+            preselected=False,
+        )
+
+        for candidates in ([generic, diagnostic], [diagnostic, generic]):
+            with self.subTest(order=[item.category for item in candidates]):
+                result = finalize_overlapping_result(
+                    ScanResult(items=list(candidates))
+                )
+
+                self.assertEqual(result.items, [diagnostic])
+                self.assertFalse(result.items[0].actionable)
 
     def test_scan_cli_applies_overlap_finalization(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,22 +4,17 @@
 [功能预览](../docs/PREVIEW.md) · [架构](../docs/ARCHITECTURE.md) ·
 [安全](../SECURITY.md) · [规格索引](../specs/_index.md)
 
-这是 `openclean` 的独立 Python 实现层。运行时只使用标准库，要求 macOS 和 Python
-3.11+；当前 CI 只验证 Python 3.11。许可证为随包提供的
-[GPL-3.0](LICENSE)。净室边界、功能矩阵和用户安全说明见
-[仓库 README](../README.md)。
+`openclean` 的 Python 实现层。运行时只使用标准库，要求 macOS 和 Python 3.11+；
+当前 CI 只验证 Python 3.11。许可证为随包 [GPL-3.0](LICENSE)。用户安装与安全默认见
+[仓库 README](../README.md)；本页只记录 CLI、JSON、选择和规则契约。
 
 ## 安装与入口
 
 ```bash
-# 从 Git checkout 根安装
 python3 -m venv .venv
 .venv/bin/python -m pip install ./implementation
 .venv/bin/openclean --version
 .venv/bin/python -m openclean --help
-
-# 从 implementation/ 或解压后的 sdist 根安装
-python3 -m pip install .
 ```
 
 源码 checkout 也可直接运行：
@@ -31,8 +26,8 @@ PYTHONPATH=. python3 openclean_cli.py --version
 ```
 
 `openclean_cli.py` 是 checkout/sdist 便捷入口；wheel 的正式入口是 console script 和
-`python -m openclean`。低于 Python 3.11 的源码运行时仍可查看 help/version；业务命令会
-在进入扫描前返回 `unsupported_python`，不会输出内部 traceback。
+`python -m openclean`。低于 Python 3.11 时 help/version 仍可读，业务命令返回
+`unsupported_python`。
 
 ## 命令面
 
@@ -64,14 +59,15 @@ openclean config --analytics off
 openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-public.pem
 ```
 
-前四条会修改文件；清空 Trash 和 Docker prune 是永久操作。最后三类会写本地配置或联网
-安装规则。验证写路径应运行 `make preview`，它只使用 `TemporaryDirectory`。
+前四条会修改文件；清空 Trash 和 Docker prune 是永久操作。验证写路径应运行
+`make preview`。
 
 ## 选择与执行
 
 - 没有 `--yes` 时，`clean`/`purge`/`analyze` 即使带选择参数也只预览。
-- 没有 `--select` 时，`safe` 可默认预选，`--all`/`--include-confirm`/
-  `--include-critical` 分别扩展对应批量层级。
+- 没有 `--select` 时，普通 `safe` 扫描点可默认预选；扫描点可以独立关闭默认选择，AI 域
+  即使是可重建缓存也统一默认不选。`--all`/`--include-confirm`/`--include-critical`
+  分别扩展对应批量层级。
 - 一旦指定 `--select`，选择集从空开始，不继承默认预选；confirm/critical 精确目标仍需
   对应 `--include-confirm`/`--include-critical` 作为风险授权，但不会顺带选择同等级其他项。
 - `--select` 与 `--all` 语义冲突，CLI 在扫描前返回 exit 2。
@@ -81,27 +77,20 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 - 普通用户态路径移动到同卷 Trash；`clean trash` 永久删除内容但保留 Trash 根目录。
 - Docker Build Cache/Images/Containers 分别映射固定官方 prune 命令且均需 identifier
   精确选择；Local Volumes 始终不可执行。
-- 特权系统项、ApplicationLanguages、云保护项和不支持资源无法被参数强制解锁。
+- 特权系统项、ApplicationLanguages、云保护项、只读诊断和不支持资源无法被参数强制解锁。
 - `analyze` 的一级候选统一为 `critical + requires_explicit_selection`；非交互执行必须精确
   `--select`，全屏执行在 `Y` 后还需按 `!` 完成 critical 二次确认。
 - updater 候选统一为 critical 且要求精确选择；`pending_update`、`installed_app_missing`
   和 `version_unknown` 不可执行，同版/旧版残留在执行前仍会重新比较版本。
-- retention 与 SQLite freelist 项固定为只读诊断：不接受选择，不进入通用 cleanup executor。
-  retention 同时覆盖公开日志/runtime/download 根和 `getconf` 发现的 Darwin `T/X` 维护模式。
-
-## TUI
 
 连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 界面。JSON、管道、
-`--no-interactive` 和任何参数化选择 flag 不打开 TUI。`analyze --line-interactive`
-提供只读行式导航。
-
-TUI 的选择只是选择；实际执行仍要求启动命令带 `--yes`，并在汇总页再次按 `Y`。
-`analyze` 候选属于 critical，随后还会进入独立的 `!` 二次确认。
-快捷键见 [docs/PREVIEW.md](../docs/PREVIEW.md)。
+`--no-interactive` 和任何参数化选择 flag 不打开 TUI。TUI 的选择只是选择；实际执行仍
+要求启动命令带 `--yes`，并在汇总页再次按 `Y`。快捷键见
+[docs/PREVIEW.md](../docs/PREVIEW.md)。
 
 ## JSON schema v2
 
-成功结果包含 `schema_version=2`。通用容量字段：
+成功结果包含 `schema_version=2`：
 
 - `potential_bytes`：发现的物理占用；
 - `reclaimable_bytes`：清理域中 `actionable=true` 候选占用；`analyze` 顶层及每个 entry
@@ -115,10 +104,19 @@ TUI 的选择只是选择；实际执行仍要求启动命令带 `--yes`，并�
 `device_id` 是本次启动中的文件系统设备标识；顶层 `volumes` 按设备分别汇总
 `mount_point`、`system_disk` 和容量。updater 项额外返回 `updater_status`、
 `installed_version`、`staged_version` 与 `updater_external_install`。
-`diagnostic_kind=retention` 额外返回文件数、打开句柄以及 7/14/30 天物理容量；
-`diagnostic_kind=sqlite_freelist` 返回 page/freelist、内部空闲容量与比例、数据库总大小和
-WAL/SHM/journal 容量。`diagnostic_kind=updater_temp` 报告动态 ShipIt app 的版本状态。
-三类都固定 `actionable=false`、`reclaimable_bytes=0`。
+
+只读诊断使用 `diagnostic_kind`，固定 `actionable=false`、`reclaimable_bytes=0`：
+
+- `retention`：文件数、打开句柄以及 7/14/30 天物理容量；
+- `sqlite_freelist`：page/freelist、内部空闲容量与比例、数据库总大小和 WAL/SHM/journal；
+- `updater_temp`：动态 ShipIt app 的版本状态；
+- `codex_transient`：`total_count`、`open_handle_count`；marketplace staging 另有
+  `measured_count` 和 `measurement_complete`；
+- `crashpad_pairing`：`paired_artifact_count`、`recent_artifact_count`；
+- `open_unlinked`：`potential_bytes=0`，逻辑上限只进入 `logical_bytes`、`total_count`、
+  `related_process_count` 和 `open_handle_count`。
+
+`resource_kind=filesystem_subset` 的 `path` 只是聚合锚点，字节数仅覆盖命中子集。
 `optimize --json` 返回：
 
 ```json
@@ -146,14 +144,14 @@ WAL/SHM/journal 容量。`diagnostic_kind=updater_temp` 报告动态 ShipIt app 
 ```
 
 默认 JSON 包含精确绝对路径。所有 JSON 子命令可显式增加 `--redact-paths`，在最终
-序列化阶段把同一文档内路径映射成稳定 opaque ref，并处理 message/note 和解析前错误；
-输出会声明 `selection_replayable=false`，不能直接用于后续 `--select`。`complete=true`
-只表示没有 blocking issue；仍应检查 `issues` 中的安全跳过和动态来源提示。
+序列化阶段把同一文档内路径映射成稳定 opaque ref；输出声明
+`selection_replayable=false`，不能直接用于后续 `--select`。`complete=true` 只表示
+没有 blocking issue；仍应检查 `issues`。
 
 ## 自建规则
 
 默认规则路径是 `~/.config/openclean/rules.json`；`--rules FILE` 使用显式单文件。
-规范格式只支持 JSON，不支持 YAML：
+规范格式只支持 JSON：
 
 ```json
 {
@@ -188,7 +186,7 @@ WAL/SHM/journal 容量。`diagnostic_kind=updater_temp` 报告动态 ShipIt app 
 {
   "envelope_schema_version": 1,
   "sequence": 42,
-  "created_at": "2026-07-30T12:00:00+08:00",
+  "created_at": "2026-08-31T12:00:00+08:00",
   "signature_algorithm": "openssl-dgst-sha256",
   "rules": {"schema_version": 1},
   "signature": "<base64 signature>"
@@ -196,46 +194,19 @@ WAL/SHM/journal 容量。`diagnostic_kind=updater_temp` 报告动态 ShipIt app 
 ```
 
 客户端限制 2 MiB、只接受 HTTPS、拒绝 URL 凭据，使用用户提供的 PEM 公钥调用系统
-OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence；稳定的 `0600`
-`<destination>.lock` 把 sequence/key 重判与 `os.replace` 安装放进同一个跨进程临界区，
-临时文件同时使用 `fsync`。`os.replace` 是安装提交边界，后置目录同步和 fd 清理只做
-best effort，不会把已经安装的 sequence 报成失败。托管 `knowledge.json` 与用户
-`rules.json` 分层合并，远程更新不覆盖用户 ignore。
+OpenSSL 验证 SHA-256 签名。成功后钉住公钥指纹和递增 sequence；`os.replace` 是安装
+提交边界。托管 `knowledge.json` 与用户 `rules.json` 分层合并，远程更新不覆盖用户
+ignore。
 
 ## 路径安全
 
-- 不跟随候选或 ancestor symlink；
-- 环境变量缓存根只允许位于 `~/Library/Caches` 或 `~/.cache`，并强制精确选择；
-- 已知应用归属规则同样覆盖通用 `~/Library/Caches` 一级候选；应用正在运行或进程状态无法
-  读取时，候选继续显示但不可执行；
-- Darwin user cache 只在 `getconf` 根的直接子项上按公开 bundle/helper 名称应用进程归属；
-  Darwin `T/X` transient 仅按维护的公开 glob 进入只读 retention 诊断；
-- 已知 updater 只读取受限大小的 app `Info.plist` 或 ZIP 内顶层 bundle metadata；不执行
-  暂存代码。版本状态不明时 fail-closed，同版/旧版残留在执行前重新判定；
-- 日志/runtime/download 保留期扫描只遍历文件 metadata，不读取正文或包内容；SQLite 使用
-  `mode=ro&immutable=1` PRAGMA 且不创建、checkpoint 或修改 WAL/SHM；
-- `analyze` 同时比较每个一级候选的 `st_dev` 与 `statvfs().f_fsid`，不进入其它卷或文件
-  系统挂载点；后者用于识别 macOS 上 `st_dev` 相同的 APFS root/Data 挂载边界；
-- 只读 `lstat` / `scandir` 遇到 `EINTR` 时重试，其它访问错误继续按 issue 报告；
-- 目录大小按物理块计量，硬链接 device/inode 去重；Darwin `SF_DATALESS` 与 zero-block
-  启发式在目录枚举前阻止 dataless/疑似云占位，它们不计回收量；
-- 执行前批量复核保护规则、device/inode、owner、mount、云和运行中进程；
-- 后代目录以 no-follow fd 打开，并在 `scandir(fd)` 前重新 `fstat` 类型、owner、device
-  和 dataless 状态；
-- 普通移动逐组件打开 no-follow 目录 fd，并使用 Darwin
-  `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)` 原子拒绝覆盖；
-- Trash 目标目录必须属于当前用户并使用私有权限；新建目录在可信父目录 fd 下相对创建，
-  no-follow 打开并绑定 identity 后才在 fd 上设置权限；
-- Trash rename 后的源/目标目录 fd 独立关闭；后置 close 失败保留已移动事实并返回
-  `partial`；
-- Trash 永久清空只删除最终审计快照；审计后新增项保留，部分删除返回 `partial`；
-- Docker 候选携带不进入 JSON 的 scan-time resource binding；执行前重新解析 CLI realpath
-  并复核明确 context/host、endpoint TLS mode 和 Engine ID，CLI realpath 变化或即时复核
-  发现不一致时拒绝执行；
-- Docker prune 启动后的 timeout/非零退出返回副作用未知的 `partial`；
-- 任一批量预检失败时整个批次不启动。
-
-详见 [架构说明](../docs/ARCHITECTURE.md) 和 [安全政策](../SECURITY.md)。
+扫描和执行拒绝候选或 ancestor symlink；环境变量缓存根只允许位于 `~/Library/Caches`
+或 `~/.cache`，并强制精确选择。已知应用缓存、Darwin user cache 直接子项、updater
+残留和只读诊断都在模型层标记不可执行或要求精确选择，不能被参数解锁。`analyze`
+同时比较每个一级候选的 `st_dev` 与 `statvfs().f_fsid`。普通移动使用 no-follow 目录
+fd 和 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`。Docker prune 绑定
+扫描时 CLI realpath、context/host、endpoint 和 Engine ID，执行前复核。细节见
+[架构说明](../docs/ARCHITECTURE.md) 和 [安全政策](../SECURITY.md)。
 
 ## 退出码
 
@@ -246,45 +217,22 @@ best effort，不会把已经安装的 sequence 报成失败。托管 `knowledge
 | `2` | 参数、规则、路径、选择或配置错误 |
 | `130` | 用户中断 |
 
-`ignore add/remove` 是幂等配置操作：目标已被覆盖或不存在时仍返回 `0`，并在 JSON 中
-给出 `changed=false`。
+`ignore add/remove` 是幂等配置操作：目标已被覆盖或不存在时仍返回 `0`，JSON 中
+`changed=false`。
 
 ## 开发检查
 
 从仓库根运行：
 
 ```bash
-make lint
-make test
-make preview
-make docs-assets
 make check
 make package
 make release-check
 ```
 
-直接命令：
-
-```bash
-cd implementation
-ruff check openclean tests scripts
-python3 -W error -m py_compile openclean/*.py tests/*.py scripts/*.py
-PYTHONPATH=. python3 -W error -m unittest discover -s tests -q
-PYTHONPATH=. python3 scripts/preview_all.py --json
-PYTHONPATH=. python3 scripts/capture_tui_assets.py --check
-python3 -m build --no-isolation
-python3 scripts/check_release_artifacts.py --json
-```
-
 wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成器、release checker、
-`openclean_cli.py`、README 和 TODO，以便源码归档自验证。两种归档都必须排除
-`analysis/`、`local/`、缓存、`.DS_Store` 和敏感材料。
+`openclean_cli.py`、README 和 TODO。剩余工作见 [TODO.md](TODO.md)。检查结果以当前
+checkout 的 `make check` 为准。
 
-剩余工作见 [TODO.md](TODO.md)。
-
-当前本地验证基线为 353 个 `unittest` 和 19/19 个隔离预览场景；最终结果仍以当前
-checkout 的 `make check` 输出为准。
-
-## 许可证
-
-本包随仓库以 [GNU GPL v3](LICENSE) 许可。PyPI / Homebrew / GitHub Release 渠道尚未开通。
+本包随仓库以 [GNU GPL v3](LICENSE) 许可。GitHub Release 是唯一计划的正式发布渠道，当前尚未创建
+Release；项目不通过 PyPI、Homebrew 或其他包管理器分发。

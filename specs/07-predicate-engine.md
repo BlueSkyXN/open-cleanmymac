@@ -1,7 +1,7 @@
 # 07 · 底层判定引擎规格（谓词系统 + 实体模型）
 
 > 净室规格：还原 CleanMyMac 的**底层判定引擎**（扫描系统的真正底座）。
-> 来源：`analysis/decompiled/LegacyScanningCore.c`（181 方法）。只描述行为契约。
+> 来源：参考对象判定层的类型与行为事实。只描述行为契约。
 > 这是"判定一项该不该清"的统一抽象，所有扫描域都构建于其上。
 
 ---
@@ -96,19 +96,12 @@ CompoundPredicate(AND)[
 
 ## 5. 对独立实现的指导
 
-`openclean` 当前判定层实现状态：
-
-1. **谓词协议**：`Predicate.should_ignore(item) -> bool`，item 带 path+url。
-2. **组合谓词**：`All(predicates)` / `Any(predicates)`。
-3. **KB 忽略谓词**：查自建 JSON 规则；路径规则在最外层优先短路。
-4. **文件名/大小/存在谓词**：用于"失效项""按类型过滤""按大小过滤"。
-5. **实体模型**：Item 增加 `is_cloud_file`。当前纯标准库实现只使用 Darwin
-   `SF_DATALESS` 与 `st_blocks == 0 && st_size > 0` 启发式；dataless 目录在
-   `os.scandir()` 前停止，避免扫描触发 File Provider materialization。实现不调用
-   Foundation，也不宣称识别所有已经 materialized 的 cloud-synced 文件。
+1. **谓词协议**：`should_ignore(item) -> bool`，item 带 path 与 URL。
+2. **组合谓词**：AND / OR，支持短路。
+3. **KB 忽略谓词**：查自建规则；路径规则在最外层优先短路。
+4. **文件名/大小/存在谓词**：用于失效项、按类型过滤、按大小过滤。
+5. **云文件**：实体需能标记占位/dataless，避免把未下载对象计入可释放空间。
 6. **安全闸顺序**：KB 忽略谓词永远最先求值。
 
-上述协议、All/Any、文件名、大小、存在性、路径 glob/regex、云字段和
-`ProtectionGate` 均已实现；`--ignore` 子串仅作为兼容输入，不再是唯一判定方式。
-Reachability 与 FileAccess 的专项语义尚未实现，因此当前状态是“CLI 使用子集可用”，
-不是本节七类谓词逐项完成。
+Reachability 与 FileAccess 的专项语义、以及本项目实际采用的 Darwin `SF_DATALESS`
+启发式，见 [_index.md](_index.md) 与 [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)。

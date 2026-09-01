@@ -1,6 +1,6 @@
 # 04 · IPC / 特权操作协议规格
 
-> 来源：`analysis/raw/IPCProtocol.txt`（Swift/ObjC 类型事实）。
+> 来源：参考对象 IPC/特权协议的类型事实。
 > 描述 CLI 与特权帮助器/主程序通信的"协议形状"，供独立实现参考。不含原代码。
 
 ## 1. 为什么需要 IPC
@@ -49,12 +49,12 @@ RequestProxy（XPCConnection 内）       请求-响应配对（异步回调）
   不能单独作为身份凭证。host 与 helper 必须双向限制预期签名。
 - 消息校验白名单化：只接受枚举内的**领域操作**和严格参数，禁止通用
   `{op: delete, path: absolutePath}`。
-- 我们的实现可用同样的 XPC+JSON 形态（macOS 标准做法，非其专有）。
+- 独立实现可采用同样的 XPC+JSON 形态（macOS 标准做法，非其专有）。
 
-## 6. 本项目启用前的强制安全契约
+## 6. 独立实现启用前的强制安全契约
 
-当前 Python wheel 不包含 app bundle、native helper、entitlements 或签名链，因此特权项
-固定 `actionable=false`。不得用 sudo shell wrapper 代替 XPC 设计。未来实现至少满足：
+在 native host/helper、entitlements 和签名链齐备前，特权项必须保持不可执行。
+不得用 sudo shell wrapper 代替 XPC 设计。启用前至少满足：
 
 1. **服务端重新授权**：helper 根据固定 root、相对组件和领域状态重新发现目标，不信任
    CLI 提交的路径、safety、`requires_privilege` 或扫描时判定。

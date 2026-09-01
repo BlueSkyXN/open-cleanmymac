@@ -11,12 +11,15 @@ from openclean.cleanup import execute_cleanup
 from openclean.engine import IgnoreRules, scan_points
 from openclean.macos import DarwinUserCacheDiscovery
 from openclean.processes import (
+    DeletedOpenFileSnapshot,
     OpenFileDetectionError,
     OpenFileSnapshot,
     ProcessDetectionError,
     ProcessSnapshot,
+    capture_deleted_open_file_snapshot,
     capture_open_file_snapshot,
     capture_process_snapshot,
+    parse_deleted_open_files,
 )
 from openclean.scanpoints import (
     AI_TOOL_JUNK,
@@ -93,6 +96,93 @@ class ProcessSnapshotTests(unittest.TestCase):
             )
         snapshot = OpenFileSnapshot(("/tmp/root/file",))
         self.assertEqual(snapshot.count_under("/tmp/root"), 1)
+
+    def test_deleted_open_parser_deduplicates_device_inode_and_handles(self) -> None:
+        snapshot = parse_deleted_open_files(
+            "p10\ncWorkBuddy Helper\nf1\nD0x100000d\ni42\ns100\n"
+            "f2\nD0x100000d\ni42\ns100\n"
+            "p11\ncSpotlight\nf3\nD0x100000d\ni42\ns100\n"
+            "f4\nD0x100001b\ni42\ns50\n"
+        )
+
+        self.assertIsInstance(snapshot, DeletedOpenFileSnapshot)
+        self.assertEqual(len(snapshot.files), 2)
+        system = snapshot.files[0]
+        self.assertEqual(system.device, 0x100000D)
+        self.assertEqual(system.inode, 42)
+        self.assertEqual(system.logical_size, 100)
+        self.assertEqual(system.handle_count, 3)
+        self.assertEqual(system.commands, ("Spotlight", "WorkBuddy Helper"))
+
+    def test_deleted_open_capture_uses_path_only_for_protection_filtering(self) -> None:
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                (
+                    "p10\ncFinder\nf7\nD0x100000d\ni99\ns4096\n"
+                    "n/Users/alice/SecretProject/cache.bin (deleted)\n"
+                ),
+                "",
+            )
+
+        snapshot = capture_deleted_open_file_snapshot(runner=runner)
+
+        self.assertEqual(
+            calls[0][0],
+            ["/usr/sbin/lsof", "-nP", "-w", "+L1", "-FpcfDisn"],
+        )
+        self.assertEqual(snapshot.files[0].logical_size, 4096)
+        self.assertEqual(snapshot.files[0].commands, ("Finder",))
+        self.assertEqual(
+            snapshot.files[0].paths,
+            ("/Users/alice/SecretProject/cache.bin",),
+        )
+        self.assertNotIn("SecretProject", repr(snapshot))
+
+    def test_deleted_open_capture_never_exposes_raw_lsof_stderr(self) -> None:
+        secret = "/Users/alice/SecretProject"
+
+        with self.assertRaises(OpenFileDetectionError) as raised:
+            capture_deleted_open_file_snapshot(
+                runner=lambda command, **_: subprocess.CompletedProcess(
+                    command,
+                    1,
+                    "",
+                    f"lsof: WARNING: can't stat() {secret}\nsecond line",
+                )
+            )
+
+        message = str(raised.exception)
+        self.assertEqual(message, "lsof +L1 检测失败，退出码 1")
+        self.assertNotIn(secret, message)
+        self.assertNotIn("second line", message)
+
+    def test_deleted_open_capture_accepts_empty_lsof_result(self) -> None:
+        snapshot = capture_deleted_open_file_snapshot(
+            runner=lambda command, **_: subprocess.CompletedProcess(
+                command, 1, "", ""
+            )
+        )
+        self.assertEqual(snapshot.files, ())
+
+    def test_deleted_open_capture_rejects_unparseable_output(self) -> None:
+        with self.assertRaisesRegex(OpenFileDetectionError, "无法解析"):
+            capture_deleted_open_file_snapshot(
+                runner=lambda command, **_: subprocess.CompletedProcess(
+                    command, 0, "p10\ncFinder\nf7\nDbad\niunknown\nsbad\n", ""
+                )
+            )
+
+    def test_deleted_open_parser_rejects_partially_malformed_output(self) -> None:
+        with self.assertRaisesRegex(OpenFileDetectionError, "device 字段无效"):
+            parse_deleted_open_files(
+                "p10\ncFinder\nf7\nD0x100000d\ni99\ns4096\n"
+                "f8\nDbad\ni100\ns8192\n"
+            )
 
 
 class ProcessProtectedScanTests(unittest.TestCase):
@@ -290,7 +380,17 @@ class ProcessProtectedScanTests(unittest.TestCase):
             "~/.codex/cache/codex_apps_tools",
             ai["Codex 缓存"].paths,
         )
-        self.assertIn("~/.codex/.tmp", ai["Codex 缓存"].paths)
+        self.assertEqual(
+            ai["Codex 缓存"].paths,
+            (
+                "~/.codex/cache/codex_apps_server_info",
+                "~/.codex/cache/codex_apps_tools",
+            ),
+        )
+        self.assertEqual(
+            ai["Codex 临时结构与 Crashpad 配对"].scanner,
+            "codex-storage-artifacts",
+        )
         self.assertIn(
             "~/.claude/stats-cache.json",
             ai["Claude 缓存"].paths,

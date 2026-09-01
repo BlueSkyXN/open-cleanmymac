@@ -31,7 +31,7 @@ openclean analyze "$ROOT" --top 20 --no-interactive --json
 |---|---|---|
 | `system` | `~/Library/Caches`、updater、日志、Xcode、失效启动项 | 报告候选和阻断原因，不绕过特权、应用或版本保护。 |
 | `developer` | pip、uv、npm、Go、Cargo、Homebrew、Docker 报告 | 普通缓存只建议审阅；Docker 只报告。 |
-| `ai` | Claude、Codex `.codex/{tmp,.tmp}`、Gemini、Chrome DevTools MCP、OpenCode、Cursor 缓存 | 报告大小和保护状态，不自动清理。 |
+| `ai` | Claude、Codex 精确 cache/SQLite/临时结构诊断、Gemini、Chrome DevTools MCP、OpenCode、Cursor | 报告大小和保护状态；不把 Codex `.tmp` 整根当作缓存。 |
 | `project` | `node_modules`、`.venv`、`target`、DerivedData 等可重建产物 | 只分析明确的项目根，不扩大范围。 |
 | `trash` | `~/.Trash` 与挂载卷 Trash | 只报告；清空是永久操作。 |
 
@@ -57,6 +57,9 @@ openclean analyze "$ROOT" --top 20 --no-interactive --json
 | `diagnostic_kind=retention` | 读取文件数、句柄及 7/14/30 天物理容量；阈值不是删除授权。 |
 | `diagnostic_kind=sqlite_freelist` | 读取内部空闲页/比例及 WAL；不得建议删除 DB 或在线 `VACUUM`。 |
 | `diagnostic_kind=updater_temp` | Darwin temp 中的完整 app 只读可见；版本判断不构成删除授权。 |
+| `diagnostic_kind=codex_transient` | 只汇总精确 marketplace staging 或 Git 空壳；不得扩大到 `.codex/.tmp` 父根。marketplace 同时检查 `total_count`、`measured_count`、`measurement_complete`；为 false 时容量只是有界部分结果，且顶层 `complete=false`。 |
+| `diagnostic_kind=crashpad_pairing` | `total_count` 是孤立 sidecar，`paired_artifact_count`/`recent_artifact_count` 是受保护配对/近期 orphan；不得删除 `.dmp`。 |
+| `diagnostic_kind=open_unlinked` | `potential_bytes=0`；只在 `logical_bytes`、`related_process_count` 和句柄字段报告上限，只能退出应用或重启释放。 |
 
 运行中的已知应用缓存仍会出现在结果中，但 `actionable=false`。这条保护也适用于通用
 `~/Library/Caches` 入口；AI 不应因为候选仍可见就建议绕过阻断原因。
@@ -96,7 +99,7 @@ AI 不得自行添加 `--yes`，也不得自动清空 Trash、执行 Docker prun
 
 - [项目 README](../README.md)：安装和总体安全边界。
 - [能力地图](CAPABILITIES.md)：能力状态与外部前提。
-- [隔离预览](PREVIEW.md)：19 个 TemporaryDirectory 场景和只读示例。
+- [隔离预览](PREVIEW.md)：TemporaryDirectory 场景和只读示例。
 - [实现说明](../implementation/README.md)：完整 CLI、JSON 和选择契约。
 
 文档与当前程序不一致时，以 `openclean <command> --help` 和实际 JSON 为准。

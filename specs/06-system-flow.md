@@ -1,7 +1,8 @@
 # 06 · 系统流程规格（数据流 / 控制流）
 
 > 净室规格：描述 CleanMyMac CLI 端到端的运行时流程，供独立实现对齐。
-> 来源：`analysis/` 二进制结构分析 + 元数据。只描述流程契约，不含代码表达。
+> 来源：参考对象的结构事实与公开元数据。只描述流程契约，不含代码表达。
+> 本项目删除路径、JSON 字段和 Docker 边界见 [_index.md](_index.md)。
 
 ---
 
@@ -23,7 +24,7 @@
    └─ 控制流：pause/resume/cancel 事件 → 广播到每个在跑任务
    │
    ▼
-结果：分类汇总 + potential/actionable/privileged/unsupported 空间 → 文本表 / JSON 输出
+结果：分类汇总 + 可释放空间 → 文本表 / JSON 输出
    │
    ▼ (仅 clean)
 删除阶段：按安全级过滤 → 用户确认 → 普通项用户态删 / 受保护项走特权帮助器(XPC)
@@ -72,15 +73,13 @@ Task C 进度 ─┘        Σ(进度×权重)/Σ权重                     item
 可清理项清单
    │ 按 safety 分级: safe / confirm / critical
    ▼
-safe 项 ──用户确认(--yes 或交互)──▶ 删除
-confirm 项 ──需显式开启(--include-confirm)──▶ 删除
+safe 项 ──用户确认──▶ 删除
+confirm 项 ──需显式开启──▶ 删除
 critical 项 ──默认不动
    │
-   ├─ 用户态普通项 → 同卷 Trash（清空 Trash 除外）
-   ├─ Docker 虚拟项 → CLI realpath/target binding → 执行前 identity 复核 → 固定 prune
+   ├─ 用户态普通项 → 用户态删除
    └─ 受保护/系统项 → XPC 请求特权帮助器
-                         │  消息(JSON): {version, operationKind, rootKind,
-                         │               relativeComponents, expectedIdentity}
+                         │  消息(JSON): 版本、操作类型、目标身份
                          ▼
                      帮助器校验(签名/白名单) → 执行 → 回结果/进度事件
 ```
@@ -99,10 +98,6 @@ critical 项 ──默认不动
    ▼ (可选) 在线更新服务 → 下载新 .cmmkb → 热替换
 ```
 
-上图是参考对象的功能事实。本项目实现使用严格 schema 的 JSON：托管
-`knowledge.json` 与用户 `rules.json` 分层，远程更新只由显式 HTTPS 命令触发，经签名、
-sequence 防回滚和公钥钉扎后原子安装，不解析或复用 `.cmmkb`。
-
 ## 7. 权限分层流
 
 ```
@@ -116,14 +111,7 @@ sequence 防回滚和公钥钉扎后原子安装，不解析或复用 `.cmmkb`�
 
 ---
 
-## 8. 独立实现的对齐检查单
+## 8. 独立实现对齐
 
-- [x] 引擎：并发任务、加权进度、不可变快照 + 三态协作取消
-- [x] 引擎：任意任务的通用依赖图、拓扑校验、失败传播与并发调度
-- [x] 统计：fts 式遍历 + 符号链接跳过 + 取消标志（已实现）
-- [x] 判定：KB 优先保护闸 + 可组合谓词；兼容子串 `--ignore`
-- [x] 知识库：自建明文 JSON（忽略/保护/应用附加文件）+ 用户 ignore 管理
-- [x] 知识库：显式 HTTPS 签名更新、sequence 防回滚、公钥钉扎与原子安装
-- [x] 删除：安全分级、显式确认、同卷 Trash、Docker 白名单、target binding 和执行前复核
-- [ ] 删除：特权帮助器/XPC
-- [x] 输出：文本/JSON、显式单文档路径脱敏、TTY 加权进度和 curses 审阅
+实现状态、有意差异和缺口见 [_index.md](_index.md) 与
+[implementation/TODO.md](../implementation/TODO.md)。

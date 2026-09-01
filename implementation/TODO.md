@@ -6,7 +6,8 @@
 [实现说明](README.md)
 
 当前基线：`openclean 0.23.0`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
-本清单只保留尚未完成或需要外部验收的工作；已完成功能见根 README、CHANGELOG 和测试。
+本清单只保留尚未完成或需要外部验收的工作。已完成功能以
+[docs/CAPABILITIES.md](../docs/CAPABILITIES.md)、CHANGELOG 和当前 `make check` 为准。
 CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI 对齐目标。
 
 ## P0：发布前必须保持的阻断边界
@@ -116,42 +117,22 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
 
 ### 9. 浏览器 origin 与版本化 CLI 缓存
 
-- Chrome `Service Worker/CacheStorage` 应按 profile/origin 只读汇总；不删除 Cookies、
-  Login Data、IndexedDB 或整个 profile，运行中固定不可执行。
+- Chrome/Brave/Edge/Comet `Service Worker/CacheStorage` 的 profile 级只读汇总已完成；只
+  发现 Default/Profile 用户根，不删除 Cookies、Login Data、IndexedDB 或整个 profile，
+  运行中固定不可执行。origin 级汇总仍需先确认稳定、结构化且可脱敏的数据源，不使用
+  `strings` 或临时正则解析 LevelDB。
 - Claude/Copilot 等版本目录应先解析当前 symlink/安装版本，只报告非当前完整旧版本；
   零字节更新 marker、当前 binary 和 session state 必须保留。
 - UURemote application/updater logs、历史 `.pkg` 和 Darwin temp 已纳入只读 retention
   诊断；若未来允许删除单个 `.pkg`，仍需读取可信 package version、比较已安装版本并在
   执行前复核句柄，再纳入 updater 状态机。
+- Codex 相邻原子写 temp 与 disabled feature cache 仍未做通用判定；目标缺失、JSON 截断或
+  当前配置关闭都不能单独证明可删除，后续必须先定义 primary/backup/feature ownership。
 
-## 当前已完成的交付门
+## 已完成能力
 
-- 五域扫描、物理/逻辑大小、硬链接去重、Darwin `SF_DATALESS`/zero-block 占位保护、
-  重叠归属；
-- Predicate/KnowledgeBase、ignore lifecycle、签名托管规则客户端；
-- clean/purge/analyze 预览、TUI、精确选择、用户态执行和报告；`--select` 不继承默认
-  预选，tier flag 只作为精确目标的风险授权；
-- 同卷 Trash、Trash 清空、Docker 固定 prune、运行中进程保护；
-- updater installed/staged 版本状态、执行前重判和外置安装提示；
-- WorkBuddy logs/traces、Lark SDK、Shadowrocket、TRAE 日志按物理块和 mtime 输出
-  7/14/30 天只读保留期诊断，并报告进程与打开句柄状态；不读取正文或批量删除；
-- Codex `logs_2.sqlite` 使用 `mode=ro&immutable=1` 输出 page/freelist、内部空闲页比例、
-  WAL/SHM/journal 和句柄状态；不自动 `VACUUM` 或删除数据库；
-- `DARWIN_USER_TEMP_DIR` 中的 Qoder ShipIt 完整 app 副本按动态 updater 根读取版本；
-  应用缺失等状态只读可见且固定不可执行；
-- Codex runtime/macOS logs、WorkBuddy macOS/audit logs、UURemote logs/download，以及
-  Darwin `T/X` 中公开命名的构建 temp、版本化 runtime、toolhost snapshot 和 code-sign
-  clone 均进入只读 retention 诊断；
-- 通用 Darwin user cache 一级候选按公开 bundle/helper 名称继承应用进程保护；
-- JSON per-volume 汇总，以及 Go module、Cargo Git、npm 次级缓存扫描；
-- 任务 DAG、加权进度、动态扫描并发；
-- System Junk、Darwin cache、broken startup items、Time Machine、ApplicationLanguages；
-- JSON schema v2 和统一机器错误 envelope；重复 domain/root 去重，显式 project root
-  做存在性、目录类型和 symlink 参数校验；
-- 显式 `--redact-paths` 单文档 opaque refs，覆盖成功/失败 JSON 和解析前错误；
-- Docker scan-time CLI realpath/target binding 与 prune 前 CLI、context/host、endpoint、
-  Engine ID 复核；
-- 19 场景隔离预览、macOS CI、wheel/sdist 和归档审计。
+已落地功能不要在本清单重复展开。以 [docs/CAPABILITIES.md](../docs/CAPABILITIES.md)
+和 [CHANGELOG.md](../CHANGELOG.md) 为准；验证以当前 `make check` 为准。
 
 ## 提交前验证
 

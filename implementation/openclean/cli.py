@@ -429,6 +429,8 @@ def _item_payload(item) -> dict[str, object]:
         "human": human(item.size),
         "resource_total_bytes": item.resource_total_size,
         "total_count": item.total_count,
+        "measured_count": item.measured_count,
+        "measurement_complete": item.measurement_complete,
         "active_count": item.active_count,
         "running_process_markers": list(item.running_process_markers),
         "cleanup_scope": item.cleanup_scope or None,
@@ -476,6 +478,9 @@ def _item_payload(item) -> dict[str, object]:
         "sqlite_internal_free_bytes": item.sqlite_internal_free_bytes,
         "sqlite_internal_free_ratio": item.sqlite_internal_free_ratio,
         "sqlite_wal_bytes": item.sqlite_wal_bytes,
+        "related_process_count": item.related_process_count,
+        "paired_artifact_count": item.paired_artifact_count,
+        "recent_artifact_count": item.recent_artifact_count,
         "domain": item.domain or None,
     }
 
@@ -503,7 +508,10 @@ def _volume_summaries(
                 "mount_point": (
                     str(mount_point) if mount_point is not None else None
                 ),
-                "system_disk": mount_point == Path("/"),
+                "system_disk": mount_point in {
+                    Path("/"),
+                    Path("/System/Volumes/Data"),
+                },
                 "item_count": len(volume_items),
                 "potential_bytes": sum(item.size for item in volume_items),
                 "reclaimable_bytes": (
@@ -544,6 +552,8 @@ def _item_annotations(item: Item) -> str:
     annotations: list[str] = []
     if item.diagnostic_kind:
         annotations.append(f"[只读诊断: {item.diagnostic_kind}]")
+    if item.diagnostic_kind == "open_unlinked" and item.logical_size:
+        annotations.append(f"[逻辑大小上限: {human(item.logical_size)}]")
     if item.updater_status:
         versions = (
             f" installed={item.installed_version or 'unknown'}"

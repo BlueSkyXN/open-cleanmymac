@@ -412,13 +412,17 @@ def _run_preview() -> tuple[list[PreviewResult], list[dict[str, str]]]:
                 )
 
                 for category in ("junk", "dev", "ai"):
+                    selection_flags = (
+                        ["--all", "--yes"]
+                        if category == "ai"
+                        else ["--force", "--yes"]
+                    )
                     status, stdout, _ = _run_cli(
                         cli_main,
                         [
                             "clean",
                             category,
-                            "--force",
-                            "--yes",
+                            *selection_flags,
                             "--no-interactive",
                             "--rules",
                             str(paths["rules"]),
@@ -430,7 +434,10 @@ def _run_preview() -> tuple[list[PreviewResult], list[dict[str, str]]]:
                     _record(
                         results,
                         identifier=f"clean-{category}-temp-execution",
-                        command=f"openclean clean {category} --force --yes [TEMP ONLY]",
+                        command=(
+                            f"openclean clean {category} "
+                            f"{' '.join(selection_flags)} [TEMP ONLY]"
+                        ),
                         status=status,
                         expected_status=0,
                         condition=(

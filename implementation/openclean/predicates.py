@@ -137,6 +137,14 @@ class ProtectionGate:
         """知识库已先行判定后，仅计算普通谓词。"""
         return any(predicate.should_ignore(item) for predicate in self._predicates)
 
+    @property
+    def has_active_filters(self) -> bool:
+        """是否存在需要对候选对象求值的保护或忽略规则。"""
+        return (
+            self._knowledge_base.knowledge_base.has_path_rules
+            or bool(self._predicates)
+        )
+
     def knowledge_base_ignores(self, path: str | os.PathLike[str]) -> bool:
         """无需访问文件系统即可执行最外层知识库安全判定。"""
         if not self._knowledge_base.knowledge_base.has_path_rules:
