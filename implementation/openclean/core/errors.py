@@ -70,3 +70,12 @@ class TargetUnavailableError(AgentRuntimeError):
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code="target_unavailable")
+
+
+class PlanError(AgentRuntimeError, ValueError):
+    """An execution plan is incomplete, inconsistent, or lacks fresh consent."""
+
+    exit_code = 1
+
+    def __init__(self, message: str, *, code: str = "invalid_plan") -> None:
+        super().__init__(message, code=code)

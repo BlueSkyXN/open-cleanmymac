@@ -9,6 +9,8 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+from agent_fixtures import approved_registry
+
 from openclean.actions.planner import resolve_plan
 from openclean.core.models import (
     Action,
@@ -114,7 +116,7 @@ class ResolvePlanTests(unittest.TestCase):
             ),
         )
         trusted_pack = StrategyPack(name="codex", strategies=(trusted_strategy,))
-        registry = StrategyRegistry((trusted_pack,))
+        registry = approved_registry((trusted_pack,))
         result = inspect_target(
             "codex",
             self.protection,
@@ -146,7 +148,7 @@ class ResolvePlanTests(unittest.TestCase):
 
     def test_confirm_risk_requires_include_confirm(self) -> None:
         item = self._resolve(
-            self._finding("codex.marketplace.old-staging", actionable=True),
+            self._finding("codex.marketplace.old-staging"),
             include_confirm=False,
         )
         self.assertFalse(item.can_execute)
@@ -174,7 +176,7 @@ class ResolvePlanTests(unittest.TestCase):
             run=tampered,
             findings=self.findings,
             selected_ids=[
-                self._finding("codex.marketplace.old-staging", actionable=True).finding_id
+                self._finding("codex.marketplace.old-staging").finding_id
             ],
             registry=self.registry,
             user_confirmed=True,
@@ -183,12 +185,12 @@ class ResolvePlanTests(unittest.TestCase):
         self.assertIn("strategy_hash_mismatch", plan.plan_items[0].block_reasons)
 
     def test_expired_run_blocks(self) -> None:
-        expired = replace(self.run, expires_at=time.time() - 1)
+        expired = replace(self.run, created_at=time.time() - 100, expires_at=time.time() - 1)
         plan = resolve_plan(
             run=expired,
             findings=self.findings,
             selected_ids=[
-                self._finding("codex.marketplace.old-staging", actionable=True).finding_id
+                self._finding("codex.marketplace.old-staging").finding_id
             ],
             registry=self.registry,
             user_confirmed=True,
@@ -201,7 +203,7 @@ class ResolvePlanTests(unittest.TestCase):
             run=self.run,
             findings=self.findings,
             selected_ids=[
-                self._finding("codex.marketplace.old-staging", actionable=True).finding_id
+                self._finding("codex.marketplace.old-staging").finding_id
             ],
             registry=self.registry,
             user_confirmed=False,

@@ -9,7 +9,10 @@ Strategy / StrategyPack / Run / Finding / CleanupPlan / CleanupOutcomeRecord。
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
+
+from .identifiers import valid_id
 from typing import Any
 
 from ..models import (
@@ -261,10 +264,12 @@ class Finding:
     recommendation: Recommendation = field(default_factory=Recommendation)
 
     def __post_init__(self) -> None:
-        if not self.finding_id.startswith(ID_PREFIX_FINDING):
+        if not valid_id(self.finding_id, ID_PREFIX_FINDING):
             raise ValueError("finding_id 必须以 'finding:' 开头")
-        if not self.run_id.startswith(ID_PREFIX_RUN):
+        if not valid_id(self.run_id, ID_PREFIX_RUN):
             raise ValueError("run_id 必须以 'run:' 开头")
+        if type(self.strategy_version) is not int or self.strategy_version < 1:
+            raise ValueError("Finding.strategy_version must be a positive integer")
         if not self.strategy_id:
             raise ValueError("Finding.strategy_id 不能为空")
         # 镜像 Item.__post_init__（models.py:355）：只读诊断永远不可执行。
@@ -304,10 +309,22 @@ class Run:
     complete: bool = True
     issues: tuple[RunIssue, ...] = ()
     finding_ids: tuple[str, ...] = ()
+    strategy_versions: dict[str, int] = field(default_factory=dict)
+    home: str = ""
 
     def __post_init__(self) -> None:
-        if not self.run_id.startswith(ID_PREFIX_RUN):
+        if not valid_id(self.run_id, ID_PREFIX_RUN):
             raise ValueError("run_id 必须以 'run:' 开头")
+
+        if type(self.complete) is not bool:
+            raise ValueError("Run.complete must be boolean")
+        for value in (self.created_at, self.expires_at):
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError("Run timestamps must be finite numbers")
+        if not 0 < self.expires_at - self.created_at <= RUN_TTL_SECONDS:
+            raise ValueError("Run lifetime must be positive and at most 24 hours")
+        if self.complete and any(issue.blocking for issue in self.issues):
+            raise ValueError("A complete Run cannot have blocking issues")
 
     def expired(self, now: float) -> bool:
         return now >= self.expires_at

@@ -10,14 +10,17 @@
 from __future__ import annotations
 
 import platform
+import stat
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .. import __version__
+from ..core.errors import AgentRuntimeError
+from ..macos import TRUSTED_SCAN_ALIAS_ROOTS, symlink_component
 from ..core.identifiers import new_finding_id, new_run_id
-from ..core.models import Run, RunIssue, Strategy
-from ..models import ScanIssue, ScanResult, normalize_path
+from ..core.models import Finding, Run, RunIssue, Strategy
+from ..models import Item, ScanIssue, ScanResult, normalize_path
 from ..predicates import Predicate
 from ..processes import (
     OpenFileDetectionError,
@@ -49,7 +52,7 @@ Snapshots = tuple[ProcessSnapshot | None, OpenFileSnapshot | None]
 @dataclass(frozen=True)
 class InspectResult:
     run: Run
-    findings: tuple = ()
+    findings: tuple[Finding, ...] = ()
     issues: tuple[ScanIssue, ...] = ()
 
 
@@ -88,14 +91,68 @@ def _unavailable(strategy: Strategy, reason: str) -> ScanResult:
             code="scanner_unavailable",
             message=f"策略 {strategy.id} 的探测器不可用：{reason}",
             task="inspect",
-            blocking=False,
+            blocking=True,
         )
     )
     return result
 
 
-def _roots(strategy: Strategy) -> list[str]:
-    return list(strategy.locator.roots)
+def validated_home(home: str | Path | None) -> Path:
+    value = normalize_path(home or Path.home())
+    try:
+        anchor = next((p for p in TRUSTED_SCAN_ALIAS_ROOTS if value.is_relative_to(p)), Path("/"))
+        if symlink_component(value, anchor=anchor) is not None:
+            raise ValueError("HOME has a symlink component")
+        facts = value.lstat()
+        if not stat.S_ISDIR(facts.st_mode) or stat.S_ISLNK(facts.st_mode):
+            raise ValueError("HOME must be an existing, non-symlink directory")
+    except (OSError, ValueError) as exc:
+        raise AgentRuntimeError(str(exc), code="invalid_home") from exc
+    return value
+
+
+def _roots(strategy: Strategy, home: Path) -> list[str]:
+    roots = []
+    for raw in strategy.locator.roots:
+        if raw == "~":
+            root = home
+        elif raw.startswith("~/"):
+            root = home / raw[2:]
+        elif raw.startswith("/"):
+            root = Path(raw)
+        else:
+            raise ValueError("Locator must be absolute or HOME-relative")
+        root = normalize_path(root)
+        if not root.is_relative_to(home):
+            raise ValueError("Locator is outside selected HOME")
+        if symlink_component(root, anchor=home) is not None:
+            raise ValueError("Locator has a symlink component")
+        roots.append(str(root))
+    return roots
+
+
+def apply_strategy(item: Item, strategy: Strategy) -> Item:
+    """Detector facts can only be made more restrictive by a strategy."""
+    reasons = [item.action_block_reason] if item.action_block_reason else []
+    if strategy.status != "trusted" or not strategy.action.supported:
+        reasons.append("strategy_report_only")
+    if strategy.action.name != "move_to_trash":
+        reasons.append("action_unsupported")
+    if strategy.conditions.require_structure_match:
+        reasons.append("structure_match_unavailable")
+    if strategy.assessment.classification != "cleanup_candidate":
+        reasons.append("strategy_report_only")
+    if strategy.conditions.require_no_open_handles and item.open_handle_count != 0:
+        reasons.append("open_handles_unknown_or_present")
+    if strategy.conditions.minimum_age_days is not None:
+        if item.age_days is None or item.age_days < strategy.conditions.minimum_age_days:
+            reasons.append("minimum_age_not_met")
+    risks = {"safe": 0, "confirm": 1, "critical": 2}
+    risk = max((item.safety, strategy.assessment.action_risk), key=risks.__getitem__)
+    return replace(item, safety=risk, actionable=item.actionable and not reasons,
+                   action_block_reason="; ".join(dict.fromkeys(reasons)),
+                   preselected=False)
+
 
 
 def _scan_for_strategy(
@@ -104,35 +161,43 @@ def _scan_for_strategy(
     processes: ProcessSnapshot | None,
     open_files: OpenFileSnapshot | None,
     home: Path,
+    *, now: float | None = None,
 ) -> ScanResult:
     name = strategy.detector.name
     params = strategy.detector.params
     subkind = params.get("subkind", "")
-    roots = _roots(strategy)
+    try:
+        roots = _roots(strategy, home)
+    except ValueError as exc:
+        result = ScanResult()
+        result.issues.append(ScanIssue(code="invalid_locator", message=str(exc),
+                                       task=strategy.id, blocking=True))
+        return result
     snap = {"process_snapshot": processes, "open_files": open_files}
 
     if name == "codex_transient":
-        if not roots:
-            return _unavailable(strategy, "缺少 locator.roots")
+        if len(roots) != 1:
+            return _unavailable(strategy, "需要且仅支持一个 locator root")
         root = normalize_path(roots[0])
         if subkind == "codex_marketplace_staging":
-            return scan_codex_marketplace_staging(root, protection, anchor=home, **snap)
+            return scan_codex_marketplace_staging(root, protection, anchor=home, now=now, **snap)
         if subkind == "codex_marketplace_staging_targets":
             return enumerate_codex_marketplace_staging_targets(
                 root,
                 protection,
                 anchor=home,
+                now=now,
                 minimum_age_days=strategy.conditions.minimum_age_days or 0,
                 name_glob=params.get("name_glob", "marketplace-upgrade-*"),
                 **snap,
             )
         if subkind == "codex_git_skeleton":
-            return scan_codex_git_skeletons(root, protection, anchor=home, **snap)
+            return scan_codex_git_skeletons(root, protection, anchor=home, now=now, **snap)
         return _unavailable(strategy, f"未知 codex_transient subkind：{subkind!r}")
 
     if name == "crashpad":
-        if not roots:
-            return _unavailable(strategy, "缺少 locator.roots")
+        if len(roots) != 1:
+            return _unavailable(strategy, "需要且仅支持一个 locator root")
         return scan_crashpad_orphan_sidecars(
             normalize_path(roots[0]), protection, anchor=home, **snap
         )
@@ -153,12 +218,12 @@ def _scan_for_strategy(
         ]
         result = ScanResult()
         if params.get("include_partitions"):
-            partition_rules, partition_issues = discover_codex_log_partition_rules()
+            partition_rules, partition_issues = discover_codex_log_partition_rules(home=home)
             rules.extend(partition_rules)
             result.issues.extend(partition_issues)
         if not rules:
             return _unavailable(strategy, "缺少 locator.roots")
-        scanned = scan_retention_rules(rules, protection, **snap)
+        scanned = scan_retention_rules(rules, protection, now=now, **snap)
         result.items.extend(scanned.items)
         result.issues.extend(scanned.issues)
         return result
@@ -181,7 +246,7 @@ def inspect_target(
 ) -> InspectResult:
     """运行一次 inspect：加载 pack → 逐策略探测 → 投影 Finding → 固化 Run。"""
     now = time.time() if now is None else now
-    home_path = normalize_path(home or Path.home())
+    home_path = validated_home(home)
     if target == "all":
         packs = registry.packs
     else:
@@ -193,26 +258,33 @@ def inspect_target(
     )
 
     run_id = new_run_id()
-    findings: list = []
+    findings: list[Finding] = []
     pack_hashes: dict[str, str] = {}
     for pack in packs:
         pack_hashes[pack.name] = pack_hash(pack)
         for strategy in pack.runtime_visible():
             scanned = _scan_for_strategy(
-                strategy, protection, processes, open_files, home_path
+                strategy, protection, processes, open_files, home_path, now=now
             )
             issues.extend(scanned.issues)
-            for item in scanned.items:
-                findings.append(
-                    finding_from_item(
-                        item,
-                        finding_id=new_finding_id(),
-                        run_id=run_id,
-                        strategy_id=strategy.id,
-                        strategy_version=strategy.version,
-                        do_not_do=strategy.recommendation.do_not_do,
-                    )
+            for detected in scanned.items:
+                item = apply_strategy(detected, strategy)
+                finding = finding_from_item(
+                    item, finding_id=new_finding_id(), run_id=run_id,
+                    strategy_id=strategy.id, strategy_version=strategy.version,
+                    do_not_do=strategy.recommendation.do_not_do,
                 )
+                finding = replace(
+                    finding,
+                    assessment=replace(finding.assessment,
+                        certainty=strategy.assessment.certainty,
+                        classification=(strategy.assessment.classification
+                            if item.actionable else
+                            "protected" if item.requires_privilege else "report_only")),
+                    recommendation=replace(finding.recommendation,
+                        summary=strategy.recommendation.summary or item.note),
+                )
+                findings.append(finding)
 
     run = Run(
         run_id=run_id,
@@ -229,6 +301,8 @@ def inspect_target(
             for i in issues
         ),
         finding_ids=tuple(f.finding_id for f in findings),
+        strategy_versions={s.id: s.version for pack in packs for s in pack.runtime_visible()},
+        home=str(home_path),
     )
     run_store.save(run, findings)
     return InspectResult(run=run, findings=tuple(findings), issues=tuple(issues))

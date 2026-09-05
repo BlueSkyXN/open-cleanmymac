@@ -19,9 +19,12 @@ PATH_VALUE_KEYS = frozenset({
     "config_path",
     "mount_point",
     "display_path",
+    "home",
+    "run_store",
+    "roots",
 })
 FREE_TEXT_KEYS = frozenset(
-    {"message", "note", "action_block_reason", "summary", "do_not_do"}
+    {"message", "note", "action_block_reason", "summary", "do_not_do", "block_reasons"}
 )
 # run_id/finding_id 不是路径形态，不会被路径 ref 替换；为保证脱敏输出
 # 不可 replay（AR-03 §7 / 决策 5），单独把这些 actionable ID 换成不可用占位。
@@ -32,6 +35,7 @@ REDACTION_METADATA = {
     "scope": "single-document",
     "selection_replayable": False,
 }
+_ACTIONABLE_ID_PATTERN = re.compile(r"\b(run|finding):[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![A-Za-z0-9/])/(?![/\s])")
 _TILDE_PATH_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_~])~(?:[A-Za-z0-9._-]+)?/(?!\s)"
@@ -140,7 +144,7 @@ class JsonPathRedactor:
             reference = self._reference(value)
             if reference is not None:
                 return reference
-        redacted = self._replace_known_paths(value)
+        redacted = _ACTIONABLE_ID_PATTERN.sub(r"\1:redacted", self._replace_known_paths(value))
         if key in FREE_TEXT_KEYS and (
             _ABSOLUTE_PATH_PATTERN.search(redacted)
             or _TILDE_PATH_PATTERN.search(redacted)

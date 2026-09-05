@@ -1,4 +1,4 @@
-"""Run Store 测试（AR-04 §2-§3）：往返、权限、TTL、LRU、finding 归属。"""
+"""Run Store 测试（AR-04 §2-§3）：往返、权限、TTL、最早写入淘汰、finding 归属。"""
 from __future__ import annotations
 
 import os
@@ -79,6 +79,7 @@ class RunStoreTests(unittest.TestCase):
             complete=run.complete,
             issues=run.issues,
             finding_ids=(finding.finding_id,),
+            strategy_versions={finding.strategy_id: finding.strategy_version},
         )
         self.store.save(run, [finding])
         self.assertEqual(self.store.load_run(run.run_id, now=now + 1), run)
@@ -133,7 +134,7 @@ class RunStoreTests(unittest.TestCase):
         with self.assertRaises(FindingNotInRunError):
             self.store.load_finding(run.run_id, new_finding_id())
 
-    def test_lru_capacity(self) -> None:
+    def test_oldest_written_capacity(self) -> None:
         with mock.patch.object(run_store_module, "MAX_RUNS", 3):
             now = time.time()
             for index in range(6):

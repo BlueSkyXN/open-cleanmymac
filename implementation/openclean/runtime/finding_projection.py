@@ -30,12 +30,7 @@ from ..core.models import (
     Recommendation,
 )
 from ..models import FileIdentity, Item
-
-# 反向重建时需按字段名特殊解码的集合（其余字段是 JSON 标量，直接透传）。
-_PATH_FIELDS = frozenset({"path", "project_root", "cleanup_root"})
-_IDENTITY_FIELDS = frozenset({"identity", "cleanup_root_identity"})
-_TUPLE_FIELDS = frozenset({"running_process_markers"})
-
+from ..core.serialization import decode_dataclass
 
 def _encode(value: Any) -> Any:
     """把 Item 字段值编码为 JSON 安全类型。"""
@@ -52,21 +47,6 @@ def _encode(value: Any) -> Any:
     return value
 
 
-def _decode(name: str, value: Any) -> Any:
-    """``_encode`` 的逆变换，按字段名还原 Path/FileIdentity/tuple。"""
-    if name in _PATH_FIELDS:
-        return Path(value) if value is not None else None
-    if name in _IDENTITY_FIELDS:
-        if value is None:
-            return None
-        return FileIdentity(
-            device=value["device"], inode=value["inode"], owner=value["owner"]
-        )
-    if name in _TUPLE_FIELDS:
-        return tuple(value) if value is not None else ()
-    return value
-
-
 def item_to_payload(item: Item) -> dict[str, Any]:
     """完整、JSON 安全的 Item 字段快照（无损）。"""
     return {f.name: _encode(getattr(item, f.name)) for f in fields(item)}
@@ -74,8 +54,9 @@ def item_to_payload(item: Item) -> dict[str, Any]:
 
 def item_from_payload(payload: dict[str, Any]) -> Item:
     """从快照精确重建 Item；由 ``Item.__post_init__`` 兜底校验不变量。"""
-    kwargs = {f.name: _decode(f.name, payload.get(f.name)) for f in fields(Item)}
-    return Item(**kwargs)
+    if not isinstance(payload, dict) or set(payload) != {f.name for f in fields(Item)}:
+        raise ValueError("Item evidence must contain exactly the complete snapshot fields")
+    return decode_dataclass(Item, payload, "evidence.payload")
 
 
 def _classify(item: Item) -> str:
@@ -147,5 +128,5 @@ def finding_from_item(
 
 
 def item_from_finding(finding: Finding) -> Item:
-    """从 Finding 的 payload 快照精确重建 ``Item``，供 ``execute_cleanup`` 消费。"""
+    """从 Finding 的 payload 快照精确重建 ``Item``，供展示、一致性检查和适配测试使用；执行时重新探测 Item。"""
     return item_from_payload(finding.evidence.payload)

@@ -17,6 +17,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from agent_fixtures import approved_registry
+
 from openclean.actions.planner import execute_plan, resolve_plan
 from openclean.cli import _command_from_argv, main
 from openclean.core.models import (
@@ -159,7 +161,7 @@ class AgentContractTests(unittest.TestCase):
         keep = self._make_target("marketplace-upgrade-keep")
         churn = self._make_target("marketplace-upgrade-churn")
         # P0: 使用合成 trusted pack 而非已降级的 codex
-        registry = StrategyRegistry((_trusted_pack(),))
+        registry = approved_registry((_trusted_pack(),))
         result = inspect_target(
             "codex",
             ProtectionGate(KnowledgeBase.empty()),
@@ -184,16 +186,16 @@ class AgentContractTests(unittest.TestCase):
         )
         self.assertTrue(all(i.can_execute for i in plan.plan_items))
         # 执行前替换 churn 目标（inode 变化）
-        import shutil
-
-        shutil.rmtree(churn)
+        churn.rename(churn.with_name("original-churn"))
         churn.mkdir()
         (churn / "other.bin").write_bytes(b"z" * 4096)
         with mock.patch(
             "openclean.cleanup.capture_process_snapshot", return_value=_EMPTY_PROC
         ):
             report, records = execute_plan(
-                plan, list(result.findings), ProtectionGate(KnowledgeBase.empty()), home=self.home
+                plan, list(result.findings), ProtectionGate(KnowledgeBase.empty()), home=self.home,
+                run=result.run, registry=registry, user_confirmed=True,
+                include_confirm=True, snapshots=(_EMPTY_PROC, _EMPTY_OPEN)
             )
         # all-or-nothing：identity 变化导致整批不执行，keep 目标仍在
         self.assertFalse(report.complete)
