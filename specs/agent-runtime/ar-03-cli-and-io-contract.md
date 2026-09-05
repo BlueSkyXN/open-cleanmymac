@@ -1,10 +1,15 @@
 # AR-03 · 命令与 I/O 契约
 
+> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
+> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
+> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+
+
 [契约索引](_index.md) · [AR-00 架构](ar-00-architecture.md) ·
 [AR-01 对象模型](ar-01-object-model.md) · [实现说明](../../implementation/README.md)
 
 > OpenClean 自有前瞻契约，非 CleanMyMac 参考事实。状态：📐 契约已定，未实现。
-> 本文件定义 Agent 主接口与研究命令的参数、JSON 输出、退出码，以及旧命令的退役处置。
+> 本文件定义 Agent 主接口与研究命令的参数、JSON 输出、退出码，以及旧命令的保留关系。
 > 执行阶段的授权与 live guard 见 [AR-04](ar-04-run-store-and-execution.md)。
 
 ## 1. 命令树
@@ -20,9 +25,7 @@ openclean
 └── lab       {capture, compare, draft, validate, promote, demote}   # 研究命令，非 Agent 主接口
 ```
 
-项目未发布、无兼容负担：上述命令面就是**产品主接口**。旧命令 `scan/clean <category>/analyze/
-purge` 退役，能力由新命令面吸收；`optimize`（无安全执行器）保持 fail-closed 或退役，
-`ignore`/`config` 保留，`cat` 是与清理无关的彩蛋。逐项处置见 §9。
+当前实施为附加 Agent 接口；经典命令、TUI、ignore/config/cat 保留，optimize 继续明确拒绝。
 
 ## 2. `inspect TARGET`
 
@@ -85,7 +88,7 @@ openclean explore ~/.codex --max-depth 4 --max-entries 5000 --json
 - 有深度（`--max-depth`）、数量（`--max-entries`）、时间与容量预算；超预算时结构化截断并报告。
 - 遇到跨卷、`SF_DATALESS`/疑似云占位、权限错误时结构化报告（沿用现有 `cross_device_paths`、
   dataless 阻断与 issue code 语义）。
-- 复用现有 `analyzer.py` 的一级计量能力，但增加树摘要与预算控制；`analyze`（退役）与
+- 复用现有 `analyzer.py` 的一级计量能力，但增加树摘要与预算控制；`analyze`（保留）与
   `explore` 的处置见 §9。
 
 ## 4. `show --run --finding`
@@ -190,19 +193,13 @@ openclean lab demote   --strategy codex.marketplace.old-staging --to deprecated
 
 ## 9. 命令面与旧能力处置（决策 1）
 
-项目未发布、无兼容负担，不建 adapter/strangler 层，直接收敛到 Agent-first 命令面：
+当前命令面并存，不删除经典入口：
 
-| 旧能力 | 处置 | 去向 |
+| 现有入口 | 当前处置 | Agent 关系 |
 |---|---|---|
-| `scan --domain …` | 退役 | `inspect <pack>` / `inspect all`（产出可跨命令引用的 Run/Finding） |
-| `clean junk/dev/ai/trash` | 退役 | `clean --run --finding`（Finding 驱动，跨命令） |
-| `analyze PATH`（人类空间浏览/TUI） | 退役或降级 | 研究证据由 `explore` 承担；人类空间视图（若保留）作为 `explore` 渲染选项，非 Agent 接口 |
-| `purge PATH`（项目产物） | 退役 | `project-artifacts` pack + `inspect`/`clean`（见 [AR-08](ar-08-strategy-pack-catalog.md)） |
-| `optimize ram/purgeable` | 保持 fail-closed 或退役 | 无安全公开执行器，不属于 Agent Runtime 命令面 |
-| `ignore` | 保留 | 所有 Strategy 之上的保护层（[AR-02](ar-02-strategy-and-lifecycle.md) §6） |
-| `config` | 保留并扩展 | 增加 Run Store 与 pack 配置项 |
-| `cat` | 保留 | 与清理无关的终端彩蛋，正交 |
-| curses TUI | 退役或降级 | 不作为 Agent 主接口；是否保留人类审阅 UI 是实现期取舍（见 [AR-07](ar-07-implementation-roadmap.md)） |
+| scan / clean category / analyze / purge | 全部保留 | 新增 inspect/show/clean --run，不替换旧调用 |
+| optimize ram/purgeable | 保持不可执行 | 未实现公开执行器 |
+| ignore/config/cat | 保留 | Agent 应用同一保护配置 |
+| curses TUI | 保留 | 人类界面，不是 Agent 输出替代品 |
 
-JSON 输出围绕 Run/Finding 重新设计，**不冻结于 schema v2**；脱敏机制（`redaction.py`）与
-退出码语义沿用。逐模块转化见 [AR-07](ar-07-implementation-roadmap.md)。
+当前 CLI envelope 固定为 schema v2；对象和持久化容器独立版本。长期扩展须单独更新契约。

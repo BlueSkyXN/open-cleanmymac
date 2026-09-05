@@ -23,8 +23,8 @@ PYTHONPATH=. python3 -m openclean.cli scan --json           # 经典五域扫描
 PYTHONPATH=. python3 -m openclean.cli inspect codex --json  # Agent Runtime（附加命令面）
 ```
 
-扫描和预览默认只读。`--yes`、`ignore add/remove`、`config --analytics` 和知识库更新
-才会写入。
+扫描/预览不修改候选。Agent `inspect` 会写入本机 Run Store；`--yes`、`ignore add/remove`、
+`config --analytics` 和知识库更新也涉及写入。
 
 ## 仓库地图
 
@@ -39,7 +39,7 @@ PYTHONPATH=. python3 -m openclean.cli inspect codex --json  # Agent Runtime（�
 | `docs/` | 用户/开发者文档 | 预览、能力地图、架构 |
 | `CONTRIBUTING.md` / `SECURITY.md` | 协作与安全 | 净室边界、检查门、漏洞报告 |
 | `analysis/` | ❌ 不要看 | 原始分析产物，已隔离 |
-| `local/` | 不用管 | 本机过程材料，已隔离 |
+| `local/` | 私人交接入口（若存在） | 先读 `local/README.md`；不进公开发行包或 Git |
 
 ## 开发前读规格
 
@@ -81,7 +81,7 @@ OpenClean **自有**的下一代架构契约（Agent Runtime v1：对象模型�
 当前用户态扫描、预览、选择、同卷 Trash、JSON schema v2 和受限 Docker prune 已落地。
 另新增 **Agent Runtime v1**（P0 Codex 切片）作为附加命令面：`inspect`/`show`/
 `clean --run --finding`/`strategy`、Finding/Run/CleanupPlan、本机私有 Run Store、`codex` pack
-与一条 trusted 逐目标策略；它与经典五域命令**并存**，底层探测器/计量/保护闸/同卷 Trash
+（7 条 active/report_only，未启用生产动作）；它与经典五域命令**并存**，底层探测器/计量/保护闸/同卷 Trash
 执行器复用未重写。
 `optimize ram|purgeable` 明确拒绝。特权帮助器、正式知识库服务端、真实 Docker daemon
 验收未做。逐项状态见 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
@@ -98,6 +98,9 @@ OpenClean **自有**的下一代架构契约（Agent Runtime v1：对象模型�
 7. 写测试只用 `TemporaryDirectory`；不在真实 `HOME` 或真实 Docker daemon 上跑 `--yes`。
 8. 不提交 token、私钥、真实用户路径或机器扫描结果。
 9. 不创建 tag、Release、PyPI/Homebrew 发布，除非单独授权并完成发行审阅。
+
+当前实现与长期目标有区别，先读 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
+旧规格中的未来模型替换不是本次删除经典命令的授权。
 
 ## 认领任务
 

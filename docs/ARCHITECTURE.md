@@ -37,6 +37,9 @@ flowchart TD
 
 ### 1.1 Agent Runtime（附加命令面）
 
+当前为 P0a，只读生产包；下图的写执行分支仅通过合成测试，未启用生产策略。
+存储与实时执行边界详见 [当前状态](AGENT_RUNTIME_STATUS.md)。
+
 P0 新增面向 AI agent 的 `inspect`/`show`/`clean --run --finding`/`strategy`，与上面的经典
 五域面**并存**，复用同一套探测器、保护闸与同卷 Trash 执行器；差异是把“发现”固化为
 Run/Finding 并按 `finding_id` 授权执行。
@@ -50,8 +53,8 @@ flowchart TD
     GATE2 --> PROJ[runtime/finding_projection.py\nItem ↔ Finding 双向投影]
     PROJ --> STORE[runtime/run_store.py\nRun + Finding · 0700/0600 · 24h TTL]
     STORE --> SHOW[show / clean 预览\n按 run_id + finding_id 解析]
-    SHOW --> PLAN[actions/planner.py\nresolve_plan：can_execute 八项合取]
-    PLAN --> EXEC[actions/planner.execute_plan\n→ cleanup.execute_cleanup 零改动复用]
+    SHOW --> PLAN[actions/planner.py\nresolve_plan：静态计划条件]
+    PLAN --> EXEC[actions/planner.execute_plan\n重新探测 Item → cleanup.execute_cleanup]
     EXEC --> TRASH2[同卷 Trash]
 ```
 

@@ -10,17 +10,17 @@
 
 ## [Unreleased]
 
-### Added
+### Added / Fixed — 0.24.0a1 candidate (2026-09-05)
 
-- **Agent Runtime v1（P0 Codex 切片）**：新增 `inspect <target>` / `show` /
-  `clean --run --finding` / `strategy list|show|verify` 命令面，以 Run/Finding/CleanupPlan
-  对象与本机私有 Run Store（`0700`/`0600`、默认 24h TTL、过期拒绝且不自动重扫）承载
-  “探测 → 审阅 → 授权执行”；仅 `trusted` 策略可执行，执行前复核 pack hash、目标
-  identity、protect/ignore 与实时 guard。首个策略包 `codex`（含一条 trusted 逐目标
-  marketplace 暂存清理策略）随包分发。`--redact-paths` 同时脱敏 `run_id`/`finding_id`，
-  脱敏输出 `selection_replayable=false`。这是**附加**命令面：既有
-  `scan`/`clean <category>`/`analyze`/`purge` 与 TUI 全部保留，底层探测器、计量、保护闸
-  与同卷 Trash 执行器复用、未重写。契约见 `specs/agent-runtime/`。
+- 新增 Agent `inspect/show/clean --run/strategy` 命令与 P0a Codex 只读包；经典五域与 TUI 保留。
+- Run bundle v2 严格绑定完整清单、策略版本、HOME、目标/证据/评估/计量；原子读写与容量上限，
+  旧格式要求重新 inspect，不做隐式补造或重扫。
+- 计划执行要求独立确认与上下文，实时重扫后使用新 Item；混合被阻止批次不启动且不声称成功。
+- 修正 HOME/ignore 作用范围、外部 pack 执行隔离、类型/JSON 错误处理、脱敏错误中的 ID，
+  并统一 `plan.plan_items` 与 CLI schema v2。
+- 修正 staging 计量前后变化检测、根目录年龄、部分扫描处理及空过测试。
+- 版本为候选版；P0b 的结构匹配器、真实 Observation 和生产策略审批仍未完成，内置 7 条策略均只读。
+  本次未发布 tag、Release 或软件仓库包，macOS 原生验证由接手环境执行。
 
 ### Changed
 

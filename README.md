@@ -40,6 +40,9 @@ Release，也不计划通过 PyPI、Homebrew 或其他包管理器分发。
 上图由当前 Clean TUI 的生产绘制函数生成，使用固定合成候选。更多画面见
 [docs/PREVIEW.md](docs/PREVIEW.md)。
 
+> 当前候选版本 `0.24.0a1`：经典功能保留；Agent 交付 P0a 只读与计划预览，生产动作未启用。
+> 完整范围与 JSON/Run 版本见 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
+
 ## 快速开始
 
 要求：macOS、Python 3.11+。当前 CI 只验证 Python 3.11。
@@ -70,7 +73,7 @@ python3 -m venv .venv
 
 | 能力 | 预览 | 执行 | 当前边界 |
 |---|---|---|---|
-| Agent Runtime（`inspect`/`show`/`clean --run`/`strategy`） | 是 | 用户态（仅 `trusted` 策略） | P0 仅 `codex` pack；其余 target fail-closed |
+| Agent Runtime（`inspect`/`show`/`clean --run`/`strategy`） | 是 | 当前不启用生产动作 | P0a：7 条 Codex 策略均只读；见 [当前状态](docs/AGENT_RUNTIME_STATUS.md) |
 | 五域扫描（system / developer / ai / trash / project） | 是 | 只读 | `scan` 始终只读 |
 | `clean junk / dev / ai` | 是 | 用户态 | 默认预览；`--yes` 才执行当前选择 |
 | `clean trash` | 是 | 永久删除 | 清空内容，保留 Trash 根 |

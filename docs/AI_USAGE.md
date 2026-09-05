@@ -94,10 +94,9 @@ openclean strategy list --json                           # 只读查看已安装
 - `--redact-paths` 输出 `redaction.selection_replayable=false`，脱敏后的 id 不能回放执行。
 - 聚合根 Finding（`target.kind=filesystem_subset`）永不作为动作目标，只用于报告。
 
-执行仍走 `clean --run RUN_ID --finding FINDING_ID`：不带 `--yes` 只预览；带 `--yes`
-（+ 对应 `--include-confirm`/`--include-critical`）才写入同卷 Trash，且仅 `trusted` 策略、
-执行前复核 identity/protect/live guard。契约见
-[实现说明](../implementation/README.md)。
+计划预览使用 `clean --run RUN_ID --finding FINDING_ID`。当前 7 条内置策略均只读，
+即使加 `--yes` 也不执行。未来生产策略须先具备真实结构证据与明确审批；执行前还需重新探测。
+`inspect` 只读候选，但会写本机 Run Store。契约见 [当前状态](AGENT_RUNTIME_STATUS.md)。
 
 ## 停止边界
 

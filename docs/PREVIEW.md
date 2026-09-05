@@ -26,6 +26,9 @@ cd implementation
 PYTHONPATH=. python3 scripts/preview_all.py --json
 ```
 
+> Agent 当前仅 P0a，7 条内置策略只读；`inspect` 会写本机 Run Store。
+> macOS 原生结果与 Linux 逻辑模拟不能混同，见 [当前状态](AGENT_RUNTIME_STATUS.md)。
+
 ## 隔离保证
 
 预览脚本在 `TemporaryDirectory` 中创建独立 `HOME`、规则文件、配置、Trash、项目、缓存、

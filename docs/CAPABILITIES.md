@@ -33,7 +33,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 |---|---|---|---|
 | Agent Runtime 探测 | `inspect <target>` | `available`（仅 `codex`） | 只读探测，固化 Run/Finding 到本机 Run Store；其余 target 为已规划 pack，fail-closed `pack_not_found`/exit 1 |
 | Finding 审阅 | `show --run --finding` | `available` | 从 Run Store 读取完整证据；只读 |
-| Finding 驱动清理 | `clean --run --finding` | `available`（仅 `trusted`） | 默认预览；`--yes` + `--include-*` 才执行；执行前复核 identity/protect/live guard |
+| Finding 驱动清理 | `clean --run --finding` | `preview-only`（P0a） | 内置 7 条策略均只读；P0b 结构匹配与生产审批未完成；见 [当前状态](AGENT_RUNTIME_STATUS.md) |
 | 策略包查看/校验 | `strategy list/show/verify` | `available` | 只读；`codex` pack 随包分发，hash 稳定 |
 | 五域聚合扫描 | `scan` | `available` | `scan` 始终只读；扫描点是保守公开子集 |
 | 分类清理 | `clean junk / dev / ai` | `available` | 默认预览；`--yes` 只执行当前已审阅选择 |

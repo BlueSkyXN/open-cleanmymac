@@ -1,5 +1,10 @@
 # AR-06 · Codex P0 验收
 
+> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
+> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
+> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+
+
 [契约索引](_index.md) · [AR-03 命令与 I/O](ar-03-cli-and-io-contract.md) ·
 [AR-04 Run Store 与执行](ar-04-run-store-and-execution.md) ·
 [实现任务](../../implementation/TODO.md)
@@ -27,7 +32,7 @@ P0 收敛成一个明确的纵向闭环，而不是按目标目录树一次性�
 - **至少一个经动作验证的 `trusted` Strategy**，用 `TemporaryDirectory` 跑通完整执行回执
   （正例 + 负例 + 动作前后验证，见 [AR-05](ar-05-research-governance.md) §3）。
 - Agent Contract 正负测试（§3）。
-- 命令面切换：`scan/clean <category>/analyze/purge` 退役后，能力由 `inspect/explore/show/clean`
+- 命令面并存：`scan/clean <category>/analyze/purge` 保留，Agent 能力由 `inspect/explore/show/clean`
   覆盖、无悬空入口；底层探测器/执行器迁移复用后，其既有测试继续通过（见
   [AR-07](ar-07-implementation-roadmap.md) 逐模块转化表）。
 
