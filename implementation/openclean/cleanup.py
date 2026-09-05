@@ -405,7 +405,7 @@ def _audit_descendants(
                 entries = sorted(iterator, key=lambda entry: entry.name)
         except CleanupSafetyError:
             raise
-        except (PermissionError, FileNotFoundError, OSError) as exc:
+        except OSError as exc:
             raise CleanupSafetyError(
                 f"无法复核目录 {directory}：{exc}"
             ) from exc
@@ -1101,7 +1101,7 @@ def _empty_trash(
             remaining = sorted(entry.name for entry in iterator)
     except CleanupSafetyError:
         raise
-    except (PermissionError, FileNotFoundError, OSError) as exc:
+    except OSError as exc:
         failures.append(f"复核失败：{exc}")
         remaining = None
     finally:

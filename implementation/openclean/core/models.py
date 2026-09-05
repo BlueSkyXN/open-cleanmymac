@@ -173,7 +173,7 @@ class StrategyPack:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("StrategyPack.name 不能为空")
-        seen: dict[str, int] = {}
+        seen: set[str] = set()
         for strategy in self.strategies:
             if strategy.pack != self.name:
                 raise ValueError(
@@ -181,7 +181,7 @@ class StrategyPack:
                 )
             if strategy.id in seen:
                 raise ValueError(f"pack 内策略 id 重复：{strategy.id}")
-            seen[strategy.id] = strategy.version
+            seen.add(strategy.id)
 
     def runtime_visible(self) -> tuple[Strategy, ...]:
         return tuple(s for s in self.strategies if s.runtime_visible)

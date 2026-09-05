@@ -215,7 +215,7 @@ def _read_public_key(path: str | os.PathLike[str]) -> tuple[bytes, str]:
     source = normalize_path(path)
     try:
         source_stat = source.lstat()
-    except (FileNotFoundError, PermissionError, OSError) as exc:
+    except OSError as exc:
         raise KnowledgeUpdateError(f"无法检查知识库公钥 {source}：{exc}") from exc
     if stat.S_ISLNK(source_stat.st_mode) or not stat.S_ISREG(source_stat.st_mode):
         raise KnowledgeUpdateError("知识库公钥必须是非符号链接普通文件")

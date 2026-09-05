@@ -20,7 +20,7 @@ from typing import Any
 from ..core.errors import FindingNotInRunError, RunExpiredError, RunNotFoundError, RunStoreError
 from ..core.identifiers import valid_id
 from ..core.models import ID_PREFIX_RUN, RUN_TTL_SECONDS, Finding, Run
-from ..core.serialization import decode_dataclass, reject_json_constant, strict_json_pairs
+from ..core.serialization import decode_dataclass, decode_value, reject_json_constant, strict_json_pairs
 from ..models import normalize_path
 from ..macos import scan_symlink_anchor
 from .bundle_validation import validate_bundle
@@ -118,7 +118,7 @@ class RunStore:
             if not isinstance(payload["findings"], list):
                 raise ValueError("findings 必须是数组")
             run = run_from_dict(payload["run"])
-            findings = tuple(finding_from_dict(f) for f in payload["findings"])
+            findings = decode_value(tuple[Finding, ...], payload["findings"], "finding", require_all=True)
             if run.run_id != expected_id:
                 raise ValueError("Run ID 与文件名不一致")
             validate_bundle(run, findings)

@@ -93,7 +93,7 @@ def analyze_path(
     analysis = SpaceAnalysis(root=root)
     try:
         candidate_paths = tuple(entry.path for entry in scandir_entries(root))
-    except (PermissionError, FileNotFoundError, OSError) as exc:
+    except OSError as exc:
         analysis.issues.append(
             ScanIssue(
                 code=(
@@ -168,7 +168,7 @@ def analyze_path(
 
     try:
         mount_point = volume_mount_point(root)
-    except (PermissionError, FileNotFoundError, OSError) as exc:
+    except OSError as exc:
         analysis.issues.append(
             ScanIssue(
                 code="snapshot_discovery_failed",

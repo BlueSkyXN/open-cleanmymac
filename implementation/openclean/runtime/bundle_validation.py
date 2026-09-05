@@ -26,7 +26,9 @@ def validate_finding(finding: Finding) -> Item:
             raise ValueError("Filesystem Finding has no identity")
         if str(normalize_path(target.display_path)) != target.display_path:
             raise ValueError("Finding path must be canonical and absolute")
-        if any(type(v) is not int or v < 0 for v in asdict(item.identity).values()):
+        if any(type(v) is not int or v < 0 for v in (
+            item.identity.device, item.identity.inode, item.identity.owner,
+        )):
             raise ValueError("Invalid filesystem identity")
     if (assessment.action_risk, assessment.actionable, assessment.requires_privilege,
         assessment.is_cloud_file, assessment.requires_explicit_selection) != (
@@ -47,9 +49,10 @@ def validate_finding(finding: Finding) -> Item:
 def validate_bundle(run: Run, findings: Sequence[Finding]) -> None:
     decode_dataclass(Run, asdict(run), "run")
     ids = [f.finding_id for f in findings]
-    if len(set(ids)) != len(ids) or len(set(run.finding_ids)) != len(run.finding_ids):
+    finding_ids, manifest_ids = set(ids), set(run.finding_ids)
+    if len(finding_ids) != len(ids) or len(manifest_ids) != len(run.finding_ids):
         raise ValueError("Duplicate Finding ID")
-    if set(ids) != set(run.finding_ids):
+    if finding_ids != manifest_ids:
         raise ValueError("Run manifest does not match its Findings")
     for finding in findings:
         if finding.run_id != run.run_id:

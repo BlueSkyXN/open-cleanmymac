@@ -31,9 +31,10 @@ def resolve_plan(
     if not selected_ids or len(set(selected_ids)) != len(selected_ids):
         raise PlanError("Select one or more unique Finding IDs")
     by_id = {f.finding_id: f for f in findings}
+    manifest_ids = set(run.finding_ids)
     for finding_id in selected_ids:
         finding = by_id.get(finding_id)
-        if finding is None or finding.run_id != run.run_id or finding_id not in run.finding_ids:
+        if finding is None or finding.run_id != run.run_id or finding_id not in manifest_ids:
             raise FindingNotInRunError(f"Finding {finding_id} 不属于 Run {run.run_id}")
     try:
         validate_bundle(run, findings)
@@ -176,11 +177,12 @@ def execute_plan(
         issues.extend(scanned.issues)
         live_by_strategy[entry.strategy_id] = [apply_strategy(item, strategy) for item in scanned.items]
     items = []
+    live_scan_incomplete = any(issue.blocking for issue in issues)
     for entry in plan.plan_items:
         target = entry.resolved_targets[0]
         matches = [item for item in live_by_strategy[entry.strategy_id]
                    if item.path is not None and str(item.path) == target.display_path]
-        if any(issue.blocking for issue in issues):
+        if live_scan_incomplete:
             blocked[entry.finding_id] = "live_scan_incomplete"
         elif len(matches) != 1:
             blocked[entry.finding_id] = "live_target_not_found"

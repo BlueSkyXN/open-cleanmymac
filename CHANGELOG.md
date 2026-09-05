@@ -10,6 +10,13 @@
 
 ## [Unreleased]
 
+### Performance — implementation-only optimization (2026-09-05)
+
+- 普通路径的重叠计量改用最近已扫描父路径索引，避免全量两两比较；保留相对路径和双斜杠根路径的原有语义。
+- 未注册进度回调时不再构造任务快照，显式快照、进度状态和回调顺序不变。
+- 同一次对象解码复用字段与类型信息；不跨调用缓存，继续识别后续注解变化。
+- 合并相同 JSON 汇总与重复成员查询，减少无用聚合对象、辅助包装和不可达分支；命令、字段、依赖和策略状态不变。
+
 ### Added / Fixed — 0.24.0a1 candidate (2026-09-05)
 
 - 新增 Agent `inspect/show/clean --run/strategy` 命令与 P0a Codex 只读包；经典五域与 TUI 保留。

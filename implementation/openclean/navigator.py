@@ -57,7 +57,7 @@ def reveal_in_finder(
 def _is_directory(path: Path) -> bool:
     try:
         return stat.S_ISDIR(path.lstat().st_mode)
-    except (PermissionError, FileNotFoundError, OSError):
+    except OSError:
         return False
 
 

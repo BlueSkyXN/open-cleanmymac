@@ -207,12 +207,8 @@ class StrategyRegistry:
     ) -> StrategyRegistry:
         resolved = names if names is not None else available_pack_names(packs_dir=packs_dir)
         loaded = tuple(load_pack(name, packs_dir=packs_dir) for name in resolved)
-        if packs_dir is not None:
-            # P0 BUG-007：外部目录加载的 pack 强制降级 trusted → active/report_only。
-            loaded = tuple(_downgrade_external_pack(p) for p in loaded)
-            external = frozenset(p.name for p in loaded)
-        else:
-            external = frozenset()
+        # __init__ performs the external downgrade once for every entry path.
+        external = frozenset(p.name for p in loaded) if packs_dir is not None else frozenset()
         return cls(loaded, external_pack_names=external,
                    approved_pack_hashes=APPROVED_PACK_HASHES if packs_dir is None else frozenset())
 
@@ -234,20 +230,21 @@ class StrategyRegistry:
 
     def runtime_visible(self, pack_name: str | None = None) -> tuple[Strategy, ...]:
         packs = (
-            [self.get_pack(pack_name)]
+            (self.get_pack(pack_name),)
             if pack_name is not None
-            else list(self._packs.values())
+            else self._packs.values()
         )
         return tuple(s for pack in packs for s in pack.runtime_visible())
 
     def get(self, strategy_id: str) -> Strategy:
         """按 id 返回最高 version 的策略；不存在抛 StrategyError。"""
-        matches = [
-            s for pack in self._packs.values() for s in pack.strategies if s.id == strategy_id
-        ]
-        if not matches:
+        strategy = max(
+            (s for pack in self._packs.values() for s in pack.strategies if s.id == strategy_id),
+            key=lambda s: s.version, default=None,
+        )
+        if strategy is None:
             raise StrategyError(f"未知策略：{strategy_id}")
-        return max(matches, key=lambda s: s.version)
+        return strategy
 
     def pack_hash(self, pack_name: str) -> str:
         return pack_hash(self.get_pack(pack_name))

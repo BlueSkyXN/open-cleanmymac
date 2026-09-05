@@ -539,7 +539,7 @@ def _volume_summaries(
     for device_id, volume_items in grouped.items():
         try:
             mount_point = volume_mount_point(volume_items[0].path)
-        except (FileNotFoundError, PermissionError, OSError):
+        except OSError:
             mount_point = None
         summaries.append(
             {
@@ -714,6 +714,21 @@ def _issue_payload(issue) -> dict[str, object]:
     }
 
 
+def _scan_summary(result: ScanResult) -> dict[str, object]:
+    total, reclaimable = result.total, result.actionable_total
+    return {
+        "complete": result.complete,
+        "cancelled": result.cancelled,
+        "total_bytes": total,
+        "potential_bytes": total,
+        "reclaimable_bytes": reclaimable,
+        "requires_privilege_bytes": result.requires_privilege_total,
+        "unsupported_bytes": result.unsupported_total,
+        "total_human": human(total),
+        "reclaimable_human": human(reclaimable),
+    }
+
+
 def _print_report(
     result: ScanResult,
     as_json: bool,
@@ -728,15 +743,7 @@ def _print_report(
             "command": "scan",
             "mode": "report",
             "requested_domains": requested_domains,
-            "complete": result.complete,
-            "cancelled": result.cancelled,
-            "total_bytes": result.total,
-            "potential_bytes": result.total,
-            "reclaimable_bytes": result.actionable_total,
-            "requires_privilege_bytes": result.requires_privilege_total,
-            "unsupported_bytes": result.unsupported_total,
-            "total_human": human(result.total),
-            "reclaimable_human": human(result.actionable_total),
+            **_scan_summary(result),
             "volumes": _volume_summaries(result.items),
             "items": [
                 _item_payload(i)
@@ -792,15 +799,7 @@ def _print_purge_report(
             "schema_version": CLI_SCHEMA_VERSION,
             "command": "purge",
             "mode": "result" if cleanup is not None else "preview",
-            "complete": result.complete,
-            "cancelled": result.cancelled,
-            "total_bytes": result.total,
-            "potential_bytes": result.total,
-            "reclaimable_bytes": result.actionable_total,
-            "requires_privilege_bytes": result.requires_privilege_total,
-            "unsupported_bytes": result.unsupported_total,
-            "total_human": human(result.total),
-            "reclaimable_human": human(result.actionable_total),
+            **_scan_summary(result),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),
@@ -887,15 +886,7 @@ def _print_clean_report(
             "command": "clean",
             "category": requested_category or "all",
             "mode": "result" if cleanup is not None else "preview",
-            "complete": result.complete,
-            "cancelled": result.cancelled,
-            "total_bytes": result.total,
-            "potential_bytes": result.total,
-            "reclaimable_bytes": result.actionable_total,
-            "requires_privilege_bytes": result.requires_privilege_total,
-            "unsupported_bytes": result.unsupported_total,
-            "total_human": human(result.total),
-            "reclaimable_human": human(result.actionable_total),
+            **_scan_summary(result),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),

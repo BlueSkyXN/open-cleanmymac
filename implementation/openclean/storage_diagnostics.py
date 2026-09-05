@@ -292,7 +292,6 @@ def _format_bytes(value: int) -> str:
         if size < 1024 or unit == "TiB":
             return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
         size /= 1024
-    raise AssertionError("unreachable")
 
 
 def _append_filesystem_issue(

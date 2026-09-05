@@ -122,10 +122,10 @@ def parse_deleted_open_files(output: str) -> DeletedOpenFileSnapshot:
             return
         if device is None or inode is None or logical_size is None:
             raise invalid_output("文件记录缺少 device、inode 或 size")
-        aggregate = aggregates.setdefault(
-            (device, inode),
-            _DeletedOpenAggregate(),
-        )
+        key = (device, inode)
+        aggregate = aggregates.get(key)
+        if aggregate is None:
+            aggregate = aggregates[key] = _DeletedOpenAggregate()
         aggregate.logical_size = max(aggregate.logical_size, logical_size)
         aggregate.handle_count += 1
         if command:
