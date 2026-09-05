@@ -75,9 +75,33 @@ freelist 只有在应用完全退出、无 WAL/句柄、有备份和足够临时
 参数、规则、路径或配置错误；`130` 表示用户中断。`optimize ram|purgeable` 当前返回
 `status=unavailable`、`executed=false` 和 exit `1`，这是预期安全拒绝。
 
+## Agent Runtime（Finding 驱动，附加）
+
+面向 AI agent 的附加命令面，与上面的经典只读命令并存。它把“发现”固化为可跨命令引用的
+Run/Finding，让 agent 用稳定 id（而非易变的绝对路径）向用户复述候选：
+
+```bash
+openclean inspect codex --json                           # 只读探测，固化 Run/Finding
+openclean show --run RUN_ID --finding FINDING_ID --json   # 只读读取单个 Finding 完整证据
+openclean strategy list --json                           # 只读查看已安装策略包
+```
+
+判读要点：
+
+- `findings[].actionable=false` 或带 `block_reasons` 时只报告原因，不尝试替代路径；
+  `totals.actionable` 是当前可执行数，不等于用户授权。
+- `run_id`/`finding_id` 只是引用句柄，**不构成删除授权**；把它们复述给用户，由用户决定。
+- `--redact-paths` 输出 `redaction.selection_replayable=false`，脱敏后的 id 不能回放执行。
+- 聚合根 Finding（`target.kind=filesystem_subset`）永不作为动作目标，只用于报告。
+
+执行仍走 `clean --run RUN_ID --finding FINDING_ID`：不带 `--yes` 只预览；带 `--yes`
+（+ 对应 `--include-confirm`/`--include-critical`）才写入同卷 Trash，且仅 `trusted` 策略、
+执行前复核 identity/protect/live guard。契约见
+[实现说明](../implementation/README.md)。
+
 ## 停止边界
 
-AI 不得自行添加 `--yes`，也不得自动清空 Trash、执行 Docker prune、修改 ignore/config、
+AI 不得自行添加 `--yes`（包括 `clean --run --finding --yes`），也不得自动清空 Trash、执行 Docker prune、修改 ignore/config、
 更新知识库、调用 sudo 或绕过 `actionable=false`。普通清理通常进入同卷 Trash，但仍属于
 文件写入。用户要求执行时，应把它作为新的写入任务重新核对精确目标和当前 `--help`。
 

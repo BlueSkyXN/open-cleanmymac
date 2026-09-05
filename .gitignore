@@ -43,3 +43,8 @@ id_ed25519*
 .vscode/
 # macOS
 .DS_Store
+/.tmp-wb-max-tutorial
+# specs/ 原始研究数据（不提交原始 Observation/raw 数据）
+/specs/*/research/raw/
+/specs/*/research/raw/*
+/.workbuddy

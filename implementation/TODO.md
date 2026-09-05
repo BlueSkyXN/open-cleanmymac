@@ -10,6 +10,15 @@
 [docs/CAPABILITIES.md](../docs/CAPABILITIES.md)、CHANGELOG 和当前 `make check` 为准。
 CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI 对齐目标。
 
+> **Agent Runtime v1（P0 Codex 切片）已落地**：`inspect`/`show`/`clean --run --finding`/
+> `strategy` 命令面、Finding/Run/CleanupPlan 对象、本机私有 Run Store、`codex` pack 与一条
+> trusted 逐目标策略已实现并通过 `test_agent_*`；它与经典五域命令**并存**，底层探测器/
+> 计量/保护闸/同卷 Trash 执行器复用未重写。剩余 Agent 工作（其余 pack：qoder/workbuddy/
+> macos-system/developer-tools/browsers/docker/project-artifacts；`explore`/`lab` 研究平面；
+> 正式知识库发布源）按
+> [specs/agent-runtime/AR-07](../specs/agent-runtime/ar-07-implementation-roadmap.md) 与
+> [AR-08](../specs/agent-runtime/ar-08-strategy-pack-catalog.md) 分阶段推进。
+
 ## P0：发布前必须保持的阻断边界
 
 ### 1. SMAppService/XPC 特权帮助器

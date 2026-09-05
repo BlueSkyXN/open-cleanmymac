@@ -19,7 +19,8 @@ cat implementation/TODO.md
 
 ```bash
 cd implementation
-PYTHONPATH=. python3 -m openclean.cli scan --json
+PYTHONPATH=. python3 -m openclean.cli scan --json           # 经典五域扫描（只读）
+PYTHONPATH=. python3 -m openclean.cli inspect codex --json  # Agent Runtime（附加命令面）
 ```
 
 扫描和预览默认只读。`--yes`、`ignore add/remove`、`config --analytics` 和知识库更新
@@ -54,6 +55,10 @@ PYTHONPATH=. python3 -m openclean.cli scan --json
 8. `06-system-flow.md` — 端到端流程
 9. `04-ipc-protocol.md` — 仅当做特权帮助器时读
 
+OpenClean **自有**的下一代架构契约（Agent Runtime v1：对象模型、命令与 I/O、Run Store、
+执行不变量、策略包、研究治理、实施路线）在
+[specs/agent-runtime/](specs/agent-runtime/_index.md)；它是自有设计，与 00-07 的参考事实分开。
+
 规格记录参考对象的功能事实。本项目实际交付范围以 `_index.md`、根 README 和
 `implementation/TODO.md` 为准；高风险能力可以只读或不实现。
 
@@ -68,11 +73,16 @@ PYTHONPATH=. python3 -m openclean.cli scan --json
 | 模型 / 进度 | `models.py`、`task_graph.py`、`progress.py` |
 | 规则 | `predicates.py`、`knowledge_base.py`、`knowledge_update.py` |
 | 执行 | `cleanup.py`、`macos.py`、`processes.py` |
-| 专项扫描 | `docker.py`、`updater.py`、`storage_diagnostics.py`、`startup_items.py`、`application_languages.py`、`analyzer.py` |
+| 专项扫描 / detector | `docker.py`、`updater.py`、`storage_diagnostics.py`、`startup_items.py`、`application_languages.py`、`analyzer.py` |
+| Agent Runtime | `core/`、`strategies/`、`runtime/`、`actions/`、`packs/`（`inspect`/`show`/`clean --run`/`strategy`） |
 | TUI | `tui.py`、`space_tui.py`、`navigator.py` |
 | 预览 / 发行 | `scripts/preview_all.py`、`scripts/capture_tui_assets.py`、`scripts/check_release_artifacts.py` |
 
 当前用户态扫描、预览、选择、同卷 Trash、JSON schema v2 和受限 Docker prune 已落地。
+另新增 **Agent Runtime v1**（P0 Codex 切片）作为附加命令面：`inspect`/`show`/
+`clean --run --finding`/`strategy`、Finding/Run/CleanupPlan、本机私有 Run Store、`codex` pack
+与一条 trusted 逐目标策略；它与经典五域命令**并存**，底层探测器/计量/保护闸/同卷 Trash
+执行器复用未重写。
 `optimize ram|purgeable` 明确拒绝。特权帮助器、正式知识库服务端、真实 Docker daemon
 验收未做。逐项状态见 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
 

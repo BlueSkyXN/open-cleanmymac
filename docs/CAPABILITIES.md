@@ -8,6 +8,11 @@
 Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意保持只读或 fail-closed。
 用户入口见 [README.md](../README.md)；本页是范围与验证的权威表。
 
+> **两套命令面并存**：经典五域面（`scan`/`clean <category>`/`analyze`/`purge` + TUI）
+> 与新增的 **Agent Runtime v1**（`inspect`/`show`/`clean --run --finding`/`strategy`，P0 仅
+> `codex` pack）同时可用，共享同一套底层探测器、计量、保护闸与同卷 Trash 执行器。
+> Agent Runtime 契约见 [specs/agent-runtime/](../specs/agent-runtime/_index.md)。
+
 ## 状态定义
 
 | 状态 | 含义 |
@@ -26,6 +31,10 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 | capability | command | status | boundary / exclusion |
 |---|---|---|---|
+| Agent Runtime 探测 | `inspect <target>` | `available`（仅 `codex`） | 只读探测，固化 Run/Finding 到本机 Run Store；其余 target 为已规划 pack，fail-closed `pack_not_found`/exit 1 |
+| Finding 审阅 | `show --run --finding` | `available` | 从 Run Store 读取完整证据；只读 |
+| Finding 驱动清理 | `clean --run --finding` | `available`（仅 `trusted`） | 默认预览；`--yes` + `--include-*` 才执行；执行前复核 identity/protect/live guard |
+| 策略包查看/校验 | `strategy list/show/verify` | `available` | 只读；`codex` pack 随包分发，hash 稳定 |
 | 五域聚合扫描 | `scan` | `available` | `scan` 始终只读；扫描点是保守公开子集 |
 | 分类清理 | `clean junk / dev / ai` | `available` | 默认预览；`--yes` 只执行当前已审阅选择 |
 | Trash 审阅与清空 | `clean trash` | `available` | confirm；内容永久删除，根目录保留 |
@@ -61,6 +70,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 | capability | origin_kind | implementation | validation |
 |---|---|---|---|
+| Agent Runtime（P0 Codex 切片） | `project-extension` | `core/`、`strategies/`、`runtime/`、`actions/`、`packs/codex.json`、`cli.py` | `test_agent_*`：模型不变量、注册/hash、Run Store 权限/TTL、Item↔Finding 投影、inspect 编排、planner can_execute、Finding 驱动执行、命令面契约 |
 | 五域聚合扫描 | `public-cli` | `cli.py`、`engine.py`、`scanpoints.py` | 单测 + `scan-all-domains` preview |
 | 分类清理 | `public-cli` | `cleanup.py`、`tui.py` | 选择/执行单测 + 临时 Trash preview |
 | Trash 审阅与清空 | `public-cli` | `macos.py`、`cleanup.py` | 两个合成 Trash 根的无扩面执行 preview |

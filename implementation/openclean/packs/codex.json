@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "name": "codex",
+  "strategies": [
+    {
+      "id": "codex.marketplace.old-staging",
+      "version": 1,
+      "pack": "codex",
+      "status": "active",
+      "provenance": [
+        {"kind": "personal_experience", "observation_id": "obs:personal:codex:marketplace"}
+      ],
+      "locator": {"roots": ["~/.codex/.tmp/marketplaces/.staging"]},
+      "detector": {
+        "name": "codex_transient",
+        "params": {"subkind": "codex_marketplace_staging_targets", "name_glob": "marketplace-upgrade-*"}
+      },
+      "conditions": {
+        "minimum_age_days": 7,
+        "require_structure_match": true,
+        "require_no_open_handles": true
+      },
+      "guards": {"do_not_generalize_parent": true, "protect_running_processes": true},
+      "assessment": {"classification": "report_only", "certainty": "medium", "action_risk": "confirm"},
+      "recommendation": {
+        "summary": "Codex Marketplace 旧升级暂存目录（Q-001 关闭前保持 report_only）。",
+        "do_not_do": ["不能把整个 .staging 父目录视为垃圾", "不能只根据目录名包含 tmp 判断", "require_structure_match 未实现前不得晋级 trusted"]
+      },
+      "action": {"name": "report_only", "supported": false}
+    },
+    {
+      "id": "codex.marketplace.staging-summary",
+      "version": 1,
+      "pack": "codex",
+      "status": "active",
+      "provenance": [
+        {"kind": "cleanmymac_observation", "observation_id": "obs:cleanmymac:codex:marketplace"}
+      ],
+      "locator": {"roots": ["~/.codex/.tmp/marketplaces/.staging"]},
+      "detector": {"name": "codex_transient", "params": {"subkind": "codex_marketplace_staging"}},
+      "assessment": {"classification": "report_only", "certainty": "high", "action_risk": "critical"},
+      "recommendation": {
+        "summary": "Codex marketplace 升级 staging 聚合只读汇总。",
+        "do_not_do": ["聚合根不可作为清理目标"]
+      },
+      "action": {"name": "report_only", "supported": false}
+    },
+    {
+      "id": "codex.git.temp-skeleton",
+      "version": 1,
+      "pack": "codex",
+      "status": "active",
+      "provenance": [
+        {"kind": "ai_research", "observation_id": "obs:ai:codex:git"}
+      ],
+      "locator": {"roots": ["~/.codex/.tmp"]},
+      "detector": {"name": "codex_transient", "params": {"subkind": "codex_git_skeleton"}},
+      "assessment": {"classification": "report_only", "certainty": "medium", "action_risk": "critical"},
+      "recommendation": {
+        "summary": "Codex 临时根中的空 Git 骨架。",
+        "do_not_do": ["不泛化到普通 Git 仓库"]
+      },
+      "action": {"name": "report_only", "supported": false}
+    },
+    {
+      "id": "codex.crashpad.orphan-sidecar",
+      "version": 1,
+      "pack": "codex",
+      "status": "active",
+      "provenance": [
+        {"kind": "ai_research", "observation_id": "obs:ai:codex:crashpad"}
+      ],
+      "locator": {"roots": ["~/Library/Application Support/Codex/Crashpad/pending"]},
+      "detector": {"name": "crashpad", "params": {"subkind": "crashpad_pairing"}},
+      "assessment": {"classification": "report_only", "certainty": "medium", "action_risk": "critical"},
+      "recommendation": {
+        "summary": "Codex Crashpad 孤立 sidecar 汇总。",
+        "do_not_do": ["不得删除配对 .dmp"]
+      },
+      "action": {"name": "report_only", "supported": false}
+    },
+    {
+      "id": "codex.logs.sqlite-freelist",
+      "version": 1,
+      "pack": "codex",
+      "status": "active",
+      "provenance": [
+        {"kind": "ai_research", "observation_id": "obs:ai:codex:sqlite"}
+      ],
+      "locator": {"roots": ["~/.codex/logs_2.sqlite"]},
+      "detector": {"name": "sqlite_freelist", "params": {"category": "Codex logs SQLite 空闲页"}},
+      "assessment": {"classification": "report_only", "certainty": "high", "action_risk": "critical"},
+      "recommendation": {
+        "summary": "Codex logs SQLite 内部空闲页只读诊断。",
+        "do_not_do": ["不得建议删除 DB 或在线 VACUUM"]
+      },
+      "action": {"name": "report_only", "supported": false}
+    },
+    {
+      "id": "codex.logs.retention",
+      "version": 1,
+      "pack": "codex",
+      "status": "active",
+      "provenance": [
+        {"kind": "personal_experience", "observation_id": "obs:personal:codex:logs"}
+      ],
+      "locator": {"roots": ["~/Library/Logs/com.openai.codex"]},
+      "detector": {"name": "retention", "params": {"category": "Codex macOS logs 保留期", "include_partitions": true}},
+      "assessment": {"classification": "report_only", "certainty": "high", "action_risk": "critical"},
+      "recommendation": {"summary": "Codex macOS 日志 7/14/30 天保留期只读诊断。"},
+      "action": {"name": "report_only", "supported": false}
+    },
+    {
+      "id": "codex.runtime.cache-retention",
+      "version": 1,
+      "pack": "codex",
+      "status": "active",
+      "provenance": [
+        {"kind": "personal_experience", "observation_id": "obs:personal:codex:runtime"}
+      ],
+      "locator": {"roots": ["~/.cache/codex-runtimes"]},
+      "detector": {"name": "retention", "params": {"category": "Codex runtime cache 保留期"}},
+      "assessment": {"classification": "report_only", "certainty": "high", "action_risk": "critical"},
+      "recommendation": {"summary": "Codex runtime 缓存 7/14/30 天保留期只读诊断。"},
+      "action": {"name": "report_only", "supported": false}
+    }
+  ]
+}
