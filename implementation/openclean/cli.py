@@ -951,6 +951,7 @@ def _print_analyze_report(
     selected_paths = {item.path for item in selected}
     entries = analysis.entries[:top] if top else analysis.entries
     if as_json:
+        total = analysis.total
         entry_count_total = len(analysis.entries)
         entry_count_returned = len(entries)
         _print_json({
@@ -970,12 +971,12 @@ def _print_analyze_report(
             "root": str(analysis.root),
             "complete": analysis.complete,
             "cancelled": analysis.cancelled,
-            "total_bytes": analysis.total,
-            "potential_bytes": analysis.total,
+            "total_bytes": total,
+            "potential_bytes": total,
             # Space Lens 只描述占用，不把任意一级目录归类为垃圾。
             "reclaimable_bytes": 0,
-            "allocated_bytes": analysis.total,
-            "total_human": human(analysis.total),
+            "allocated_bytes": total,
+            "total_human": human(total),
             "volumes": _volume_summaries(
                 (entry.item for entry in analysis.entries),
                 report_reclaimable=False,
@@ -1067,14 +1068,12 @@ def _select_analyze_items(
     selected: list[Item] = []
     for selector in selectors:
         target = normalize_path(selector)
-        matches = [
-            entry.item
-            for entry in analysis.entries
-            if entry.item.path == target
-        ]
-        if not matches:
+        item = next(
+            (entry.item for entry in analysis.entries if entry.item.path == target),
+            None,
+        )
+        if item is None:
             raise SelectionError(f"当前层级未找到分析候选：{selector}")
-        item = matches[0]
         if not item.actionable:
             reason = item.action_block_reason or "该候选不可执行"
             raise SelectionError(f"拒绝选择 {selector}：{reason}")

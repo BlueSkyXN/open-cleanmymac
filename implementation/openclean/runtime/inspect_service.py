@@ -4,7 +4,7 @@
 只捕获一次**，共享给所有探测器（避免每个 detector 各调一次 ps+lsof，R4）。串行执行；
 ``task_graph`` 并发留待 P2 ``inspect all``。
 
-探测器分派用白名单 dict（替代 ``engine.py`` 的 if/elif 链）；未知 detector/subkind 走
+探测器名称与子类型通过固定分支分派；未知 detector/subkind 走
 ``scanner_unavailable`` fail-closed（AGENTS.md 硬约束 6）。
 """
 from __future__ import annotations

@@ -56,6 +56,8 @@ class ConfigStore:
             return CliConfig()
         try:
             raw = self.path.read_text(encoding="utf-8")
+        except UnicodeError as exc:
+            raise ConfigError(f"配置不是有效 UTF-8：{self.path}") from exc
         except OSError as exc:
             raise ConfigError(f"无法读取配置 {self.path}：{exc}") from exc
         try:

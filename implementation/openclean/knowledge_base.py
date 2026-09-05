@@ -115,6 +115,8 @@ class KnowledgeBase:
         source = normalize_path(path)
         try:
             raw = source.read_text(encoding="utf-8")
+        except UnicodeError as exc:
+            raise KnowledgeBaseError(f"规则文件不是有效 UTF-8：{source}") from exc
         except FileNotFoundError as exc:
             raise RulesFileNotFoundError(f"规则文件不存在：{source}") from exc
         except OSError as exc:

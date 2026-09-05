@@ -10,6 +10,12 @@
 
 ## [Unreleased]
 
+### Fixed / Performance — local cleanup follow-up (2026-09-05)
+
+- 非 UTF-8 的配置和规则文件现在返回既有 `config_error` / `rules_error`，不再抛出未捕获异常或改写原文件。
+- 路径脱敏每份文档只构建一次替换顺序；进程匹配每条命令只转换一次大小写。
+- 复用空间分析 JSON 的总量，选择首个分析候选后停止查找，并合并批量等级选择的重复遍历；命令和数据格式不变。
+
 ### Performance — implementation-only optimization (2026-09-05)
 
 - 普通路径的重叠计量改用最近已扫描父路径索引，避免全量两两比较；保留相对路径和双斜杠根路径的原有语义。

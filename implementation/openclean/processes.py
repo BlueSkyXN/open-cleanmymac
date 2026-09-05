@@ -29,11 +29,12 @@ class ProcessSnapshot:
         )
         if not normalized:
             return ()
-        return tuple(
-            command
-            for command in self.commands
-            if any(marker in command.casefold() for marker in normalized)
-        )
+        matches = []
+        for command in self.commands:
+            folded = command.casefold()
+            if any(marker in folded for marker in normalized):
+                matches.append(command)
+        return tuple(matches)
 
     def any_running(self, markers: Iterable[str]) -> bool:
         return bool(self.matching_commands(markers))

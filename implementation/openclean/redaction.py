@@ -97,15 +97,8 @@ class JsonPathRedactor:
             canonical: f"path:{index:04d}"
             for index, canonical in enumerate(canonicals, start=1)
         }
-
-    def _reference(self, value: str) -> str | None:
-        canonical = _canonical_absolute_path(value)
-        if canonical is None:
-            return None
-        return self._references.get(canonical)
-
-    def _replace_known_paths(self, value: str) -> str:
-        replacements = sorted(
+        # Aliases stay fixed during a document; longer paths must be replaced first.
+        self._replacements = sorted(
             (
                 (alias, self._references[canonical])
                 for alias, canonical in self._aliases.items()
@@ -114,8 +107,16 @@ class JsonPathRedactor:
             key=lambda pair: len(pair[0]),
             reverse=True,
         )
+
+    def _reference(self, value: str) -> str | None:
+        canonical = _canonical_absolute_path(value)
+        if canonical is None:
+            return None
+        return self._references.get(canonical)
+
+    def _replace_known_paths(self, value: str) -> str:
         redacted = value
-        for original, reference in replacements:
+        for original, reference in self._replacements:
             redacted = redacted.replace(original, reference)
         return redacted
 

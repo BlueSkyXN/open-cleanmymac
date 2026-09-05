@@ -115,27 +115,18 @@ def select_cleanup_items(
             and item.actionable
             and not item.requires_explicit_selection
         )
+        included_tiers = set()
         if select_all_safe:
-            selected_keys.update(
-                _item_key(item)
-                for item in candidates
-                if item.safety == "safe"
-                and item.actionable
-                and not item.requires_explicit_selection
-            )
+            included_tiers.add("safe")
         if include_confirm:
-            selected_keys.update(
-                _item_key(item)
-                for item in candidates
-                if item.safety == "confirm"
-                and item.actionable
-                and not item.requires_explicit_selection
-            )
+            included_tiers.add("confirm")
         if include_critical:
+            included_tiers.add("critical")
+        if included_tiers:
             selected_keys.update(
                 _item_key(item)
                 for item in candidates
-                if item.safety == "critical"
+                if item.safety in included_tiers
                 and item.actionable
                 and not item.requires_explicit_selection
             )
