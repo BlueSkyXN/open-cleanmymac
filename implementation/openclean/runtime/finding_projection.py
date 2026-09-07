@@ -1,18 +1,6 @@
-"""Item ↔ Finding 双向投影（AR-01 §6 / AR-07 阶段 A 的关键接缝）。
+"""Item snapshots retain every field because detectors and classic actions still use Item.
 
-迁移期 ``Item`` 仍是安全内核（``cleanup.execute_cleanup`` / detector）的执行通货，
-``Finding`` 是 Agent 面向的运行时对象。本模块提供两个纯函数、无 I/O：
-
-- ``finding_from_item``：把 ``Item`` 投影为 ``Finding``。语义字段进入
-  ``target``/``measurement``/``assessment``/``recommendation``；**完整的、JSON 安全的 Item
-  快照**进入 ``evidence.payload``，作为迁移期无损适配来源。
-- ``item_from_finding``：从 ``evidence.payload`` 快照精确重建 ``Item``，重建结果必须能通过
-  ``Item.__post_init__`` 全部不变量，并让 ``_audit_item`` 的硬阻断字段
-  （``excluded_paths``/``cloud_file_count``/``is_cloud_file``/``requires_privilege``/``identity``/
-  ``domain``/updater 三字段）原样生效。
-
-R1（最高安全风险）：投影若丢这些字段会静默放宽安全闸，故此处对**全部** ``Item`` 字段做
-无损快照，并以往返等价测试（tests/test_agent_projection.py）作为阶段 A 验收门。
+Semantic Finding fields supplement the snapshot; they do not replace its data.
 """
 from __future__ import annotations
 
@@ -30,12 +18,7 @@ from ..core.models import (
     Recommendation,
 )
 from ..models import FileIdentity, Item
-
-# 反向重建时需按字段名特殊解码的集合（其余字段是 JSON 标量，直接透传）。
-_PATH_FIELDS = frozenset({"path", "project_root", "cleanup_root"})
-_IDENTITY_FIELDS = frozenset({"identity", "cleanup_root_identity"})
-_TUPLE_FIELDS = frozenset({"running_process_markers"})
-
+from ..core.serialization import decode_dataclass
 
 def _encode(value: Any) -> Any:
     """把 Item 字段值编码为 JSON 安全类型。"""
@@ -52,21 +35,6 @@ def _encode(value: Any) -> Any:
     return value
 
 
-def _decode(name: str, value: Any) -> Any:
-    """``_encode`` 的逆变换，按字段名还原 Path/FileIdentity/tuple。"""
-    if name in _PATH_FIELDS:
-        return Path(value) if value is not None else None
-    if name in _IDENTITY_FIELDS:
-        if value is None:
-            return None
-        return FileIdentity(
-            device=value["device"], inode=value["inode"], owner=value["owner"]
-        )
-    if name in _TUPLE_FIELDS:
-        return tuple(value) if value is not None else ()
-    return value
-
-
 def item_to_payload(item: Item) -> dict[str, Any]:
     """完整、JSON 安全的 Item 字段快照（无损）。"""
     return {f.name: _encode(getattr(item, f.name)) for f in fields(item)}
@@ -74,16 +42,9 @@ def item_to_payload(item: Item) -> dict[str, Any]:
 
 def item_from_payload(payload: dict[str, Any]) -> Item:
     """从快照精确重建 Item；由 ``Item.__post_init__`` 兜底校验不变量。"""
-    kwargs = {f.name: _decode(f.name, payload.get(f.name)) for f in fields(Item)}
-    return Item(**kwargs)
-
-
-def _classify(item: Item) -> str:
-    if item.actionable:
-        return "cleanup_candidate"
-    if item.requires_privilege:
-        return "protected"
-    return "report_only"
+    if not isinstance(payload, dict) or set(payload) != {f.name for f in fields(Item)}:
+        raise ValueError("Item evidence must contain exactly the complete snapshot fields")
+    return decode_dataclass(Item, payload, "evidence.payload")
 
 
 def default_evidence_kind(item: Item) -> str:
@@ -122,7 +83,8 @@ def finding_from_item(
         latest_mtime=item.latest_mtime,
     )
     assessment = FindingAssessment(
-        classification=_classify(item),
+        classification=("cleanup_candidate" if item.actionable else
+                        "protected" if item.requires_privilege else "report_only"),
         certainty="medium",
         action_risk=item.safety,
         actionable=item.actionable,
@@ -147,5 +109,5 @@ def finding_from_item(
 
 
 def item_from_finding(finding: Finding) -> Item:
-    """从 Finding 的 payload 快照精确重建 ``Item``，供 ``execute_cleanup`` 消费。"""
+    """从 Finding 的 payload 快照精确重建 ``Item``，供展示、一致性检查和适配测试使用；执行时重新探测 Item。"""
     return item_from_payload(finding.evidence.payload)

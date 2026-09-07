@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import stat
 import sys
 from collections.abc import Iterable
@@ -46,8 +47,8 @@ from .navigator import run_space_browser
 from .predicates import ProtectionGate
 from .progress import TerminalProgressRenderer
 from .redaction import redact_json_payload
-from .runtime.inspect_service import inspect_target
-from .runtime.run_store import RunStore, finding_to_dict
+from .runtime.inspect_service import inspect_target, validated_home
+from .runtime.run_store import RunStore, finding_to_dict, default_run_store_dir
 from .scanpoints import DOMAINS
 from .space_tui import SpaceTUIUnavailable, review_space
 from .strategies.registry import StrategyRegistry, pack_hash
@@ -170,6 +171,7 @@ def _print_json(
     redact_paths: bool = False,
     path_seeds: tuple[str, ...] = (),
 ) -> None:
+    payload = {"schema_version": CLI_SCHEMA_VERSION, **payload}
     output = (
         redact_json_payload(payload, path_seeds=path_seeds)
         if redact_paths
@@ -537,7 +539,7 @@ def _volume_summaries(
     for device_id, volume_items in grouped.items():
         try:
             mount_point = volume_mount_point(volume_items[0].path)
-        except (FileNotFoundError, PermissionError, OSError):
+        except OSError:
             mount_point = None
         summaries.append(
             {
@@ -712,6 +714,21 @@ def _issue_payload(issue) -> dict[str, object]:
     }
 
 
+def _scan_summary(result: ScanResult) -> dict[str, object]:
+    total, reclaimable = result.total, result.actionable_total
+    return {
+        "complete": result.complete,
+        "cancelled": result.cancelled,
+        "total_bytes": total,
+        "potential_bytes": total,
+        "reclaimable_bytes": reclaimable,
+        "requires_privilege_bytes": result.requires_privilege_total,
+        "unsupported_bytes": result.unsupported_total,
+        "total_human": human(total),
+        "reclaimable_human": human(reclaimable),
+    }
+
+
 def _print_report(
     result: ScanResult,
     as_json: bool,
@@ -726,15 +743,7 @@ def _print_report(
             "command": "scan",
             "mode": "report",
             "requested_domains": requested_domains,
-            "complete": result.complete,
-            "cancelled": result.cancelled,
-            "total_bytes": result.total,
-            "potential_bytes": result.total,
-            "reclaimable_bytes": result.actionable_total,
-            "requires_privilege_bytes": result.requires_privilege_total,
-            "unsupported_bytes": result.unsupported_total,
-            "total_human": human(result.total),
-            "reclaimable_human": human(result.actionable_total),
+            **_scan_summary(result),
             "volumes": _volume_summaries(result.items),
             "items": [
                 _item_payload(i)
@@ -790,15 +799,7 @@ def _print_purge_report(
             "schema_version": CLI_SCHEMA_VERSION,
             "command": "purge",
             "mode": "result" if cleanup is not None else "preview",
-            "complete": result.complete,
-            "cancelled": result.cancelled,
-            "total_bytes": result.total,
-            "potential_bytes": result.total,
-            "reclaimable_bytes": result.actionable_total,
-            "requires_privilege_bytes": result.requires_privilege_total,
-            "unsupported_bytes": result.unsupported_total,
-            "total_human": human(result.total),
-            "reclaimable_human": human(result.actionable_total),
+            **_scan_summary(result),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),
@@ -885,15 +886,7 @@ def _print_clean_report(
             "command": "clean",
             "category": requested_category or "all",
             "mode": "result" if cleanup is not None else "preview",
-            "complete": result.complete,
-            "cancelled": result.cancelled,
-            "total_bytes": result.total,
-            "potential_bytes": result.total,
-            "reclaimable_bytes": result.actionable_total,
-            "requires_privilege_bytes": result.requires_privilege_total,
-            "unsupported_bytes": result.unsupported_total,
-            "total_human": human(result.total),
-            "reclaimable_human": human(result.actionable_total),
+            **_scan_summary(result),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),
@@ -958,6 +951,7 @@ def _print_analyze_report(
     selected_paths = {item.path for item in selected}
     entries = analysis.entries[:top] if top else analysis.entries
     if as_json:
+        total = analysis.total
         entry_count_total = len(analysis.entries)
         entry_count_returned = len(entries)
         _print_json({
@@ -977,12 +971,12 @@ def _print_analyze_report(
             "root": str(analysis.root),
             "complete": analysis.complete,
             "cancelled": analysis.cancelled,
-            "total_bytes": analysis.total,
-            "potential_bytes": analysis.total,
+            "total_bytes": total,
+            "potential_bytes": total,
             # Space Lens 只描述占用，不把任意一级目录归类为垃圾。
             "reclaimable_bytes": 0,
-            "allocated_bytes": analysis.total,
-            "total_human": human(analysis.total),
+            "allocated_bytes": total,
+            "total_human": human(total),
             "volumes": _volume_summaries(
                 (entry.item for entry in analysis.entries),
                 report_reclaimable=False,
@@ -1074,14 +1068,12 @@ def _select_analyze_items(
     selected: list[Item] = []
     for selector in selectors:
         target = normalize_path(selector)
-        matches = [
-            entry.item
-            for entry in analysis.entries
-            if entry.item.path == target
-        ]
-        if not matches:
+        item = next(
+            (entry.item for entry in analysis.entries if entry.item.path == target),
+            None,
+        )
+        if item is None:
             raise SelectionError(f"当前层级未找到分析候选：{selector}")
-        item = matches[0]
         if not item.actionable:
             reason = item.action_block_reason or "该候选不可执行"
             raise SelectionError(f"拒绝选择 {selector}：{reason}")
@@ -1111,12 +1103,36 @@ def _print_space_tui_result(
 
 
 def _agent_protection(args) -> ProtectionGate:
-    return ProtectionGate(KnowledgeBase.load_configured(args.rules))
+    # Resolve defaults at invocation time, not at module import / the real HOME.
+    home = validated_home(getattr(args, "home", "") or None)
+    if args.rules is not None:
+        knowledge = KnowledgeBase.load(args.rules)
+    else:
+        knowledge = KnowledgeBase.empty()
+        for name in ("knowledge.json", "rules.json"):
+            path = home / ".config/openclean" / name
+            if path.exists():
+                knowledge = knowledge.merge(KnowledgeBase.load(path))
+    protection = IgnoreRules(getattr(args, "ignore", ()), knowledge_base=knowledge)
+    canonical = json.dumps({"knowledge": asdict(knowledge),
+                            "ignore": list(getattr(args, "ignore", ()))},
+                           default=str, sort_keys=True, separators=(",", ":"))
+    protection.config_hash = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+    return protection
 
 
 def _agent_run_store(args) -> RunStore:
     override = getattr(args, "run_store", "")
-    return RunStore(directory=Path(override).expanduser() if override else None)
+    if override:
+        return RunStore(directory=Path(override).expanduser())
+    home = getattr(args, "home", "")
+    if home:
+        return RunStore(directory=validated_home(home) / ".local/state/openclean/runs")
+    return RunStore()
+
+
+def _developer_mode(args) -> bool:
+    return any(bool(getattr(args, key, "")) for key in ("home", "packs_dir", "run_store"))
 
 
 def _load_registry(args) -> StrategyRegistry:
@@ -1145,46 +1161,20 @@ def _finding_summary(finding) -> dict:
     }
 
 
-def _resolved_target_payload(target) -> dict:
-    identity = target.identity
-    return {
-        "display_path": target.display_path,
-        "identity": (
-            {"device": identity.device, "inode": identity.inode, "owner": identity.owner}
-            if identity
-            else None
-        ),
-    }
-
-
 def _clean_payload(plan, *, executed: bool, outcome) -> dict:
+    complete = outcome is None or outcome["complete"]
     payload = {
-        "command": "clean",
-        "status": "ok",
-        "mode": plan.mode,
-        "run_id": plan.run_id,
-        "executed": executed,
-        "plan": {
-            "run_id": plan.run_id,
-            "items": [
-                {
-                    "finding_id": item.finding_id,
-                    "strategy_id": item.strategy_id,
-                    "strategy_version": item.strategy_version,
-                    "action_name": item.action_name,
-                    "action_supported": item.action_supported,
-                    "can_execute": item.can_execute,
-                    "block_reasons": list(item.block_reasons),
-                    "resolved_targets": [
-                        _resolved_target_payload(t) for t in item.resolved_targets
-                    ],
-                }
-                for item in plan.plan_items
-            ],
-        },
+        "command": "clean", "status": "ok" if complete else "error" if executed else "blocked",
+        "mode": plan.mode, "run_id": plan.run_id, "executed": executed,
+        "plan": {**asdict(plan), "executed": executed},
     }
     if outcome is not None:
         payload["outcome"] = outcome
+        if not complete:
+            code = ("execution_failed" if executed else "run_incomplete"
+                    if any("run_incomplete" in i.block_reasons for i in plan.plan_items)
+                    else "batch_blocked")
+            payload["error"] = {"code": code, "message": "See plan and outcome for each selected Finding"}
     return payload
 
 
@@ -1194,14 +1184,18 @@ def _cmd_inspect(args) -> int:
     store = _agent_run_store(args)
     home = Path(args.home).expanduser() if getattr(args, "home", "") else None
     result = inspect_target(
-        args.target, protection, registry=registry, run_store=store, home=home
+        args.target, protection, registry=registry, run_store=store, home=home,
+        protect_config_hash=protection.config_hash,
     )
     run = result.run
     findings = result.findings
     redact = bool(getattr(args, "redact_paths", False))
     payload = {
         "command": f"inspect {args.target}",
-        "status": "ok",
+        "status": "ok" if run.complete else "incomplete",
+        "developer_mode": _developer_mode(args),
+        "home": run.home,
+        "run_store": str(store.directory),
         "run_id": run.run_id,
         "requested_target": run.requested_target,
         "created_at": run.created_at,
@@ -1227,7 +1221,7 @@ def _cmd_inspect(args) -> int:
     }
     if args.json:
         _print_json(payload, redact_paths=redact, path_seeds=getattr(args, "_raw_argv", ()))
-        return 0
+        return 0 if run.complete else 1
     print(
         f"Run {run.run_id} · target={run.requested_target} · findings={len(findings)}"
         f"（actionable {payload['totals']['actionable']} /"
@@ -1247,7 +1241,9 @@ def _cmd_inspect(args) -> int:
     if not run.complete:
         print("  注意：本次 Run 不完整（complete=false）。")
     print(f"\n下一步：openclean show --run {run.run_id} --finding <finding_id>")
-    return 0
+    if _developer_mode(args):
+        print(f"  此 Run 位于 {store.directory}；show/clean 预览请显式传 --run-store，切勿作为生产执行。")
+    return 0 if run.complete else 1
 
 
 def _cmd_show(args) -> int:
@@ -1368,8 +1364,13 @@ def _cmd_clean_finding(args) -> int:
     store = _agent_run_store(args)
     registry = _load_registry(args)
     protection = _agent_protection(args)
-    run = store.load_run(args.run)
-    findings = store.load_findings(args.run)
+    if args.yes and (getattr(args, "packs_dir", "") or
+                     store.directory != default_run_store_dir()):
+        raise CliError("developer_execution_disabled",
+                       "外部策略和非默认 Run Store 仅支持读取与预览。", exit_code=1)
+    run, findings = store.load_bundle(args.run)
+    if args.yes and (not run.home or normalize_path(run.home) != normalize_path(Path.home())):
+        raise CliError("run_home_mismatch", "Run HOME 与当前 HOME 不一致；请重新 inspect。", exit_code=1)
     selected = list(dict.fromkeys(args.finding))
     if not selected:
         raise CliError("empty_selection", "clean --run 至少需要一个 --finding。", exit_code=2)
@@ -1402,22 +1403,12 @@ def _cmd_clean_finding(args) -> int:
                 print(f"  {item.finding_id}  {item.strategy_id}  {state}")
             print("\n预览模式（未加 --yes）。确认后重跑并加 --yes 执行。")
         return 0
-    executable = [item for item in plan.plan_items if item.can_execute]
-    blocked = [item for item in plan.plan_items if not item.can_execute]
-    if not executable:
-        if args.json:
-            _print_json(
-                _clean_payload(plan, executed=False, outcome=None),
-                redact_paths=redact,
-                path_seeds=seeds,
-            )
-        else:
-            print(f"CleanupPlan · run={run.run_id} · mode=execute · 无可执行项")
-            for item in blocked:
-                print(f"  {item.finding_id}  阻断（{', '.join(item.block_reasons)}）")
-        return 1
-    home = Path(args.home).expanduser() if getattr(args, "home", "") else None
-    report, records = execute_plan(plan, findings, protection, home=home)
+    report, records = execute_plan(
+        plan, findings, protection, run=run, registry=registry,
+        user_confirmed=bool(args.yes), include_confirm=bool(args.include_confirm),
+        include_critical=bool(args.include_critical), home=Path(run.home),
+    )
+    executed = any(r.status not in {"blocked", "not_run"} for r in records)
     outcome = {
         "complete": report.complete,
         "moved_to_trash_bytes": report.moved_bytes,
@@ -1435,13 +1426,13 @@ def _cmd_clean_finding(args) -> int:
     }
     if args.json:
         _print_json(
-            _clean_payload(plan, executed=True, outcome=outcome),
+            _clean_payload(plan, executed=executed, outcome=outcome),
             redact_paths=redact,
             path_seeds=seeds,
         )
     else:
         _print_cleanup_summary(report)
-    return 0 if (report.complete and not blocked) else 1
+    return 0 if report.complete else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1761,16 +1752,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "inspect":
         try:
             return _cmd_inspect(args)
+        except KnowledgeBaseError as exc:
+            return _fail(args, f"inspect {args.target}", "rules_error", str(exc), exit_code=2)
         except (CliError, AgentRuntimeError) as exc:
             return _fail(args, f"inspect {args.target}", exc.code, exc.message, exit_code=exc.exit_code)
     if args.cmd == "show":
         try:
             return _cmd_show(args)
+        except KnowledgeBaseError as exc:
+            return _fail(args, "show", "rules_error", str(exc), exit_code=2)
         except (CliError, AgentRuntimeError) as exc:
             return _fail(args, "show", exc.code, exc.message, exit_code=exc.exit_code)
     if args.cmd == "strategy":
         try:
             return _cmd_strategy(args)
+        except KnowledgeBaseError as exc:
+            return _fail(args, f"strategy {args.strategy_action}", "rules_error", str(exc), exit_code=2)
         except (CliError, AgentRuntimeError) as exc:
             return _fail(args, f"strategy {args.strategy_action}", exc.code, exc.message,
                          exit_code=exc.exit_code)
@@ -1880,7 +1877,13 @@ def main(argv: list[str] | None = None) -> int:
             or getattr(args, "select", [])
             or getattr(args, "select_all_safe", False)
             or getattr(args, "force", False)
+            or any(arg == "--workers" or arg.startswith("--workers=") for arg in raw_argv)
         )
+        if not (_agent_run or _agent_findings) and (
+            getattr(args, "packs_dir", "") or getattr(args, "run_store", "")
+        ):
+            return _fail(args, "clean", "mixed_clean_modes",
+                         "--packs-dir/--run-store 只能用于 Agent 模式。", exit_code=2)
         if _agent_findings and not _agent_run:
             return _fail(
                 args, "clean", "agent_selection_requires_run",
@@ -1903,6 +1906,8 @@ def main(argv: list[str] | None = None) -> int:
         if _agent_run:
             try:
                 return _cmd_clean_finding(args)
+            except KnowledgeBaseError as exc:
+                return _fail(args, "clean", "rules_error", str(exc), exit_code=2)
             except (CliError, AgentRuntimeError) as exc:
                 return _fail(args, "clean", exc.code, exc.message, exit_code=exc.exit_code)
         if error := _validate_cleanup_execution_args(args):

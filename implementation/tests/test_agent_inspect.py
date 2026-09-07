@@ -77,7 +77,8 @@ class InspectServiceTests(_Env):
         targets = by_strategy["codex.marketplace.old-staging"]
         self.assertEqual(len(targets), 2)
         old_f = next(f for f in targets if f.target.display_path == str(old))
-        self.assertTrue(old_f.assessment.actionable)
+        self.assertFalse(old_f.assessment.actionable)
+        self.assertIn("strategy_report_only", old_f.assessment.block_reasons[0])
         self.assertEqual(old_f.assessment.action_risk, "confirm")
         self.assertEqual(old_f.target.kind, "filesystem")
         self.assertIsNotNone(old_f.target.identity)

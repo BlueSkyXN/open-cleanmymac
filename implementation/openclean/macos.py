@@ -62,7 +62,7 @@ def symlink_component(
     for component in components:
         try:
             stat_result = component.lstat()
-        except (FileNotFoundError, PermissionError, OSError):
+        except OSError:
             return None
         if stat.S_ISLNK(stat_result.st_mode):
             return component
@@ -329,7 +329,7 @@ def discover_trash_paths(
         try:
             if not entry.is_dir(follow_symlinks=False):
                 continue
-        except (PermissionError, FileNotFoundError, OSError) as exc:
+        except OSError as exc:
             issues.append(
                 ScanIssue(
                     code=(

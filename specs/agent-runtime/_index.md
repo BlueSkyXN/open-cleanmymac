@@ -8,10 +8,9 @@
 > `specs/00-07` 描述参考对象（CleanMyMac 5 CLI）的净室功能事实；本目录描述
 > OpenClean 下一代「面向 AI Agent 的 macOS 存储策略运行时」的 v1 契约。
 >
-> 状态：📐 **契约已定，未实现**。项目尚未正式发布，**无向后兼容负担**：实现时直接采用
-> Agent-first 命令面为主接口，旧命令 `scan/clean <category>/analyze/purge` 退役，JSON 输出
-> 围绕 Run/Finding 重新设计、不冻结于 schema v2。能力落地前当前行为不变。
-> 实现落点与优先级见 [implementation/TODO.md](../../implementation/TODO.md)。
+> 当前：P0a 只读与计划预览已落地，P0b 生产策略未启用。经典命令与 TUI 保留。
+> CLI envelope schema v2，持久化 Run bundle schema v2（两个独立版本）。
+> 当前行为见 [AR-09 实现补充](ar-09-current-implementation.md)，其余章节保留长期设计。
 
 ## 1. 目标与范围
 
@@ -28,8 +27,7 @@ Observation → 版本化 Strategy → Builtin Detector → Run + Finding
 研究治理、实施路线图），而不只是 P0。**Codex 是第一个纵向实现切片**，其余 pack 与阶段按
 [AR-07](ar-07-implementation-roadmap.md) 路线图、[AR-08](ar-08-strategy-pack-catalog.md) 全景展开。
 
-因项目未发布、无兼容负担，目标命令面直接采用 Agent-first surface，旧命令退役、不建
-adapter 层（处置见 [AR-00](ar-00-architecture.md) §5、[AR-03](ar-03-cli-and-io-contract.md) §9）。
+Agent 命令面是经典能力的附加入口，不通过删除旧命令替代迁移。
 仍**有意排除**：远程策略发布服务的具体实现、`implementation/`→`src/` 搬迁（纯 churn、无功能收益）。
 
 ## 2. 阅读顺序
@@ -44,18 +42,15 @@ adapter 层（处置见 [AR-00](ar-00-architecture.md) §5、[AR-03](ar-03-cli-a
 | AR-05 | [研究治理](ar-05-research-governance.md) | Observation 公开边界、净室一致性、`research/` 治理 |
 | AR-06 | [Codex 首切片验收](ar-06-codex-p0-acceptance.md) | 必须/暂不要求清单、Agent Contract 正负测试矩阵 |
 | AR-07 | [实施路线图与代码转化](ar-07-implementation-roadmap.md) | 阶段序列、逐模块转化表、实体产物目标结构 |
+| AR-09 | [当前实现补充](ar-09-current-implementation.md) | 本候选版本的实际范围与后续工作 |
 | AR-08 | [策略包全景](ar-08-strategy-pack-catalog.md) | 全量 pack 目录、detector/action 白名单、P0-P4 展开 |
 
 ## 3. 状态图例
 
-- 📐 契约已定，未实现。
-- ✅ 已实现并通过 `make check`。
-- **当前状态**：P0「Codex Agent Runtime v1」（[AR-07](ar-07-implementation-roadmap.md) 阶段 A–D）
-  **已实现**——`inspect codex`/`show`/`clean --run --finding`/`strategy`、Finding/Run/CleanupPlan
-  模型、私有 Run Store、`codex` pack、一个 trusted 逐目标策略与 Agent Contract 测试均落地（旧
-  `scan`/`clean <category>`/`analyze`/`purge` 与 TUI 已退役）。AR-00..AR-06 中描述 P0 的条目视为 ✅；
-  P1+（explore、lab、其余 pack、MCP）仍 📐。
-- 已落地参考规格的状态词见 [../_index.md](../_index.md)。
+- P0a：探测、Run/Finding、展示、预览与 API 执行逻辑已实现；生产包仍只读。
+- P0b：真实结构匹配、Observation、promotion、macOS 原生验证待完成。
+- P1+：其余 pack、explore、lab、MCP 仍为规划。
+- 不把全部 AR-00..AR-06 一律标为完成；详见 [AR-09](ar-09-current-implementation.md)。
 
 ## 4. 阶段 0 八项决策
 
@@ -63,7 +58,7 @@ adapter 层（处置见 [AR-00](ar-00-architecture.md) §5、[AR-03](ar-03-cli-a
 
 | # | 决策 | 结论 | 落点 |
 |---|---|---|---|
-| 1 | 旧命令是否兼容保留 | **未发布、无兼容负担**：直接采用 Agent-first 命令面，旧命令退役、不建 adapter 层，JSON 不冻结于 v2 | [AR-00](ar-00-architecture.md) / [AR-03](ar-03-cli-and-io-contract.md) |
+| 1 | 旧命令是否兼容保留 | 经典命令与 TUI 保留；Agent 附加；当前 envelope 使用 schema v2 | [AR-00](ar-00-architecture.md) / [AR-03](ar-03-cli-and-io-contract.md) |
 | 2 | Run Store 位置/权限/TTL/容量/清理 | 本机私有状态目录，`0700`/`0600`，默认 TTL 24h，容量上限 + 原子写 + 过期拒绝 | [AR-04](ar-04-run-store-and-execution.md) |
 | 3 | `run_id`/`finding_id` 稳定性、是否编码路径 | 稳定、跨命令可读、**不编码路径** | [AR-01](ar-01-object-model.md) / [AR-04](ar-04-run-store-and-execution.md) |
 | 4 | `active`/`trusted` 执行边界 | `active` 只识别/报告；`trusted` 才可生成计划，执行仍需用户授权 + live guard | [AR-02](ar-02-strategy-and-lifecycle.md) / [AR-04](ar-04-run-store-and-execution.md) |

@@ -142,20 +142,6 @@ class _ScanRoot:
     path_source: str = "builtin"
 
 
-def _dir_size(
-    root: Path,
-    ctl: Control,
-    seen_inodes: set[tuple[int, int]],
-    protection: Predicate,
-    issues: list[ScanIssue],
-    task: str,
-) -> int:
-    """递归求和；硬链接按 inode 去重；符号链接不跟随到目标（防重复计数）。"""
-    return _measure_dir(
-        root, ctl, seen_inodes, protection, issues, task, None
-    ).size
-
-
 def _measure_dir(
     root: Path,
     ctl: Control,
@@ -185,7 +171,7 @@ def _measure_dir(
     if device_boundary is not None:
         try:
             filesystem_boundary = filesystem_id_retry(root_facts.path)
-        except (PermissionError, FileNotFoundError, OSError) as exc:
+        except OSError as exc:
             _append_issue(issues, exc, root_facts.path, task)
             measurement.excluded_paths += 1
             return measurement
@@ -222,7 +208,7 @@ def _measure_dir(
                 continue
             try:
                 current_filesystem = filesystem_id_retry(directory.path)
-            except (PermissionError, FileNotFoundError, OSError) as exc:
+            except OSError as exc:
                 _append_issue(issues, exc, directory.path, task)
                 measurement.excluded_paths += 1
                 continue
@@ -305,7 +291,7 @@ def _measure_dir(
                     measurement.logical_size += facts.logical_size
                     measurement.allocated_size += facts.allocated_size
                     measurement.size += facts.allocated_size
-        except (PermissionError, FileNotFoundError, OSError) as exc:
+        except OSError as exc:
             _append_issue(issues, exc, directory.path, task)
             measurement.excluded_paths += 1
     return measurement
@@ -319,7 +305,7 @@ def _facts_from_entry(
     path = Path(entry.path)
     try:
         stat_result = lstat_retry(path)
-    except (PermissionError, FileNotFoundError, OSError) as exc:
+    except OSError as exc:
         _append_issue(issues, exc, path, task)
         return None
     return FileFacts(path=path, stat=stat_result)
@@ -491,7 +477,7 @@ def _safe_glob_paths(
                         scandir_entries(parent),
                         key=lambda entry: entry.name,
                     )
-                except (PermissionError, FileNotFoundError, OSError) as exc:
+                except OSError as exc:
                     _append_issue(issues, exc, parent, task)
                     continue
                 for entry in entries:
@@ -684,7 +670,7 @@ def _scan_point_candidates(
                 scandir_entries(root_facts.path),
                 key=lambda entry: entry.name,
             )
-        except (PermissionError, FileNotFoundError, OSError) as exc:
+        except OSError as exc:
             _append_issue(issues, exc, root_facts.path, point.category)
             continue
         for entry in entries:
@@ -1322,24 +1308,13 @@ def _retention_residual_updates(
     if item.diagnostic_kind != "retention":
         return {}
     updates: dict[str, object] = {
-        "retention_file_count": _residual_metric(
-            item, descendants, "retention_file_count"
-        ),
-        "open_handle_count": _residual_metric(
-            item, descendants, "open_handle_count"
-        ),
-        "retention_7d_bytes": _residual_metric(
-            item, descendants, "retention_7d_bytes"
-        ),
-        "retention_14d_bytes": _residual_metric(
-            item, descendants, "retention_14d_bytes"
-        ),
-        "retention_30d_bytes": _residual_metric(
-            item, descendants, "retention_30d_bytes"
-        ),
-        "latest_mtime": None,
-        "age_days": None,
+        field: _residual_metric(item, descendants, field)
+        for field in (
+            "retention_file_count", "open_handle_count", "retention_7d_bytes",
+            "retention_14d_bytes", "retention_30d_bytes",
+        )
     }
+    updates.update(latest_mtime=None, age_days=None)
     buckets = tuple(
         updates[field]
         for field in (
@@ -1386,24 +1361,31 @@ def finalize_overlapping_result(result: ScanResult) -> ScanResult:
         for item in by_path.values()
         if item.resource_kind == "filesystem_subset"
     ]
+    # Only the nearest scanned ancestor owns a child's bytes. Subset diagnostics
+    # are deliberately absent: they never subtract an entire directory tree.
+    children: dict[Path, list[Item]] = {item.path: [] for item in items}
+    ordered = sorted(items, key=lambda candidate: len(candidate.path.parts))
+    if any(item.path.anchor == "//" for item in items):
+        # Preserve the old, order-sensitive commonpath treatment of POSIX //.
+        # Such paths do not form the same tree as pathlib's lexical parents.
+        for item in items:
+            direct = children[item.path]
+            for candidate in ordered:
+                if _is_descendant(candidate.path, item.path) and not any(
+                    _is_descendant(candidate.path, parent.path) for parent in direct
+                ):
+                    direct.append(candidate)
+    else:
+        for child in ordered:
+            for ancestor in child.path.parents:
+                # commonpath does not treat the relative path "." as a root.
+                if ancestor.parts and ancestor in children:
+                    children[ancestor].append(child)
+                    break
+
     finalized: list[Item] = []
     for item in items:
-        descendants = sorted(
-            (
-                candidate
-                for candidate in items
-                if _is_descendant(candidate.path, item.path)
-            ),
-            key=lambda candidate: len(candidate.path.parts),
-        )
-        direct_descendants: list[Item] = []
-        for candidate in descendants:
-            if any(
-                _is_descendant(candidate.path, parent.path)
-                for parent in direct_descendants
-            ):
-                continue
-            direct_descendants.append(candidate)
+        direct_descendants = children[item.path]
 
         if not direct_descendants:
             finalized.append(item)
@@ -1537,7 +1519,7 @@ def _directory_entries(
             )
             return None
         return list(scandir_entries(directory_facts.path))
-    except (PermissionError, FileNotFoundError, OSError) as exc:
+    except OSError as exc:
         _append_issue(result.issues, exc, directory, task)
         return None
 
@@ -1596,7 +1578,7 @@ def _discover_project_roots(
             try:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-            except (PermissionError, FileNotFoundError, OSError) as exc:
+            except OSError as exc:
                 _append_issue(
                     result.issues, exc, entry.path, "project-discovery"
                 )
@@ -1812,4 +1794,3 @@ def human(n: float) -> str:
         if f < 1024 or unit == "TB":
             return f"{f:.1f}{unit}" if unit != "B" else f"{int(f)}B"
         f /= 1024
-    return f"{int(f)}B"

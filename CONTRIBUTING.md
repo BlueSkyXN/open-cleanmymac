@@ -20,10 +20,12 @@
 要求 macOS 和 Python 3.11+；当前 CI 只验证 Python 3.11：
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
 make check
+make test-focused TEST_PATTERN=test_agent_identifiers.py
 ```
+
+以上目标只需标准库。按修改选择测试文件；不要求本地安装 Ruff、构建工具或额外 Python 版本。
+本地已有 Ruff 可直接使用 `make lint`，精确工具版本只用于云端复现。
 
 运行时包保持零第三方依赖。新增运行时依赖前必须说明标准库方案为何不足、供应链影响、
 许可证和移除方案。
@@ -37,12 +39,14 @@ make check
 5. 对扫描范围变宽、环境路径、symlink、挂载点、Docker 和特权边界增加负向测试。
 6. 测试写操作只能使用 `TemporaryDirectory`；不得用真实 `HOME` 或真实 Docker daemon。
 
-## 检查门
+## 云端检查门
+
+GitHub Actions 在 macOS / Python 3.11 执行以下检查，以及 wheel 独立安装后的 Agent 预览链路。
+本地不必重复全量检查；排查相关 CI 失败时才建立 venv、安装 `requirements-dev.txt`，并将
+venv 的 bin 加入 PATH 后复现对应目标。
 
 ```bash
-make lint
-make test
-make preview
+make ci-check
 make package
 make release-check
 git diff --check
@@ -83,7 +87,7 @@ Pull request 应列出行为变化、安全影响、验证命令与结果、未�
 
 不要把同一段实现细节同时写进 README、规格和能力地图。规格记录参考对象；本项目差异
 写在 `_index.md` / CAPABILITIES；CLI 契约写在 `implementation/README.md`。检查结果以
-当前 `make check` 为准，不要把测试计数写进常驻文档。
+当前本地轻量结果与 exact-head CI 分别报告，不要把测试计数写进常驻文档。
 
 修改公开 CLI、JSON schema 或安全级时，至少同步 README、相关 `docs/` 页和 CHANGELOG。
 

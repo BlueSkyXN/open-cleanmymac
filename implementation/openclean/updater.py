@@ -213,7 +213,7 @@ def _application_roots(home: Path) -> tuple[Path, ...]:
     volumes = Path("/Volumes")
     try:
         entries = tuple(os.scandir(volumes))
-    except (FileNotFoundError, PermissionError, OSError):
+    except OSError:
         entries = ()
     for entry in entries:
         try:

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openclean:schema:run-bundle:v2",
+  "title": "RunBundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run",
+    "findings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "run": {
+      "$ref": "openclean:schema:run:v2"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "openclean:schema:finding:v1"
+      }
+    }
+  }
+}

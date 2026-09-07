@@ -1,5 +1,10 @@
 # AR-01 · 对象模型
 
+> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
+> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
+> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+
+
 [契约索引](_index.md) · [AR-00 架构](ar-00-architecture.md) ·
 [AR-04 Run Store 与执行](ar-04-run-store-and-execution.md)
 
@@ -211,7 +216,7 @@ Finding 是运行时命中记录。**必须采用稳定核心字段 + 类型化 
   不互相替代；人类标签进 `evidence.payload`。
 
 迁移完成后：JSON 输出围绕 Run/Finding 重新设计，**不冻结于 schema v2**；旧命令
-`scan`/`clean <category>` 退役（处置见 [AR-03](ar-03-cli-and-io-contract.md) §9）。逐模块
+`scan`/`clean <category>` 继续保留（处置见 [AR-03](ar-03-cli-and-io-contract.md) §9）。逐模块
 转化顺序见 [AR-07](ar-07-implementation-roadmap.md)。
 
 ## 7. CleanupPlan

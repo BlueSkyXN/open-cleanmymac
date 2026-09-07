@@ -15,6 +15,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from agent_fixtures import approved_registry
+
 from openclean.actions.planner import execute_plan, resolve_plan
 from openclean.cli import main
 from openclean.core.models import (
@@ -105,7 +107,7 @@ class CleanExecTests(unittest.TestCase):
 
     def _inspect_trusted(self):
         """Inspect with a synthetic trusted pack instead of codex (now report_only)."""
-        registry = StrategyRegistry((_trusted_pack(),))
+        registry = approved_registry((_trusted_pack(),))
         return inspect_target(
             "codex",
             self.protection,
@@ -126,7 +128,7 @@ class CleanExecTests(unittest.TestCase):
     def test_execute_plan_moves_trusted_target_to_trash(self) -> None:
         result = self._inspect_trusted()
         finding = self._old_finding(result)
-        registry = StrategyRegistry((_trusted_pack(),))
+        registry = approved_registry((_trusted_pack(),))
         plan = resolve_plan(
             run=result.run,
             findings=result.findings,
@@ -140,7 +142,9 @@ class CleanExecTests(unittest.TestCase):
             "openclean.cleanup.capture_process_snapshot", return_value=_EMPTY_PROC
         ):
             report, records = execute_plan(
-                plan, list(result.findings), self.protection, home=self.home
+                plan, list(result.findings), self.protection, home=self.home,
+                run=result.run, registry=registry, user_confirmed=True,
+                include_confirm=True, snapshots=(_EMPTY_PROC, _EMPTY_OPEN)
             )
         self.assertTrue(report.complete)
         self.assertGreater(report.moved_bytes, 0)
@@ -164,7 +168,7 @@ class CleanExecTests(unittest.TestCase):
         return code, buffer.getvalue()
 
     def test_cli_preview_then_execute(self) -> None:
-        trusted_registry = StrategyRegistry((_trusted_pack(),))
+        trusted_registry = approved_registry((_trusted_pack(),))
         rules = _rules(self.home)
         rs = ["--run-store", str(self.runs), "--rules", str(rules)]
         with mock.patch("openclean.cli._load_registry", return_value=trusted_registry):
@@ -217,6 +221,9 @@ class CleanExecTests(unittest.TestCase):
         self.assertFalse(self.old.exists())
 
     def test_cli_yes_without_include_confirm_is_blocked(self) -> None:
+        patcher = mock.patch("openclean.cli._load_registry", return_value=approved_registry((_trusted_pack(),)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         rules = _rules(self.home)
         rs = ["--run-store", str(self.runs), "--rules", str(rules)]
         _, out = self._call(["inspect", "codex", "--json", *rs])
@@ -224,7 +231,7 @@ class CleanExecTests(unittest.TestCase):
         finding_id = next(
             f["finding_id"]
             for f in doc["findings"]
-            if f["strategy_id"] == "codex.marketplace.old-staging" and f["actionable"]
+            if f["strategy_id"] == "codex.test.old-staging" and f["actionable"]
         )
         code, out = self._call(
             [
@@ -242,7 +249,7 @@ class CleanExecTests(unittest.TestCase):
         payload = json.loads(out)
         self.assertFalse(payload["executed"])
         self.assertIn(
-            "requires_include_confirm", payload["plan"]["items"][0]["block_reasons"]
+            "requires_include_confirm", payload["plan"]["plan_items"][0]["block_reasons"]
         )
         self.assertTrue(self.old.exists())
 
@@ -272,7 +279,7 @@ class CleanExecTests(unittest.TestCase):
         self.assertEqual(code, 1)
         payload = json.loads(out)
         self.assertFalse(payload["executed"])
-        reasons = payload["plan"]["items"][0]["block_reasons"]
+        reasons = payload["plan"]["plan_items"][0]["block_reasons"]
         self.assertIn("strategy_not_trusted", reasons)
         self.assertIn("aggregate_root_not_actionable", reasons)
         # 聚合根 .staging 必须仍在

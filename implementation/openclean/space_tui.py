@@ -45,7 +45,7 @@ def _safe_add(screen, row: int, column: int, text: str, width: int) -> None:
 def _is_directory(path: Path) -> bool:
     try:
         return stat.S_ISDIR(path.lstat().st_mode)
-    except (PermissionError, FileNotFoundError, OSError):
+    except OSError:
         return False
 
 

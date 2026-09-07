@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import secrets
 
-from .models import ID_PREFIX_FINDING, ID_PREFIX_RUN
+ID_PREFIX_FINDING = "finding:"
+ID_PREFIX_RUN = "run:"
 
 _TOKEN_BYTES = 12  # 24 个十六进制字符，足够单机短生命周期内唯一
 
@@ -22,3 +23,13 @@ def new_run_id() -> str:
 
 def new_finding_id() -> str:
     return f"{ID_PREFIX_FINDING}{_token()}"
+
+
+def valid_id(value: object, prefix: str) -> bool:
+    """Opaque identifiers are single, bounded filename-safe tokens, never paths."""
+    import re
+
+    if not isinstance(value, str) or not value.startswith(prefix):
+        return False
+    token = value[len(prefix):]
+    return token != "redacted" and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", token) is not None

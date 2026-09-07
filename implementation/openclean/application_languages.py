@@ -241,7 +241,7 @@ def _discover_applications(
             try:
                 with os.scandir(directory) as iterator:
                     entries = sorted(iterator, key=lambda entry: entry.name)
-            except (PermissionError, FileNotFoundError, OSError) as exc:
+            except OSError as exc:
                 issues.append(_issue_for_os_error(exc, directory, task))
                 continue
             for entry in entries:
@@ -403,7 +403,7 @@ def _measure_strings_only(
     try:
         with os.scandir(latest.path) as iterator:
             entries = sorted(iterator, key=lambda entry: entry.name)
-    except (PermissionError, FileNotFoundError, OSError) as exc:
+    except OSError as exc:
         issues.append(_issue_for_os_error(exc, localization.path, task))
         return None
 
@@ -533,7 +533,7 @@ def scan_application_languages(
         try:
             with os.scandir(resources) as iterator:
                 entries = sorted(iterator, key=lambda entry: entry.name)
-        except (PermissionError, FileNotFoundError, OSError) as exc:
+        except OSError as exc:
             result.issues.append(_issue_for_os_error(exc, resources, category))
             continue
 

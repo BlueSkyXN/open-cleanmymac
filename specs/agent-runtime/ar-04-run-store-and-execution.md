@@ -1,5 +1,10 @@
 # AR-04 · Run Store 与执行
 
+> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
+> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
+> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+
+
 [契约索引](_index.md) · [AR-01 对象模型](ar-01-object-model.md) ·
 [AR-03 命令与 I/O](ar-03-cli-and-io-contract.md) · [架构](../../docs/ARCHITECTURE.md)
 
@@ -29,7 +34,7 @@
 | 位置 | 本机**私有状态目录**，默认 `~/.local/state/openclean/runs/`（`$XDG_STATE_HOME` 优先），与现有 `~/.config/openclean/` 同属 per-user 私有配置族 |
 | 权限 | 目录 `0700`，文件 `0600`；启动时校验，权限过宽则拒绝读写并 fail-closed |
 | TTL | 默认 **24 小时**；每个 Run 记录 `created_at`/`expires_at` |
-| 容量 | 有总容量与条目上限；超限按最旧优先淘汰（LRU），淘汰即失效 |
+| 容量 | 有总容量与条目上限；超限按最旧优先淘汰（最早写入优先，不是 LRU），淘汰即失效 |
 | 写入 | **原子写**：临时文件 + `fsync` + `os.replace`，与 `RulesStore._write_payload` 同一模式（`implementation/openclean/knowledge_base.py`） |
 | 过期 | 过期后**拒绝执行**（退出码 `1`，`run_expired`），不自动重新扫描并假装是同一个 Finding |
 | 内容 | Run manifest + 其 Finding 集合；不缓存可执行授权，只缓存识别证据 |

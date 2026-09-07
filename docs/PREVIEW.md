@@ -26,6 +26,9 @@ cd implementation
 PYTHONPATH=. python3 scripts/preview_all.py --json
 ```
 
+> Agent 当前仅 P0a，7 条内置策略只读；`inspect` 会写本机 Run Store。
+> macOS 原生结果与 Linux 逻辑模拟不能混同，见 [当前状态](AGENT_RUNTIME_STATUS.md)。
+
 ## 隔离保证
 
 预览脚本在 `TemporaryDirectory` 中创建独立 `HOME`、规则文件、配置、Trash、项目、缓存、
@@ -110,7 +113,7 @@ cd implementation
 PYTHONPATH=. python3 scripts/capture_tui_assets.py --check
 ```
 
-SVG 只使用静态元素，无脚本、`foreignObject`、外部字体或外部 URL；`make check` 会做
+SVG 只使用静态元素，无脚本、`foreignObject`、外部字体或外部 URL；云端 `make ci-check` 会做
 确定性字节核对。它们证明当前绘制逻辑和文档资产一致，但不代替不同 macOS Terminal、
 字体与窗口尺寸的像素级验收。
 

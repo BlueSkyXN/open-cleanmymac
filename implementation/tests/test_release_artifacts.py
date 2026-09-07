@@ -5,6 +5,7 @@ import tarfile
 import unittest
 import zipfile
 
+from openclean import __version__
 from scripts.check_release_artifacts import (
     _assert_metadata,
     _assert_safe_content,
@@ -44,8 +45,8 @@ class ReleaseArtifactGuardTests(unittest.TestCase):
     def test_rejects_mismatched_package_metadata(self) -> None:
         valid = (
             b"Name: open-cleanmymac\n"
-            b"Version: 0.23.0\n"
-            b"Requires-Python: >=3.11\n"
+            + f"Version: {__version__}\n".encode()
+            + b"Requires-Python: >=3.11\n"
             b"License-Expression: GPL-3.0-only\n"
             b"License-File: LICENSE\n\n"
         )
@@ -53,7 +54,7 @@ class ReleaseArtifactGuardTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Version"):
             _assert_metadata(
-                valid.replace(b"0.23.0", b"9.9.9"),
+                valid.replace(__version__.encode(), b"9.9.9"),
                 source="test",
             )
 

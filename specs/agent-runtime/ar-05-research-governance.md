@@ -1,5 +1,10 @@
 # AR-05 · 研究治理
 
+> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
+> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
+> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+
+
 [契约索引](_index.md) · [AR-02 策略与生命周期](ar-02-strategy-and-lifecycle.md) ·
 [贡献指南](../../CONTRIBUTING.md) · [知识库规格](../03-knowledge-base.md)
 

@@ -115,27 +115,18 @@ def select_cleanup_items(
             and item.actionable
             and not item.requires_explicit_selection
         )
+        included_tiers = set()
         if select_all_safe:
-            selected_keys.update(
-                _item_key(item)
-                for item in candidates
-                if item.safety == "safe"
-                and item.actionable
-                and not item.requires_explicit_selection
-            )
+            included_tiers.add("safe")
         if include_confirm:
-            selected_keys.update(
-                _item_key(item)
-                for item in candidates
-                if item.safety == "confirm"
-                and item.actionable
-                and not item.requires_explicit_selection
-            )
+            included_tiers.add("confirm")
         if include_critical:
+            included_tiers.add("critical")
+        if included_tiers:
             selected_keys.update(
                 _item_key(item)
                 for item in candidates
-                if item.safety == "critical"
+                if item.safety in included_tiers
                 and item.actionable
                 and not item.requires_explicit_selection
             )
@@ -405,7 +396,7 @@ def _audit_descendants(
                 entries = sorted(iterator, key=lambda entry: entry.name)
         except CleanupSafetyError:
             raise
-        except (PermissionError, FileNotFoundError, OSError) as exc:
+        except OSError as exc:
             raise CleanupSafetyError(
                 f"无法复核目录 {directory}：{exc}"
             ) from exc
@@ -1101,7 +1092,7 @@ def _empty_trash(
             remaining = sorted(entry.name for entry in iterator)
     except CleanupSafetyError:
         raise
-    except (PermissionError, FileNotFoundError, OSError) as exc:
+    except OSError as exc:
         failures.append(f"复核失败：{exc}")
         remaining = None
     finally:

@@ -292,7 +292,6 @@ def _format_bytes(value: int) -> str:
         if size < 1024 or unit == "TiB":
             return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
         size /= 1024
-    raise AssertionError("unreachable")
 
 
 def _append_filesystem_issue(
@@ -1261,6 +1260,10 @@ def enumerate_codex_marketplace_staging_targets(
     """
 
     result = ScanResult()
+    if anchor is not None and not normalize_path(root).is_relative_to(normalize_path(anchor)):
+        result.issues.append(ScanIssue(code="invalid_locator", message="目标根不在 HOME 下",
+                                      task="Codex staging", path=root, blocking=True))
+        return result
     task = "Codex marketplace 升级 staging 目标"
     root = normalize_path(root)
     root_facts = _diagnostic_directory_facts(
@@ -1306,6 +1309,12 @@ def enumerate_codex_marketplace_staging_targets(
     )
     for entry in candidates:
         path = Path(entry.path)
+        try:
+            before = lstat_retry(path)
+        except OSError as exc:
+            _append_filesystem_issue(result.issues, exc, path, task)
+            continue
+        issue_start = len(result.issues)
         measurement = _candidate_measurement(
             path,
             root_device,
@@ -1321,8 +1330,19 @@ def enumerate_codex_marketplace_staging_targets(
         except OSError as exc:
             _append_filesystem_issue(result.issues, exc, path, task)
             continue
+        if (before.st_dev, before.st_ino, before.st_uid, before.st_mode,
+            before.st_mtime_ns, before.st_ctime_ns) != (
+            target_stat.st_dev, target_stat.st_ino, target_stat.st_uid, target_stat.st_mode,
+            target_stat.st_mtime_ns, target_stat.st_ctime_ns,
+        ):
+            result.issues.append(ScanIssue(code="target_changed_during_scan",
+                message="目标在计量期间变化", task=task, path=path, blocking=True))
+            continue
         open_handles = (
             open_files.count_under(path) if open_files is not None else None
+        )
+        measurement.newest_mtime = max(
+            measurement.newest_mtime or 0, target_stat.st_mtime
         )
         age_days = (
             max(0, int((observed_at - measurement.newest_mtime) // 86400))
@@ -1330,6 +1350,8 @@ def enumerate_codex_marketplace_staging_targets(
             else None
         )
         block_reasons: list[str] = []
+        if limit_reached or len(result.issues) > issue_start:
+            block_reasons.append("measurement_incomplete")
         if age_days is None or age_days < minimum_age_days:
             block_reasons.append("未达最低保留年龄")
         if open_handles is None:
@@ -1381,6 +1403,20 @@ def enumerate_codex_marketplace_staging_targets(
                 open_handle_count=open_handles,
             )
         )
+    try:
+        after_root = lstat_retry(root)
+        initial = root_facts.stat
+        if (initial.st_dev, initial.st_ino, initial.st_uid, initial.st_mode,
+            initial.st_mtime_ns, initial.st_ctime_ns) != (
+            after_root.st_dev, after_root.st_ino, after_root.st_uid, after_root.st_mode,
+            after_root.st_mtime_ns, after_root.st_ctime_ns,
+        ):
+            result.items.clear()
+            result.issues.append(ScanIssue(code="root_changed_during_scan",
+                message="staging 根在扫描期间变化", task=task, path=root, blocking=True))
+    except OSError as exc:
+        result.items.clear()
+        _append_filesystem_issue(result.issues, exc, root, task)
     return result
 
 
