@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openclean:schema:cleanup-plan:v1",
+  "title": "CleanupPlan",
+  "description": "Static plan; can_execute does not certify live state. Executor requires fresh consent, Run, registry and detector results. plan_items is the sole canonical list field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "run_id",
+    "executed",
+    "plan_items"
+  ],
+  "properties": {
+    "mode": {
+      "enum": [
+        "preview",
+        "execute"
+      ]
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^run:(?!redacted$)[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "executed": {
+      "type": "boolean"
+    },
+    "plan_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "finding_id",
+          "strategy_id",
+          "strategy_version",
+          "action_name",
+          "action_supported",
+          "can_execute",
+          "block_reasons",
+          "resolved_targets"
+        ],
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "pattern": "^finding:(?!redacted$)[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "strategy_id": {
+            "type": "string"
+          },
+          "strategy_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "action_name": {
+            "type": "string"
+          },
+          "action_supported": {
+            "type": "boolean"
+          },
+          "can_execute": {
+            "type": "boolean"
+          },
+          "block_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "resolved_targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "display_path",
+                "identity"
+              ],
+              "properties": {
+                "display_path": {
+                  "type": "string"
+                },
+                "identity": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "additionalProperties": false,
+                  "required": [
+                    "device",
+                    "inode",
+                    "owner"
+                  ],
+                  "properties": {
+                    "device": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "inode": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "owner": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "preview"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "executed": {
+            "const": false
+          }
+        }
+      }
+    }
+  ]
+}

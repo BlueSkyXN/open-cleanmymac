@@ -18,14 +18,24 @@ PATH_VALUE_KEYS = frozenset({
     "rules_path",
     "config_path",
     "mount_point",
+    "display_path",
+    "home",
+    "run_store",
+    "roots",
 })
-FREE_TEXT_KEYS = frozenset({"message", "note", "action_block_reason"})
+FREE_TEXT_KEYS = frozenset(
+    {"message", "note", "action_block_reason", "summary", "do_not_do", "block_reasons"}
+)
+# run_id/finding_id 不是路径形态，不会被路径 ref 替换；为保证脱敏输出
+# 不可 replay（AR-03 §7 / 决策 5），单独把这些 actionable ID 换成不可用占位。
+ACTIONABLE_ID_KEYS = frozenset({"run_id", "finding_id", "finding_ids"})
 REDACTION_METADATA = {
     "enabled": True,
     "scheme": "opaque-path-ref-v1",
     "scope": "single-document",
     "selection_replayable": False,
 }
+_ACTIONABLE_ID_PATTERN = re.compile(r"\b(run|finding):[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![A-Za-z0-9/])/(?![/\s])")
 _TILDE_PATH_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_~])~(?:[A-Za-z0-9._-]+)?/(?!\s)"
@@ -87,15 +97,8 @@ class JsonPathRedactor:
             canonical: f"path:{index:04d}"
             for index, canonical in enumerate(canonicals, start=1)
         }
-
-    def _reference(self, value: str) -> str | None:
-        canonical = _canonical_absolute_path(value)
-        if canonical is None:
-            return None
-        return self._references.get(canonical)
-
-    def _replace_known_paths(self, value: str) -> str:
-        replacements = sorted(
+        # Aliases stay fixed during a document; longer paths must be replaced first.
+        self._replacements = sorted(
             (
                 (alias, self._references[canonical])
                 for alias, canonical in self._aliases.items()
@@ -104,8 +107,16 @@ class JsonPathRedactor:
             key=lambda pair: len(pair[0]),
             reverse=True,
         )
+
+    def _reference(self, value: str) -> str | None:
+        canonical = _canonical_absolute_path(value)
+        if canonical is None:
+            return None
+        return self._references.get(canonical)
+
+    def _replace_known_paths(self, value: str) -> str:
         redacted = value
-        for original, reference in replacements:
+        for original, reference in self._replacements:
             redacted = redacted.replace(original, reference)
         return redacted
 
@@ -128,11 +139,13 @@ class JsonPathRedactor:
             return [self._transform(entry, key) for entry in value]
         if not isinstance(value, str):
             return value
+        if key in ACTIONABLE_ID_KEYS:
+            return f"{value.split(':', 1)[0]}:redacted"
         if key in PATH_VALUE_KEYS:
             reference = self._reference(value)
             if reference is not None:
                 return reference
-        redacted = self._replace_known_paths(value)
+        redacted = _ACTIONABLE_ID_PATTERN.sub(r"\1:redacted", self._replace_known_paths(value))
         if key in FREE_TEXT_KEYS and (
             _ABSOLUTE_PATH_PATTERN.search(redacted)
             or _TILDE_PATH_PATTERN.search(redacted)

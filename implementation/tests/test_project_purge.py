@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from openclean import __version__
 from openclean.cleanup import CleanupOutcome, CleanupReport
 from openclean.cli import _print_purge_report, main
 from openclean.engine import (
@@ -158,7 +159,7 @@ class ProjectPurgeTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
             main(["--version"])
         self.assertEqual(raised.exception.code, 0)
-        self.assertEqual(stdout.getvalue().strip(), "openclean 0.23.0")
+        self.assertEqual(stdout.getvalue().strip(), f"openclean {__version__}")
 
     def test_default_search_roots_match_public_cli_contract(self) -> None:
         home = Path("/Users/example")

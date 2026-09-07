@@ -5,10 +5,25 @@
 [安全](../SECURITY.md) · [规格索引](../specs/_index.md) ·
 [实现说明](README.md)
 
-当前基线：`openclean 0.23.0`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
+当前候选：`openclean 0.24.0a1`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
 本清单只保留尚未完成或需要外部验收的工作。已完成功能以
-[docs/CAPABILITIES.md](../docs/CAPABILITIES.md)、CHANGELOG 和当前 `make check` 为准。
+[docs/CAPABILITIES.md](../docs/CAPABILITIES.md)、CHANGELOG 和 exact-head CI 为准。
 CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI 对齐目标。
+
+> **Agent Runtime P0a 已实现，P0b 未启用**：探测、Run/Finding、展示和计划预览已落地。
+> 内置 7 条 Codex 策略均只读；不能把测试用 synthetic approval 当生产策略证据。
+> 经典命令、TUI 和共享执行器继续保留。详见 [当前状态](../docs/AGENT_RUNTIME_STATUS.md)。
+
+## Agent 下一阶段
+
+| 工作 | 当前状态 | 完成依据 |
+|---|---|---|
+| P0a 存储与计划完整性、HOME/ignore、JSON 状态 | 已实现 | 当前源码及 `test_agent_*` |
+| macOS 原生全套测试与演示 | 由 macOS Actions runner 持续验证 | 不使用 Linux shim 的 make ci-check 原始结果 |
+| P0b 真实目标结构匹配器 | 未实现，明确阻止动作 | 正反结构样本、保护路径与运行状态反例 |
+| 真实 Observation 与逐策略 promotion | 未完成 | 用户提供/批准的来源和固定 pack hash；不可补造 |
+| 首条生产策略启用 | 未完成 | 上述条件满足后的单独变更，不由本候选版默认开启 |
+| 其余 pack / explore / lab / MCP | 规划 | 分阶段实现，不删除经典能力来凑完成率 |
 
 ## P0：发布前必须保持的阻断边界
 
@@ -77,8 +92,8 @@ notarization 和真实安装/升级/回滚验收。Python wheel 本身不能安�
 
 ### 5. macOS/Python 兼容矩阵
 
-当前 CI 基线是 `macos-14 + Python 3.11`。在扩大支持声明前，增加 Python 3.12/3.13 和
-目标 macOS 版本的真实验证，重点检查 curses、`st_blocks`、`getconf`、`tmutil`、mount、
+当前 CI 基线是 `macos-14 + Python 3.11`，本地不要求额外解释器。只有明确扩展兼容目标时，
+才在云端增加相应 Python/macOS 验证，不将完整版本矩阵作为日常修改门槛。重点检查 curses、`st_blocks`、`getconf`、`tmutil`、mount、
 Trash 权限和 OpenSSL CLI 差异。
 
 另需在专用测试账号/隔离 File Provider 数据上验证 `SF_DATALESS`：扫描前后占位状态不变、
@@ -132,16 +147,17 @@ Control 状态 observer；不能把进度 callback 当作 Control observer。
 ## 已完成能力
 
 已落地功能不要在本清单重复展开。以 [docs/CAPABILITIES.md](../docs/CAPABILITIES.md)
-和 [CHANGELOG.md](../CHANGELOG.md) 为准；验证以当前 `make check` 为准。
+和 [CHANGELOG.md](../CHANGELOG.md) 为准；本地轻量检查与 exact-head CI 分别报告。
 
 ## 提交前验证
 
 ```bash
 make check
-make package
-make release-check
+make test-focused TEST_PATTERN=test_agent_identifiers.py  # 换成受影响文件
 git diff --check
 ```
+
+全量 `make ci-check`、构建、归档审计及安装验证交给 GitHub Actions；本地仅按需复现失败项。
 
 任何真实 `--yes`、Docker prune、网络知识库更新、特权安装或公共发布都需要单独授权和
 对应环境证据。

@@ -6,12 +6,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import stat
 import sys
 from collections.abc import Iterable
+from dataclasses import asdict
 from pathlib import Path
 
 from . import __version__
+from .actions.planner import execute_plan, resolve_plan
 from .analyzer import AnalyzeError, SpaceAnalysis, analyze_path
 from .cleanup import (
     CleanupReport,
@@ -21,6 +24,7 @@ from .cleanup import (
     with_cleanup_selection,
 )
 from .config import ConfigError, ConfigStore
+from .core.errors import AgentRuntimeError
 from .engine import (
     Control,
     IgnoreRules,
@@ -40,10 +44,14 @@ from .knowledge_update import KnowledgeUpdateError, update_knowledge_base
 from .macos import volume_mount_point
 from .models import Item, ScanResult, normalize_path
 from .navigator import run_space_browser
+from .predicates import ProtectionGate
 from .progress import TerminalProgressRenderer
 from .redaction import redact_json_payload
+from .runtime.inspect_service import inspect_target, validated_home
+from .runtime.run_store import RunStore, finding_to_dict, default_run_store_dir
 from .scanpoints import DOMAINS
 from .space_tui import SpaceTUIUnavailable, review_space
+from .strategies.registry import StrategyRegistry, pack_hash
 from .tui import ReviewGroup, TUIUnavailable, review_cleanup
 
 ALL_DOMAINS = list(DOMAINS.keys()) + ["project"]
@@ -72,6 +80,16 @@ class CliUsageError(Exception):
         self.usage = usage
 
 
+class CliError(Exception):
+    """Agent Runtime 命令的可预期失败；由分派转成 ``_fail`` 契约。"""
+
+    def __init__(self, code: str, message: str, *, exit_code: int = 2) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.exit_code = exit_code
+
+
 class CliArgumentParser(argparse.ArgumentParser):
     """保留 argparse help 行为，但不让用法错误提前终止进程。"""
 
@@ -81,6 +99,23 @@ class CliArgumentParser(argparse.ArgumentParser):
 
     def error(self, message: str) -> None:
         raise CliUsageError(message, self.format_usage())
+
+
+# AR-03 §2 已知探测目标目录：codex 已随包分发；其余为已规划但尚未安装的
+# pack（fail-closed 为 `pack_not_found`/exit 1，而非用法错误，AGENTS.md 硬约束 6）。
+AGENT_TARGETS = (
+    "codex",
+    "qoder",
+    "workbuddy",
+    "claude",
+    "cursor",
+    "macos-system",
+    "developer-tools",
+    "browsers",
+    "docker",
+    "project-artifacts",
+    "all",
+)
 
 
 def _command_from_argv(argv: list[str]) -> str:
@@ -93,11 +128,14 @@ def _command_from_argv(argv: list[str]) -> str:
         "ignore",
         "config",
         "cat",
+        "inspect",
+        "show",
+        "strategy",
     }
     for index, token in enumerate(argv):
         if token not in commands:
             continue
-        if token in {"optimize", "ignore"} and index + 1 < len(argv):
+        if token in {"optimize", "ignore", "strategy"} and index + 1 < len(argv):
             action = argv[index + 1]
             if not action.startswith("-"):
                 return f"{token} {action}"
@@ -133,6 +171,7 @@ def _print_json(
     redact_paths: bool = False,
     path_seeds: tuple[str, ...] = (),
 ) -> None:
+    payload = {"schema_version": CLI_SCHEMA_VERSION, **payload}
     output = (
         redact_json_payload(payload, path_seeds=path_seeds)
         if redact_paths
@@ -500,7 +539,7 @@ def _volume_summaries(
     for device_id, volume_items in grouped.items():
         try:
             mount_point = volume_mount_point(volume_items[0].path)
-        except (FileNotFoundError, PermissionError, OSError):
+        except OSError:
             mount_point = None
         summaries.append(
             {
@@ -675,6 +714,21 @@ def _issue_payload(issue) -> dict[str, object]:
     }
 
 
+def _scan_summary(result: ScanResult) -> dict[str, object]:
+    total, reclaimable = result.total, result.actionable_total
+    return {
+        "complete": result.complete,
+        "cancelled": result.cancelled,
+        "total_bytes": total,
+        "potential_bytes": total,
+        "reclaimable_bytes": reclaimable,
+        "requires_privilege_bytes": result.requires_privilege_total,
+        "unsupported_bytes": result.unsupported_total,
+        "total_human": human(total),
+        "reclaimable_human": human(reclaimable),
+    }
+
+
 def _print_report(
     result: ScanResult,
     as_json: bool,
@@ -689,15 +743,7 @@ def _print_report(
             "command": "scan",
             "mode": "report",
             "requested_domains": requested_domains,
-            "complete": result.complete,
-            "cancelled": result.cancelled,
-            "total_bytes": result.total,
-            "potential_bytes": result.total,
-            "reclaimable_bytes": result.actionable_total,
-            "requires_privilege_bytes": result.requires_privilege_total,
-            "unsupported_bytes": result.unsupported_total,
-            "total_human": human(result.total),
-            "reclaimable_human": human(result.actionable_total),
+            **_scan_summary(result),
             "volumes": _volume_summaries(result.items),
             "items": [
                 _item_payload(i)
@@ -753,15 +799,7 @@ def _print_purge_report(
             "schema_version": CLI_SCHEMA_VERSION,
             "command": "purge",
             "mode": "result" if cleanup is not None else "preview",
-            "complete": result.complete,
-            "cancelled": result.cancelled,
-            "total_bytes": result.total,
-            "potential_bytes": result.total,
-            "reclaimable_bytes": result.actionable_total,
-            "requires_privilege_bytes": result.requires_privilege_total,
-            "unsupported_bytes": result.unsupported_total,
-            "total_human": human(result.total),
-            "reclaimable_human": human(result.actionable_total),
+            **_scan_summary(result),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),
@@ -848,15 +886,7 @@ def _print_clean_report(
             "command": "clean",
             "category": requested_category or "all",
             "mode": "result" if cleanup is not None else "preview",
-            "complete": result.complete,
-            "cancelled": result.cancelled,
-            "total_bytes": result.total,
-            "potential_bytes": result.total,
-            "reclaimable_bytes": result.actionable_total,
-            "requires_privilege_bytes": result.requires_privilege_total,
-            "unsupported_bytes": result.unsupported_total,
-            "total_human": human(result.total),
-            "reclaimable_human": human(result.actionable_total),
+            **_scan_summary(result),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),
@@ -921,6 +951,7 @@ def _print_analyze_report(
     selected_paths = {item.path for item in selected}
     entries = analysis.entries[:top] if top else analysis.entries
     if as_json:
+        total = analysis.total
         entry_count_total = len(analysis.entries)
         entry_count_returned = len(entries)
         _print_json({
@@ -940,12 +971,12 @@ def _print_analyze_report(
             "root": str(analysis.root),
             "complete": analysis.complete,
             "cancelled": analysis.cancelled,
-            "total_bytes": analysis.total,
-            "potential_bytes": analysis.total,
+            "total_bytes": total,
+            "potential_bytes": total,
             # Space Lens 只描述占用，不把任意一级目录归类为垃圾。
             "reclaimable_bytes": 0,
-            "allocated_bytes": analysis.total,
-            "total_human": human(analysis.total),
+            "allocated_bytes": total,
+            "total_human": human(total),
             "volumes": _volume_summaries(
                 (entry.item for entry in analysis.entries),
                 report_reclaimable=False,
@@ -1037,14 +1068,12 @@ def _select_analyze_items(
     selected: list[Item] = []
     for selector in selectors:
         target = normalize_path(selector)
-        matches = [
-            entry.item
-            for entry in analysis.entries
-            if entry.item.path == target
-        ]
-        if not matches:
+        item = next(
+            (entry.item for entry in analysis.entries if entry.item.path == target),
+            None,
+        )
+        if item is None:
             raise SelectionError(f"当前层级未找到分析候选：{selector}")
-        item = matches[0]
         if not item.actionable:
             reason = item.action_block_reason or "该候选不可执行"
             raise SelectionError(f"拒绝选择 {selector}：{reason}")
@@ -1071,6 +1100,339 @@ def _print_space_tui_result(
         print("未指定或未确认 --yes；没有修改文件。")
     else:
         _print_cleanup_summary(cleanup)
+
+
+def _agent_protection(args) -> ProtectionGate:
+    # Resolve defaults at invocation time, not at module import / the real HOME.
+    home = validated_home(getattr(args, "home", "") or None)
+    if args.rules is not None:
+        knowledge = KnowledgeBase.load(args.rules)
+    else:
+        knowledge = KnowledgeBase.empty()
+        for name in ("knowledge.json", "rules.json"):
+            path = home / ".config/openclean" / name
+            if path.exists():
+                knowledge = knowledge.merge(KnowledgeBase.load(path))
+    protection = IgnoreRules(getattr(args, "ignore", ()), knowledge_base=knowledge)
+    canonical = json.dumps({"knowledge": asdict(knowledge),
+                            "ignore": list(getattr(args, "ignore", ()))},
+                           default=str, sort_keys=True, separators=(",", ":"))
+    protection.config_hash = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+    return protection
+
+
+def _agent_run_store(args) -> RunStore:
+    override = getattr(args, "run_store", "")
+    if override:
+        return RunStore(directory=Path(override).expanduser())
+    home = getattr(args, "home", "")
+    if home:
+        return RunStore(directory=validated_home(home) / ".local/state/openclean/runs")
+    return RunStore()
+
+
+def _developer_mode(args) -> bool:
+    return any(bool(getattr(args, key, "")) for key in ("home", "packs_dir", "run_store"))
+
+
+def _load_registry(args) -> StrategyRegistry:
+    raw = getattr(args, "packs_dir", "")
+    packs_dir = Path(raw).expanduser() if raw else None
+    return StrategyRegistry.load(packs_dir=packs_dir)
+
+
+def _finding_summary(finding) -> dict:
+    return {
+        "finding_id": finding.finding_id,
+        "run_id": finding.run_id,
+        "strategy_id": finding.strategy_id,
+        "strategy_version": finding.strategy_version,
+        "actionable": finding.assessment.actionable,
+        "classification": finding.assessment.classification,
+        "action_risk": finding.assessment.action_risk,
+        "block_reasons": list(finding.assessment.block_reasons),
+        "target_kind": finding.target.kind,
+        "display_path": finding.target.display_path,
+        "identifier": finding.target.identifier,
+        "size": finding.measurement.size,
+        "evidence_kind": finding.evidence.kind,
+        "summary": finding.recommendation.summary,
+        "do_not_do": list(finding.recommendation.do_not_do),
+    }
+
+
+def _clean_payload(plan, *, executed: bool, outcome) -> dict:
+    complete = outcome is None or outcome["complete"]
+    payload = {
+        "command": "clean", "status": "ok" if complete else "error" if executed else "blocked",
+        "mode": plan.mode, "run_id": plan.run_id, "executed": executed,
+        "plan": {**asdict(plan), "executed": executed},
+    }
+    if outcome is not None:
+        payload["outcome"] = outcome
+        if not complete:
+            code = ("execution_failed" if executed else "run_incomplete"
+                    if any("run_incomplete" in i.block_reasons for i in plan.plan_items)
+                    else "batch_blocked")
+            payload["error"] = {"code": code, "message": "See plan and outcome for each selected Finding"}
+    return payload
+
+
+def _cmd_inspect(args) -> int:
+    registry = _load_registry(args)
+    protection = _agent_protection(args)
+    store = _agent_run_store(args)
+    home = Path(args.home).expanduser() if getattr(args, "home", "") else None
+    result = inspect_target(
+        args.target, protection, registry=registry, run_store=store, home=home,
+        protect_config_hash=protection.config_hash,
+    )
+    run = result.run
+    findings = result.findings
+    redact = bool(getattr(args, "redact_paths", False))
+    payload = {
+        "command": f"inspect {args.target}",
+        "status": "ok" if run.complete else "incomplete",
+        "developer_mode": _developer_mode(args),
+        "home": run.home,
+        "run_store": str(store.directory),
+        "run_id": run.run_id,
+        "requested_target": run.requested_target,
+        "created_at": run.created_at,
+        "expires_at": run.expires_at,
+        "openclean_version": run.openclean_version,
+        "macos_version": run.macos_version,
+        "strategy_pack_hashes": dict(run.strategy_pack_hashes),
+        "protect_config_hash": run.protect_config_hash,
+        "complete": run.complete,
+        "totals": {
+            "findings": len(findings),
+            "actionable": sum(1 for f in findings if f.assessment.actionable),
+            "report_only": sum(
+                1 for f in findings if f.assessment.classification == "report_only"
+            ),
+        },
+        "findings": [_finding_summary(f) for f in findings],
+        "issues": [
+            {"code": i.code, "message": i.message, "blocking": i.blocking}
+            for i in run.issues
+        ],
+        "redaction": {"selection_replayable": not redact},
+    }
+    if args.json:
+        _print_json(payload, redact_paths=redact, path_seeds=getattr(args, "_raw_argv", ()))
+        return 0 if run.complete else 1
+    print(
+        f"Run {run.run_id} · target={run.requested_target} · findings={len(findings)}"
+        f"（actionable {payload['totals']['actionable']} /"
+        f" report_only {payload['totals']['report_only']}）"
+    )
+    for finding in findings:
+        flag = "可执行" if finding.assessment.actionable else "只读"
+        label = finding.target.display_path or finding.target.identifier
+        print(
+            f"  [{flag}] {finding.finding_id}  {finding.strategy_id}  {label}"
+            f"  {human(finding.measurement.size)}"
+        )
+        for reason in finding.assessment.block_reasons:
+            print(f"        block: {reason}")
+    for issue in run.issues:
+        print(f"  issue[{issue.code}] {issue.message}")
+    if not run.complete:
+        print("  注意：本次 Run 不完整（complete=false）。")
+    print(f"\n下一步：openclean show --run {run.run_id} --finding <finding_id>")
+    if _developer_mode(args):
+        print(f"  此 Run 位于 {store.directory}；show/clean 预览请显式传 --run-store，切勿作为生产执行。")
+    return 0 if run.complete else 1
+
+
+def _cmd_show(args) -> int:
+    store = _agent_run_store(args)
+    finding = store.load_finding(args.run, args.finding)
+    redact = bool(getattr(args, "redact_paths", False))
+    payload = {
+        **finding_to_dict(finding),
+        "command": "show",
+        "status": "ok",
+        "redaction": {"selection_replayable": not redact},
+    }
+    if args.json:
+        _print_json(payload, redact_paths=redact, path_seeds=getattr(args, "_raw_argv", ()))
+        return 0
+    label = finding.target.display_path or finding.target.identifier
+    print(f"Finding {finding.finding_id}（run {finding.run_id}）")
+    print(f"  策略：{finding.strategy_id} v{finding.strategy_version}")
+    print(f"  目标：{label}（{finding.target.kind}）")
+    print(
+        f"  分类：{finding.assessment.classification} ·"
+        f" 可执行：{'是' if finding.assessment.actionable else '否'} ·"
+        f" 风险：{finding.assessment.action_risk}"
+    )
+    print(f"  证据：{finding.evidence.kind} · 大小：{human(finding.measurement.size)}")
+    if finding.assessment.block_reasons:
+        print(f"  阻断：{', '.join(finding.assessment.block_reasons)}")
+    if finding.recommendation.summary:
+        print(f"  说明：{finding.recommendation.summary}")
+    if finding.recommendation.do_not_do:
+        print(f"  不要做：{'; '.join(finding.recommendation.do_not_do)}")
+    return 0
+
+
+def _cmd_strategy(args) -> int:
+    registry = _load_registry(args)
+    redact = getattr(args, "redact_paths", False)
+    seeds = getattr(args, "_raw_argv", ())
+    if args.strategy_action == "show":
+        strategy = registry.get(args.id)
+        if args.json:
+            _print_json(
+                {"command": "strategy show", "status": "ok", "strategy": asdict(strategy)},
+                redact_paths=redact,
+                path_seeds=seeds,
+            )
+            return 0
+        print(
+            f"{strategy.id} v{strategy.version} · pack={strategy.pack} ·"
+            f" status={strategy.status}"
+        )
+        print(f"  detector: {strategy.detector.name} params={strategy.detector.params}")
+        print(f"  action: {strategy.action.name}（supported={strategy.action.supported}）")
+        print(
+            f"  assessment: {strategy.assessment.classification}/"
+            f"{strategy.assessment.certainty}/{strategy.assessment.action_risk}"
+        )
+        return 0
+    if args.strategy_action == "verify":
+        packs = sorted(registry.packs, key=lambda p: p.name)
+        payload = {
+            "command": "strategy verify",
+            "status": "ok",
+            "packs": [
+                {"name": p.name, "hash": pack_hash(p), "strategy_count": len(p.strategies)}
+                for p in packs
+            ],
+        }
+        if args.json:
+            _print_json(payload, redact_paths=redact, path_seeds=seeds)
+            return 0
+        for pack in packs:
+            print(f"OK {pack.name}: {pack_hash(pack)}（{len(pack.strategies)} 策略）")
+        return 0
+    packs = sorted(registry.packs, key=lambda p: p.name)
+    payload = {
+        "command": "strategy list",
+        "status": "ok",
+        "packs": [
+            {
+                "name": p.name,
+                "schema_version": p.schema_version,
+                "hash": pack_hash(p),
+                "strategy_count": len(p.strategies),
+                "strategies": [
+                    {
+                        "id": s.id,
+                        "version": s.version,
+                        "status": s.status,
+                        "classification": s.assessment.classification,
+                        "detector": s.detector.name,
+                        "action": s.action.name,
+                        "supported": s.action.supported,
+                    }
+                    for s in sorted(p.strategies, key=lambda s: s.id)
+                ],
+            }
+            for p in packs
+        ],
+    }
+    if args.json:
+        _print_json(payload, redact_paths=redact, path_seeds=seeds)
+        return 0
+    for pack in packs:
+        print(
+            f"{pack.name}（schema v{pack.schema_version}）  hash={pack_hash(pack)}"
+            f"  {len(pack.strategies)} 策略"
+        )
+        for strategy in sorted(pack.strategies, key=lambda s: s.id):
+            print(
+                f"    [{strategy.status}] {strategy.id} v{strategy.version} ·"
+                f" {strategy.assessment.classification}"
+            )
+    return 0
+
+
+def _cmd_clean_finding(args) -> int:
+    store = _agent_run_store(args)
+    registry = _load_registry(args)
+    protection = _agent_protection(args)
+    if args.yes and (getattr(args, "packs_dir", "") or
+                     store.directory != default_run_store_dir()):
+        raise CliError("developer_execution_disabled",
+                       "外部策略和非默认 Run Store 仅支持读取与预览。", exit_code=1)
+    run, findings = store.load_bundle(args.run)
+    if args.yes and (not run.home or normalize_path(run.home) != normalize_path(Path.home())):
+        raise CliError("run_home_mismatch", "Run HOME 与当前 HOME 不一致；请重新 inspect。", exit_code=1)
+    selected = list(dict.fromkeys(args.finding))
+    if not selected:
+        raise CliError("empty_selection", "clean --run 至少需要一个 --finding。", exit_code=2)
+    plan = resolve_plan(
+        run=run,
+        findings=findings,
+        selected_ids=selected,
+        registry=registry,
+        user_confirmed=bool(args.yes),
+        include_confirm=bool(args.include_confirm),
+        include_critical=bool(args.include_critical),
+    )
+    redact = getattr(args, "redact_paths", False)
+    seeds = getattr(args, "_raw_argv", ())
+    if plan.mode == "preview":
+        if args.json:
+            _print_json(
+                _clean_payload(plan, executed=False, outcome=None),
+                redact_paths=redact,
+                path_seeds=seeds,
+            )
+        else:
+            print(f"CleanupPlan · run={run.run_id} · mode=preview")
+            for item in plan.plan_items:
+                state = (
+                    "可执行"
+                    if item.can_execute
+                    else f"阻断（{', '.join(item.block_reasons)}）"
+                )
+                print(f"  {item.finding_id}  {item.strategy_id}  {state}")
+            print("\n预览模式（未加 --yes）。确认后重跑并加 --yes 执行。")
+        return 0
+    report, records = execute_plan(
+        plan, findings, protection, run=run, registry=registry,
+        user_confirmed=bool(args.yes), include_confirm=bool(args.include_confirm),
+        include_critical=bool(args.include_critical), home=Path(run.home),
+    )
+    executed = any(r.status not in {"blocked", "not_run"} for r in records)
+    outcome = {
+        "complete": report.complete,
+        "moved_to_trash_bytes": report.moved_bytes,
+        "permanently_deleted_bytes": report.deleted_bytes,
+        "outcomes": [
+            {
+                "finding_id": r.finding_id,
+                "status": r.status,
+                "bytes_affected": r.bytes_affected,
+                "destination": r.destination,
+                "message": r.message,
+            }
+            for r in records
+        ],
+    }
+    if args.json:
+        _print_json(
+            _clean_payload(plan, executed=executed, outcome=outcome),
+            redact_paths=redact,
+            path_seeds=seeds,
+        )
+    else:
+        _print_cleanup_summary(report)
+    return 0 if report.complete else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1129,6 +1491,12 @@ def main(argv: list[str] | None = None) -> int:
         default=8,
         help="并发扫描 worker 数；默认 8",
     )
+    clean.add_argument("--run", default=None, metavar="RUN_ID",
+                       help="Agent Runtime：按已固化 Run + --finding 解析目标（与分类清理互斥）")
+    clean.add_argument("--finding", action="append", default=[], metavar="FINDING_ID",
+                       help="与 --run 配合；可多次指定要清理的 Finding")
+    clean.add_argument("--run-store", default="", help=argparse.SUPPRESS)
+    clean.add_argument("--packs-dir", default="", help=argparse.SUPPRESS)
     _add_json_output_options(clean)
 
     analyze = sub.add_parser(
@@ -1294,6 +1662,28 @@ def main(argv: list[str] | None = None) -> int:
 
     cat_command = sub.add_parser("cat", help="召唤一位终端朋友")
     _add_json_output_options(cat_command)
+
+    inspect_command = sub.add_parser(
+        "inspect", help="按策略包只读探测，产出 Run + Finding 并固化到本地 Run Store")
+    inspect_command.add_argument("target", choices=AGENT_TARGETS, help="探测目标 pack（all = 全部 active/trusted）")
+    inspect_command.add_argument("--home", default="", help="仅测试/隔离：覆盖 HOME")
+    _add_rule_options(inspect_command)
+    _add_json_output_options(inspect_command)
+    inspect_command.add_argument("--run-store", default="", help=argparse.SUPPRESS)
+    inspect_command.add_argument("--packs-dir", default="", help=argparse.SUPPRESS)
+
+    show_command = sub.add_parser("show", help="从 Run Store 读取单个 Finding 的完整证据")
+    show_command.add_argument("--run", required=True, metavar="RUN_ID")
+    show_command.add_argument("--finding", required=True, metavar="FINDING_ID")
+    _add_json_output_options(show_command)
+    show_command.add_argument("--run-store", default="", help=argparse.SUPPRESS)
+
+    strategy_command = sub.add_parser("strategy", help="查看/校验已安装策略包")
+    strategy_command.add_argument("strategy_action", choices=("list", "show", "verify"))
+    strategy_command.add_argument("--id", default="", help="strategy show 的策略 id")
+    _add_json_output_options(strategy_command)
+    strategy_command.add_argument("--packs-dir", default="", help=argparse.SUPPRESS)
+
     try:
         args = ap.parse_args(raw_argv)
     except CliUsageError as exc:
@@ -1359,6 +1749,28 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 1
 
+    if args.cmd == "inspect":
+        try:
+            return _cmd_inspect(args)
+        except KnowledgeBaseError as exc:
+            return _fail(args, f"inspect {args.target}", "rules_error", str(exc), exit_code=2)
+        except (CliError, AgentRuntimeError) as exc:
+            return _fail(args, f"inspect {args.target}", exc.code, exc.message, exit_code=exc.exit_code)
+    if args.cmd == "show":
+        try:
+            return _cmd_show(args)
+        except KnowledgeBaseError as exc:
+            return _fail(args, "show", "rules_error", str(exc), exit_code=2)
+        except (CliError, AgentRuntimeError) as exc:
+            return _fail(args, "show", exc.code, exc.message, exit_code=exc.exit_code)
+    if args.cmd == "strategy":
+        try:
+            return _cmd_strategy(args)
+        except KnowledgeBaseError as exc:
+            return _fail(args, f"strategy {args.strategy_action}", "rules_error", str(exc), exit_code=2)
+        except (CliError, AgentRuntimeError) as exc:
+            return _fail(args, f"strategy {args.strategy_action}", exc.code, exc.message,
+                         exit_code=exc.exit_code)
     if args.cmd == "scan":
         domains = list(dict.fromkeys(args.domain or ALL_DOMAINS))
         if (
@@ -1457,6 +1869,47 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if items_result.complete else 1
 
     if args.cmd == "clean":
+        # P0 BUG-001 fix：Agent 参数与经典参数严格互斥校验。
+        _agent_findings = bool(getattr(args, "finding", []))
+        _agent_run = bool(getattr(args, "run", None))
+        _classic_selector = bool(
+            args.category
+            or getattr(args, "select", [])
+            or getattr(args, "select_all_safe", False)
+            or getattr(args, "force", False)
+            or any(arg == "--workers" or arg.startswith("--workers=") for arg in raw_argv)
+        )
+        if not (_agent_run or _agent_findings) and (
+            getattr(args, "packs_dir", "") or getattr(args, "run_store", "")
+        ):
+            return _fail(args, "clean", "mixed_clean_modes",
+                         "--packs-dir/--run-store 只能用于 Agent 模式。", exit_code=2)
+        if _agent_findings and not _agent_run:
+            return _fail(
+                args, "clean", "agent_selection_requires_run",
+                "clean：--finding 必须与 --run 同时指定。",
+                exit_code=2,
+            )
+        if _agent_run and not _agent_findings:
+            return _fail(
+                args, "clean", "run_requires_finding",
+                "clean：--run 必须与至少一个 --finding 同时指定。",
+                exit_code=2,
+            )
+        if (_agent_run or _agent_findings) and _classic_selector:
+            return _fail(
+                args, "clean", "mixed_clean_modes",
+                "clean：Agent 参数（--run/--finding）不能与经典参数"
+                "（category/--select/--all/--force）混用。",
+                exit_code=2,
+            )
+        if _agent_run:
+            try:
+                return _cmd_clean_finding(args)
+            except KnowledgeBaseError as exc:
+                return _fail(args, "clean", "rules_error", str(exc), exit_code=2)
+            except (CliError, AgentRuntimeError) as exc:
+                return _fail(args, "clean", exc.code, exc.message, exit_code=exc.exit_code)
         if error := _validate_cleanup_execution_args(args):
             return _fail(
                 args,

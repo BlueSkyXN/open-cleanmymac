@@ -106,8 +106,7 @@ def execute_task_graph(
         return TaskGraphResult(())
 
     order = {task.identifier: index for index, task in enumerate(tasks)}
-    by_identifier = {task.identifier: task for task in tasks}
-    pending = set(by_identifier)
+    pending = {task.identifier for task in tasks}
     outcomes: dict[str, TaskOutcome[T]] = {}
     running: dict[Future[T], str] = {}
 

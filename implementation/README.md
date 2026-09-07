@@ -62,6 +62,36 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 前四条会修改文件；清空 Trash 和 Docker prune 是永久操作。验证写路径应运行
 `make preview`。
 
+## Agent Runtime 命令面（附加）
+
+当前 `0.24.0a1` 交付 P0a：内置 Codex 的 7 条策略均为 active/report_only，支持探测、
+持久化展示和计划预览，不启用生产清理动作。与经典命令和 TUI 并存。
+
+```bash
+openclean inspect codex --json
+openclean inspect all --json
+openclean show --run RUN_ID --finding FINDING_ID --json
+openclean clean --run RUN_ID --finding FINDING_ID --json   # 仅预览
+openclean strategy list --json
+openclean strategy verify --json
+```
+
+`inspect` 不修改候选，但写入本机 Run Store。未安装 pack 返回 `pack_not_found` / exit 1。
+内置包的 `clean --run ... --yes` 返回 blocked / exit 1，不能绕过不可动作原因。
+
+Run bundle schema 2 包含 HOME、策略版本和完整 Finding 清单；单文件 8 MiB、总计 64 MiB、
+最多 64 Run，最早写入优先淘汰，最长 TTL 24h。旧格式/过期/损坏数据需重新 inspect，绝不自动重扫。
+`--home` 同时控制 locator 展开、日志分区、默认规则和默认 Store；外部 pack 与自定义 Store 只作预览。
+`--ignore` 与规则会在 Agent 探测和执行前重新应用。
+
+CLI envelope 为 schema 2，计划数组仅为 `plan.plan_items[]`。混合阻止批次返回
+`executed=false`、`complete=false`、逐项 `blocked/not_run`，不把空报告当成功。
+执行前计划检查与实时检查分开；不保证多个文件移动具有事务回滚。
+脱敏输出的 Run/Finding ID 不可回放。
+
+详细契约、错误与仍未实现的能力见 [Agent Runtime 当前状态](../docs/AGENT_RUNTIME_STATUS.md)；
+长期架构见 [specs/agent-runtime/](../specs/agent-runtime/_index.md)。
+
 ## 选择与执行
 
 - 没有 `--yes` 时，`clean`/`purge`/`analyze` 即使带选择参数也只预览。
@@ -226,13 +256,15 @@ fd 和 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`。Docker prune �
 
 ```bash
 make check
-make package
-make release-check
+make test-focused TEST_PATTERN=test_agent_identifiers.py
 ```
+
+本地不要求开发依赖，只运行轻量检查和受影响测试；GitHub Actions 负责 `make ci-check`、
+`make package`、`make release-check` 和 wheel 安装验证。完整目标仍可按需在本机复现。
 
 wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成器、release checker、
 `openclean_cli.py`、README 和 TODO。剩余工作见 [TODO.md](TODO.md)。检查结果以当前
-checkout 的 `make check` 为准。
+checkout 的轻量结果和 exact-head CI 分别报告。
 
 本包随仓库以 [GNU GPL v3](LICENSE) 许可。GitHub Release 是唯一计划的正式发布渠道，当前尚未创建
 Release；项目不通过 PyPI、Homebrew 或其他包管理器分发。

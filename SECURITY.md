@@ -42,6 +42,9 @@ Docker context 元数据、未签名规则和未实现的特权路径。
 |---|---|
 | 误删用户数据 | 扫描/预览只读；写操作必须 `--yes`；`confirm`/`critical` 需额外授权 |
 | 扩大选择范围 | `--select` 从空集开始；不可执行项不能被参数解锁 |
+| Finding 驱动选择（Agent Runtime） | `clean --run --finding` 只接受 `inspect` 固化在 Run Store 的 `finding_id`，不接受任意路径；`confirm`/`critical` 需对应 `--include-*` |
+| Run / Finding 重放 | Run Store 本机私有（`0700`/`0600`）、默认 24h TTL、过期拒绝且不自动重扫；`--redact-paths` 同时脱敏 `run_id`/`finding_id`，输出 `selection_replayable=false` |
+| 策略降级执行 | 仅 `trusted` 策略可执行；执行前复核 pack hash、目标 identity、protect/ignore 与实时 guard，任一不成立整批 fail-closed |
 | 路径替换 / symlink | 拒绝目标与 ancestor symlink；执行前复核 device/inode/owner/mount |
 | 清空 Trash / Docker prune | 永久操作，不经过可恢复 Trash；prune 需精确 identifier |
 | 云占位误删 | dataless/疑似占位不计入可回收量且不可执行 |

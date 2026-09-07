@@ -186,7 +186,7 @@ def scan_broken_startup_items(
         try:
             with os.scandir(root) as iterator:
                 entries = sorted(iterator, key=lambda entry: entry.name)
-        except (PermissionError, FileNotFoundError, OSError) as exc:
+        except OSError as exc:
             result.issues.append(_filesystem_issue(exc, root, category))
             continue
 
@@ -200,7 +200,7 @@ def scan_broken_startup_items(
                 continue
             try:
                 candidate_stat = path.lstat()
-            except (PermissionError, FileNotFoundError, OSError) as exc:
+            except OSError as exc:
                 result.issues.append(_filesystem_issue(exc, path, category))
                 continue
             facts = FileFacts(path=path, stat=candidate_stat)
@@ -240,7 +240,7 @@ def scan_broken_startup_items(
                 continue
             try:
                 verified_stat = path.lstat()
-            except (PermissionError, FileNotFoundError, OSError) as exc:
+            except OSError as exc:
                 result.issues.append(_filesystem_issue(exc, path, category))
                 continue
             verified_facts = FileFacts(path=path, stat=verified_stat)

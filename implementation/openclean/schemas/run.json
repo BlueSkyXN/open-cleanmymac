@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openclean:schema:run:v2",
+  "title": "Run",
+  "description": "固化一次 inspect 的环境、策略版本与 finding_ids（AR-01 §4）。存于本机私有 Run Store；created_at/expires_at 为 epoch 秒。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "created_at",
+    "expires_at",
+    "requested_target",
+    "openclean_version",
+    "macos_version",
+    "strategy_pack_hashes",
+    "protect_config_hash",
+    "complete",
+    "issues",
+    "finding_ids",
+    "home",
+    "strategy_versions"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^run:(?!redacted$)[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "created_at": {
+      "type": "number"
+    },
+    "expires_at": {
+      "type": "number"
+    },
+    "requested_target": {
+      "type": "string"
+    },
+    "openclean_version": {
+      "type": "string"
+    },
+    "macos_version": {
+      "type": "string"
+    },
+    "strategy_pack_hashes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "protect_config_hash": {
+      "type": "string"
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message",
+          "blocking"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "finding_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^finding:(?!redacted$)[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+      },
+      "uniqueItems": true
+    },
+    "home": {
+      "type": "string",
+      "description": "Canonical absolute HOME for this Run."
+    },
+    "strategy_versions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  }
+}

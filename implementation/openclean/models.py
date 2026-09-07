@@ -83,7 +83,7 @@ class FileFacts:
         normalized = normalize_path(path)
         try:
             stat_result = normalized.lstat()
-        except (FileNotFoundError, PermissionError, OSError):
+        except OSError:
             stat_result = None
         return cls(path=normalized, stat=stat_result)
 

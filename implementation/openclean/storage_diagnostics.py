@@ -292,7 +292,6 @@ def _format_bytes(value: int) -> str:
         if size < 1024 or unit == "TiB":
             return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
         size /= 1024
-    raise AssertionError("unreachable")
 
 
 def _append_filesystem_issue(
@@ -1238,6 +1237,186 @@ def scan_codex_marketplace_staging(
             open_handle_count=open_handles,
         )
     )
+    return result
+
+
+def enumerate_codex_marketplace_staging_targets(
+    root: Path,
+    protection: Predicate,
+    *,
+    process_snapshot: ProcessSnapshot | None,
+    open_files: OpenFileSnapshot | None,
+    now: float | None = None,
+    anchor: Path | None = None,
+    minimum_age_days: int = 0,
+    name_glob: str = "marketplace-upgrade-*",
+) -> ScanResult:
+    """逐个枚举 Codex marketplace 升级 staging 目标，供 trusted 策略执行。
+
+    与聚合的 ``scan_codex_marketplace_staging`` 不同：每个 ``marketplace-upgrade-*`` 目录
+    产出一个独立的 ``resource_kind="filesystem"`` 候选，携带逐目标 identity；是否 actionable
+    由最低年龄、句柄、运行状态与排除/跨卷/云占位合取决定。逐字复用现有计量/闸原语，
+    **不修改**聚合函数（AR-06 §4：聚合根不得作为动作目标）。
+    """
+
+    result = ScanResult()
+    if anchor is not None and not normalize_path(root).is_relative_to(normalize_path(anchor)):
+        result.issues.append(ScanIssue(code="invalid_locator", message="目标根不在 HOME 下",
+                                      task="Codex staging", path=root, blocking=True))
+        return result
+    task = "Codex marketplace 升级 staging 目标"
+    root = normalize_path(root)
+    root_facts = _diagnostic_directory_facts(
+        root,
+        protection,
+        result.issues,
+        task=task,
+        anchor=anchor,
+    )
+    if root_facts is None or root_facts.stat is None:
+        return result
+    root_device = root_facts.stat.st_dev
+    try:
+        entries = sorted(scandir_entries(root), key=lambda item: item.name)
+    except OSError as exc:
+        _append_filesystem_issue(result.issues, exc, root, task)
+        return result
+    matching = []
+    for entry in entries:
+        if not fnmatch.fnmatchcase(entry.name, name_glob):
+            continue
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                matching.append(entry)
+        except OSError:
+            continue
+    limit_reached = len(matching) > _MAX_CODEX_STAGING_ROOTS
+    candidates = matching[:_MAX_CODEX_STAGING_ROOTS]
+    if limit_reached:
+        result.issues.append(
+            ScanIssue(
+                code="diagnostic_limit_reached",
+                message="marketplace staging 目标数量超过安全上限，仅处理有界前缀",
+                task=task,
+                path=root,
+            )
+        )
+
+    observed_at = time.time() if now is None else now
+    codex_running = (
+        process_snapshot is not None
+        and process_snapshot.any_running(_CODEX_PROCESS_MARKERS)
+    )
+    for entry in candidates:
+        path = Path(entry.path)
+        try:
+            before = lstat_retry(path)
+        except OSError as exc:
+            _append_filesystem_issue(result.issues, exc, path, task)
+            continue
+        issue_start = len(result.issues)
+        measurement = _candidate_measurement(
+            path,
+            root_device,
+            protection,
+            result.issues,
+            task=task,
+            now=observed_at,
+        )
+        if measurement is None:
+            continue
+        try:
+            target_stat = lstat_retry(path)
+        except OSError as exc:
+            _append_filesystem_issue(result.issues, exc, path, task)
+            continue
+        if (before.st_dev, before.st_ino, before.st_uid, before.st_mode,
+            before.st_mtime_ns, before.st_ctime_ns) != (
+            target_stat.st_dev, target_stat.st_ino, target_stat.st_uid, target_stat.st_mode,
+            target_stat.st_mtime_ns, target_stat.st_ctime_ns,
+        ):
+            result.issues.append(ScanIssue(code="target_changed_during_scan",
+                message="目标在计量期间变化", task=task, path=path, blocking=True))
+            continue
+        open_handles = (
+            open_files.count_under(path) if open_files is not None else None
+        )
+        measurement.newest_mtime = max(
+            measurement.newest_mtime or 0, target_stat.st_mtime
+        )
+        age_days = (
+            max(0, int((observed_at - measurement.newest_mtime) // 86400))
+            if measurement.newest_mtime is not None
+            else None
+        )
+        block_reasons: list[str] = []
+        if limit_reached or len(result.issues) > issue_start:
+            block_reasons.append("measurement_incomplete")
+        if age_days is None or age_days < minimum_age_days:
+            block_reasons.append("未达最低保留年龄")
+        if open_handles is None:
+            block_reasons.append("打开句柄状态未知")
+        elif open_handles:
+            block_reasons.append("存在打开句柄")
+        if process_snapshot is None:
+            block_reasons.append("进程状态未知")
+        elif codex_running:
+            block_reasons.append("Codex 正在运行")
+        if measurement.excluded_paths:
+            block_reasons.append("包含忽略或保护路径")
+        if measurement.cross_device_paths:
+            block_reasons.append("包含其它文件系统挂载点")
+        if measurement.cloud_file_count:
+            block_reasons.append("包含云占位文件")
+        actionable = not block_reasons
+        age_label = age_days if age_days is not None else "?"
+        notes = [f"marketplace 升级暂存目标（{age_label} 天）"]
+        notes.extend(
+            _runtime_diagnostic_notes(
+                process_snapshot,
+                _CODEX_PROCESS_MARKERS,
+                open_handles,
+            )
+        )
+        result.items.append(
+            Item(
+                path,
+                measurement.allocated_bytes,
+                task,
+                "confirm",
+                "；".join(notes),
+                logical_size=measurement.logical_bytes,
+                allocated_size=measurement.allocated_bytes,
+                actionable=actionable,
+                action_block_reason="" if actionable else "；".join(block_reasons),
+                identity=FileIdentity.from_stat(target_stat),
+                latest_mtime=measurement.newest_mtime,
+                age_days=age_days,
+                preselected=False,
+                resource_kind="filesystem",
+                excluded_paths=measurement.excluded_paths,
+                cross_device_paths=measurement.cross_device_paths,
+                cloud_file_count=measurement.cloud_file_count,
+                requires_explicit_selection=True,
+                domain="ai",
+                running_process_markers=_CODEX_PROCESS_MARKERS,
+                open_handle_count=open_handles,
+            )
+        )
+    try:
+        after_root = lstat_retry(root)
+        initial = root_facts.stat
+        if (initial.st_dev, initial.st_ino, initial.st_uid, initial.st_mode,
+            initial.st_mtime_ns, initial.st_ctime_ns) != (
+            after_root.st_dev, after_root.st_ino, after_root.st_uid, after_root.st_mode,
+            after_root.st_mtime_ns, after_root.st_ctime_ns,
+        ):
+            result.items.clear()
+            result.issues.append(ScanIssue(code="root_changed_during_scan",
+                message="staging 根在扫描期间变化", task=task, path=root, blocking=True))
+    except OSError as exc:
+        result.items.clear()
+        _append_filesystem_issue(result.issues, exc, root, task)
     return result
 
 

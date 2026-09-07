@@ -10,6 +10,38 @@
 
 ## [Unreleased]
 
+### Development workflow
+
+- 显式固定 Ruff 基础错误规则，避免工具默认变化引入额外风格门禁；功能测试和构建检查不变。
+- `make check` 改为无需开发依赖的本地轻量检查；新增 `test-focused` 按文件选择测试。
+- 原全量检查保留为 `make ci-check`，由 GitHub Actions 执行；云端增加已安装 wheel 的 Agent 预览链路验证。
+- Python 3.11 基线不变，本地不强制额外 Python 版本或精确 Ruff 版本；清理保护和运行时依赖不变。
+
+### Fixed / Performance — local cleanup follow-up (2026-09-05)
+
+- 非 UTF-8 的配置和规则文件现在返回既有 `config_error` / `rules_error`，不再抛出未捕获异常或改写原文件。
+- 路径脱敏每份文档只构建一次替换顺序；进程匹配每条命令只转换一次大小写。
+- 复用空间分析 JSON 的总量，选择首个分析候选后停止查找，并合并批量等级选择的重复遍历；命令和数据格式不变。
+
+### Performance — implementation-only optimization (2026-09-05)
+
+- 普通路径的重叠计量改用最近已扫描父路径索引，避免全量两两比较；保留相对路径和双斜杠根路径的原有语义。
+- 未注册进度回调时不再构造任务快照，显式快照、进度状态和回调顺序不变。
+- 同一次对象解码复用字段与类型信息；不跨调用缓存，继续识别后续注解变化。
+- 合并相同 JSON 汇总与重复成员查询，减少无用聚合对象、辅助包装和不可达分支；命令、字段、依赖和策略状态不变。
+
+### Added / Fixed — 0.24.0a1 candidate (2026-09-05)
+
+- 新增 Agent `inspect/show/clean --run/strategy` 命令与 P0a Codex 只读包；经典五域与 TUI 保留。
+- Run bundle v2 严格绑定完整清单、策略版本、HOME、目标/证据/评估/计量；原子读写与容量上限，
+  旧格式要求重新 inspect，不做隐式补造或重扫。
+- 计划执行要求独立确认与上下文，实时重扫后使用新 Item；混合被阻止批次不启动且不声称成功。
+- 修正 HOME/ignore 作用范围、外部 pack 执行隔离、类型/JSON 错误处理、脱敏错误中的 ID，
+  并统一 `plan.plan_items` 与 CLI schema v2。
+- 修正 staging 计量前后变化检测、根目录年龄、部分扫描处理及空过测试。
+- 版本为候选版；P0b 的结构匹配器、真实 Observation 和生产策略审批仍未完成，内置 7 条策略均只读。
+  本次未发布 tag、Release 或软件仓库包，macOS 原生验证由接手环境执行。
+
 ### Changed
 
 - 文档按读者分层：根 README 收缩为用户首页；CLI/JSON/规则契约留在

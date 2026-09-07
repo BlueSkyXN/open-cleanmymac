@@ -8,6 +8,11 @@
 Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意保持只读或 fail-closed。
 用户入口见 [README.md](../README.md)；本页是范围与验证的权威表。
 
+> **两套命令面并存**：经典五域面（`scan`/`clean <category>`/`analyze`/`purge` + TUI）
+> 与新增的 **Agent Runtime v1**（`inspect`/`show`/`clean --run --finding`/`strategy`，P0 仅
+> `codex` pack）同时可用，共享同一套底层探测器、计量、保护闸与同卷 Trash 执行器。
+> Agent Runtime 契约见 [specs/agent-runtime/](../specs/agent-runtime/_index.md)。
+
 ## 状态定义
 
 | 状态 | 含义 |
@@ -26,6 +31,10 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 | capability | command | status | boundary / exclusion |
 |---|---|---|---|
+| Agent Runtime 探测 | `inspect <target>` | `available`（仅 `codex`） | 只读探测，固化 Run/Finding 到本机 Run Store；其余 target 为已规划 pack，fail-closed `pack_not_found`/exit 1 |
+| Finding 审阅 | `show --run --finding` | `available` | 从 Run Store 读取完整证据；只读 |
+| Finding 驱动清理 | `clean --run --finding` | `preview-only`（P0a） | 内置 7 条策略均只读；P0b 结构匹配与生产审批未完成；见 [当前状态](AGENT_RUNTIME_STATUS.md) |
+| 策略包查看/校验 | `strategy list/show/verify` | `available` | 只读；`codex` pack 随包分发，hash 稳定 |
 | 五域聚合扫描 | `scan` | `available` | `scan` 始终只读；扫描点是保守公开子集 |
 | 分类清理 | `clean junk / dev / ai` | `available` | 默认预览；`--yes` 只执行当前已审阅选择 |
 | Trash 审阅与清空 | `clean trash` | `available` | confirm；内容永久删除，根目录保留 |
@@ -61,6 +70,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 | capability | origin_kind | implementation | validation |
 |---|---|---|---|
+| Agent Runtime（P0 Codex 切片） | `project-extension` | `core/`、`strategies/`、`runtime/`、`actions/`、`packs/codex.json`、`cli.py` | `test_agent_*`：模型不变量、注册/hash、Run Store 权限/TTL、Item↔Finding 投影、inspect 编排、planner can_execute、Finding 驱动执行、命令面契约 |
 | 五域聚合扫描 | `public-cli` | `cli.py`、`engine.py`、`scanpoints.py` | 单测 + `scan-all-domains` preview |
 | 分类清理 | `public-cli` | `cleanup.py`、`tui.py` | 选择/执行单测 + 临时 Trash preview |
 | Trash 审阅与清空 | `public-cli` | `macos.py`、`cleanup.py` | 两个合成 Trash 根的无扩面执行 preview |
@@ -94,8 +104,10 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 ## 验证边界
 
-当前自动化基线是 `make check`：lint、完整 unittest，以及 `TemporaryDirectory` 隔离
-预览。这能证明当前 checkout 的本地逻辑、归档和合成写路径，但不能替代以下验收：
+本地 `make check` 仅做语法和 CLI 启动检查，修改相关逻辑时补充定向测试。
+GitHub Actions 的 `make ci-check` 运行 lint、完整 unittest 和 `TemporaryDirectory` 隔离
+预览，再单独构建、审计归档和验证安装。以 exact-head 结果证明相应逻辑、归档和合成写路径，
+不能替代以下验收：
 
 - 真实 iCloud Drive/第三方 File Provider 的 dataless 状态保持；
 - 用户明确授权的 Docker 测试 daemon before/after；

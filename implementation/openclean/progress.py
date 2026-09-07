@@ -140,7 +140,8 @@ class WeightedProgress:
         return TaskProgress(self, identifier)
 
     def start(self) -> None:
-        self._emit(self.snapshot())
+        if self._callback is not None:
+            self._emit(self.snapshot())
 
     def cancel(self) -> None:
         with self._lock:
@@ -151,7 +152,7 @@ class WeightedProgress:
                 if not state.terminal:
                     state.cancelled = True
             self._sequence += 1
-            snapshot = self._snapshot_locked()
+            snapshot = self._snapshot_locked() if self._callback is not None else None
         self._emit(snapshot)
 
     def snapshot(self) -> ProgressSnapshot:
@@ -171,7 +172,7 @@ class WeightedProgress:
             )
             state.fraction = max(state.fraction, heuristic)
             self._sequence += 1
-            snapshot = self._snapshot_locked()
+            snapshot = self._snapshot_locked() if self._callback is not None else None
         self._emit(snapshot)
 
     def _set_fraction(self, identifier: str, fraction: float) -> None:
@@ -183,7 +184,7 @@ class WeightedProgress:
                 return
             state.fraction = max(state.fraction, min(fraction, 0.99))
             self._sequence += 1
-            snapshot = self._snapshot_locked()
+            snapshot = self._snapshot_locked() if self._callback is not None else None
         self._emit(snapshot)
 
     def _complete(self, identifier: str) -> None:
@@ -194,7 +195,7 @@ class WeightedProgress:
             state.fraction = 1.0
             state.complete = True
             self._sequence += 1
-            snapshot = self._snapshot_locked()
+            snapshot = self._snapshot_locked() if self._callback is not None else None
         self._emit(snapshot)
 
     def _fail(self, identifier: str) -> None:
@@ -211,7 +212,7 @@ class WeightedProgress:
             state.failed = failed
             state.cancelled = not failed
             self._sequence += 1
-            snapshot = self._snapshot_locked()
+            snapshot = self._snapshot_locked() if self._callback is not None else None
         self._emit(snapshot)
 
     def _snapshot_locked(self) -> ProgressSnapshot:
@@ -244,8 +245,8 @@ class WeightedProgress:
             tasks=tasks,
         )
 
-    def _emit(self, snapshot: ProgressSnapshot) -> None:
-        if self._callback is None:
+    def _emit(self, snapshot: ProgressSnapshot | None) -> None:
+        if snapshot is None or self._callback is None:
             return
         with self._emit_lock:
             if snapshot.sequence <= self._last_emitted_sequence:
