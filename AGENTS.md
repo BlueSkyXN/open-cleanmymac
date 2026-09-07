@@ -123,6 +123,7 @@ make test-focused TEST_PATTERN=test_agent_identifiers.py  # 换成受影响测�
 不要求 Python 3.13 或重复全量验证。Python 3.11 是当前基线。
 GitHub Actions 负责 `make ci-check`、构建、归档审计和 wheel 独立安装验证；
 本地仅在排查相关 CI 失败或用户明确要求时按需复现。Ruff 是可选本地工具，精确版本仅供 CI 复现。
+Ruff 门禁以 `implementation/pyproject.toml` 的显式基础错误规则为准；不因工具升级自动扩大风格要求。
 减轻本地验证不改变执行保护条件；云端未运行时报告待验证，不宣称已通过。
 
 修改公开 CLI、JSON schema 或安全级时，同步测试、README、相关 `docs/` 页和 CHANGELOG。

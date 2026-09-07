@@ -12,6 +12,7 @@
 
 ### Development workflow
 
+- 显式固定 Ruff 基础错误规则，避免工具默认变化引入额外风格门禁；功能测试和构建检查不变。
 - `make check` 改为无需开发依赖的本地轻量检查；新增 `test-focused` 按文件选择测试。
 - 原全量检查保留为 `make ci-check`，由 GitHub Actions 执行；云端增加已安装 wheel 的 Agent 预览链路验证。
 - Python 3.11 基线不变，本地不强制额外 Python 版本或精确 Ruff 版本；清理保护和运行时依赖不变。
