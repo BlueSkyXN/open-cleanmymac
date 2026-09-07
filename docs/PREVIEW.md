@@ -10,7 +10,7 @@ SVG，不冒充 macOS Terminal 截图。
 
 > **两套命令面**：`make preview` 当前覆盖经典五域命令族（`scan`/`clean`/`purge`/`analyze`/
 > `optimize`/`ignore`/`config`/`cat`）。新增的 **Agent Runtime**（`inspect`/`show`/
-> `clean --run --finding`/`strategy`，P0 仅 `codex` pack）的隔离端到端验证由 `test_agent_*`
+> `clean --run --finding`/`strategy`，`codex`/`workbuddy` pack）的隔离端到端验证由 `test_agent_*` 与 `test_workbuddy.py`
 > 承载（inspect→show→clean 预览→授权执行，全部在 `TemporaryDirectory` 内、mock 进程/句柄
 > 快照），契约见 [实现说明](../implementation/README.md)。把 Agent 场景并入 `make preview`
 > 是后续项。
@@ -26,7 +26,7 @@ cd implementation
 PYTHONPATH=. python3 scripts/preview_all.py --json
 ```
 
-> Agent 当前仅 P0a，7 条内置策略只读；`inspect` 会写本机 Run Store。
+> Agent 内置 Codex/WorkBuddy 策略只读；`inspect` 会写本机 Run Store。
 > macOS 原生结果与 Linux 逻辑模拟不能混同，见 [当前状态](AGENT_RUNTIME_STATUS.md)。
 
 ## 隔离保证
@@ -55,7 +55,7 @@ PYTHONPATH=. python3 scripts/preview_all.py --json
 ```text
 open-cleanmymac · 隔离功能预览
 所有写操作均限制在 TemporaryDirectory；不会修改真实 HOME。
-PASS  version                            exit=0   openclean 0.23.0
+PASS  version                            exit=0   openclean 0.24.0a1
 PASS  scan-all-domains                   exit=0   隔离扫描得到 8 个候选，覆盖五域
 PASS  clean-junk-preview                 exit=0   junk 只读预览 2 个候选
 PASS  clean-dev-preview                  exit=0   dev 只读预览 2 个候选
@@ -170,15 +170,28 @@ openclean optimize purgeable --json
 
 ## TUI 快捷键
 
+### 无参数主菜单
+
+- `↑/↓`、`Enter`：选择并进入 Clean、Purge、Analyze、Optimize 或 Config；
+- `M`：More（Cat/返回），根菜单 `Q/Esc` 退出，次级菜单 `Q/Esc` 返回；
+- 子任务结束后按 Enter 返回原菜单；Optimize 的非零 refusal 原因保留可见；
+- 主菜单只提供审阅/预览，不自动添加 `--yes`；初始化失败使用数字行式菜单；
+- 非 TTY 无参数只输出帮助，不等待键盘。
+
 ### clean / purge
 
 - `↑/↓`：移动；
-- `Enter/→`：进入分组；`←`：返回；
-- `Space`：切换当前项；`A`：切换当前组可执行项；
-- `Enter`：进入汇总；
+- 分组页 `→`：进入逐项列表；`←/Esc`：返回；
+- 列表 `Space/Enter`：切换当前项；`A`：批量切换符合原选择条件的可执行项；
+- 列表 `I`：只读详情；`↑/↓` 滚动，`Esc/←` 返回，详情不改变选择；
+- 分组页 `Enter`：进入汇总；
 - `Y`：确认执行（仍要求启动命令带 `--yes`）；
 - `!`：critical 项的独立二次确认；
 - `Q`：取消。
+
+详情显示本次扫描已有证据：完整路径、说明、风险、年龄、句柄，以及保留期、SQLite、
+updater、Codex 测量、Crashpad 或 deleted-open 指标；缺失值显示未知，不额外探测。
+普通项移到 Trash 不等于空间已释放，诊断项不产生清理动作，子集锚点也不是整个父目录。
 
 ### analyze
 

@@ -1,11 +1,11 @@
 # Agent Runtime 当前实现：0.24.0a1
 
-**本版本交付 P0a：Codex 只读探测、持久化 Run/Finding、展示、计划预览；P0b 的生产清理策略尚未启用。**
+**当前提供 Codex 与 WorkBuddy 只读探测、持久化 Run/Finding、展示、计划预览；生产清理策略尚未启用。**
 经典 `scan`、`clean <category>`、`analyze`、`purge` 和 TUI 保留，与 Agent 命令并存。
-这是候选代码版本，不是已发布 Release，也不代表已经完成真实 macOS 验收。
+这是 Alpha 预发行范围，不代表稳定版或全部真实环境验收完成；具体 tag 和产物以 GitHub Releases 为准。
 
 ```text
-内置 Codex pack（7 条 active/report_only）
+内置 Codex（7 条）及 WorkBuddy（1 条）pack，均 active/report_only
        │ inspect：只读探测目标，写入本机 Run bundle
        ▼
 Run v2 + Finding ── show ── clean --run --finding（预览）
@@ -18,15 +18,16 @@ Run v2 + Finding ── show ── clean --run --finding（预览）
 
 ## 当前可用与未实现
 
-`inspect codex`、`inspect all`、`show`、`strategy list/show/verify`、Finding 计划预览已实现。
-`inspect all` 指全部已安装 pack，当前只有 Codex，不等于扫描所有规划中的产品。
+`inspect codex`、`inspect workbuddy`、`inspect all`、`show`、`strategy list/show/verify`、Finding 计划预览已实现。
+`inspect all` 指全部已安装 pack，当前为 Codex 和 WorkBuddy，不等于经典五域或所有规划中的产品。
 `inspect` 不删除候选，但会创建 Run Store，不能宣称完全不写磁盘。
 
 内置生产审批集合 `APPROVED_PACK_HASHES` 为空。仅在 JSON 中写 `trusted` 或改
 `action.supported=true` 不能使策略获得动作能力；外部 `--packs-dir` 也不能执行。
 测试中的 synthetic approval 只服务临时目录，不是正式策略来源。
-`require_structure_match=true` 当前明确阻止执行；没有实现结构匹配器，不能把名称匹配和
-目录年龄包装成结构验证。真实 Observation、正式 promotion、其余 pack、`explore`、`lab`
+Codex 动作所需的 `require_structure_match=true` 当前仍明确阻止执行，不能把名称匹配和
+目录年龄包装成动作验证。WorkBuddy 只读结构和个人来源见 [EXPERIENCE.md](EXPERIENCE.md)，并未获得动作审批。
+正式 promotion、其他未交付 pack、`explore`、`lab`
 和 MCP 均不是本版本已完成能力。
 
 ## 存储、范围和版本

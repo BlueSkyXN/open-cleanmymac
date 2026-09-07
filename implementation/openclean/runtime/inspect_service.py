@@ -43,6 +43,7 @@ from ..storage_diagnostics import (
     scan_sqlite_rules,
 )
 from ..strategies.registry import pack_hash
+from ..workbuddy import scan_workbuddy_storage
 from .finding_projection import finding_from_item
 from .run_store import RunStore, new_run_expiry
 
@@ -174,6 +175,11 @@ def _scan_for_strategy(
                                        task=strategy.id, blocking=True))
         return result
     snap = {"process_snapshot": processes, "open_files": open_files}
+
+    if name == "workbuddy":
+        if roots != [str(home / ".workbuddy")]:
+            return _unavailable(strategy, "WorkBuddy 仅支持当前 HOME 下的 .workbuddy 精确根")
+        return scan_workbuddy_storage(protection, home=home, snapshots=(processes, open_files), now=now)
 
     if name == "codex_transient":
         if len(roots) != 1:

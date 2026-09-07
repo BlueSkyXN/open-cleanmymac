@@ -343,6 +343,11 @@ AI_TOOL_JUNK: list[ScanPoint] = [
         running_process_markers=("claude",),
     ),
     ScanPoint(
+        "WorkBuddy 已观察结构",
+        (), "critical", "expired 后缀、Worker 整组 traces 和 Electron 精确缓存；只读",
+        scanner="workbuddy-storage", default_selected=False,
+    ),
+    ScanPoint(
         "Codex 缓存",
         (
             "~/.codex/cache/codex_apps_server_info",

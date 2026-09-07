@@ -11,7 +11,7 @@
 CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI 对齐目标。
 
 > **Agent Runtime P0a 已实现，P0b 未启用**：探测、Run/Finding、展示和计划预览已落地。
-> 内置 7 条 Codex 策略均只读；不能把测试用 synthetic approval 当生产策略证据。
+> 内置 7 条 Codex 策略及新增 WorkBuddy 结构策略均只读；不能把测试用 synthetic approval 当生产策略证据。
 > 经典命令、TUI 和共享执行器继续保留。详见 [当前状态](../docs/AGENT_RUNTIME_STATUS.md)。
 
 ## Agent 下一阶段
@@ -23,7 +23,8 @@ CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI �
 | P0b 真实目标结构匹配器 | 未实现，明确阻止动作 | 正反结构样本、保护路径与运行状态反例 |
 | 真实 Observation 与逐策略 promotion | 未完成 | 用户提供/批准的来源和固定 pack hash；不可补造 |
 | 首条生产策略启用 | 未完成 | 上述条件满足后的单独变更，不由本候选版默认开启 |
-| 其余 pack / explore / lab / MCP | 规划 | 分阶段实现，不删除经典能力来凑完成率 |
+| WorkBuddy 经验结构 | 已实现只读识别及 inspect；正反样本测试 | 见 `docs/EXPERIENCE.md`，不启用删除 |
+| 其余未交付 pack / explore / lab / MCP | 规划 | 分阶段实现，不删除经典能力来凑完成率 |
 
 ## P0：发布前必须保持的阻断边界
 

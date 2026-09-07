@@ -25,7 +25,7 @@ Clean · 扫描结果 / Dev Tools
 
 
 
-↑↓ 移动 · Space/Enter 逐项切换 · A 本组批量选择 · ←/Esc 返回 · Q 退出</desc>
+↑↓ 移动 · Space/Enter 切换 · I 只读详情 · A 批量选择 · ←/Esc 返回 · Q 退出</desc>
   <rect width="1248" height="610" rx="16" fill="#0d1117"/>
   <rect width="1248" height="44" rx="16" fill="#161b22"/>
   <rect y="28" width="100%" height="16" fill="#161b22"/>
@@ -441,29 +441,31 @@ Clean · 扫描结果 / Dev Tools
     <text x="204" y="559">t</text>
     <text x="214" y="559">e</text>
     <text x="224" y="559">r</text>
-    <text x="244" y="559">逐</text>
-    <text x="264" y="559">项</text>
-    <text x="284" y="559">切</text>
-    <text x="304" y="559">换</text>
-    <text x="334" y="559">·</text>
-    <text x="354" y="559">A</text>
-    <text x="374" y="559">本</text>
-    <text x="394" y="559">组</text>
-    <text x="414" y="559">批</text>
-    <text x="434" y="559">量</text>
-    <text x="454" y="559">选</text>
-    <text x="474" y="559">择</text>
-    <text x="504" y="559">·</text>
-    <text x="524" y="559">←</text>
-    <text x="534" y="559">/</text>
-    <text x="544" y="559">E</text>
-    <text x="554" y="559">s</text>
-    <text x="564" y="559">c</text>
-    <text x="584" y="559">返</text>
-    <text x="604" y="559">回</text>
-    <text x="634" y="559">·</text>
-    <text x="654" y="559">Q</text>
-    <text x="674" y="559">退</text>
-    <text x="694" y="559">出</text>
+    <text x="244" y="559">切</text>
+    <text x="264" y="559">换</text>
+    <text x="294" y="559">·</text>
+    <text x="314" y="559">I</text>
+    <text x="334" y="559">只</text>
+    <text x="354" y="559">读</text>
+    <text x="374" y="559">详</text>
+    <text x="394" y="559">情</text>
+    <text x="424" y="559">·</text>
+    <text x="444" y="559">A</text>
+    <text x="464" y="559">批</text>
+    <text x="484" y="559">量</text>
+    <text x="504" y="559">选</text>
+    <text x="524" y="559">择</text>
+    <text x="554" y="559">·</text>
+    <text x="574" y="559">←</text>
+    <text x="584" y="559">/</text>
+    <text x="594" y="559">E</text>
+    <text x="604" y="559">s</text>
+    <text x="614" y="559">c</text>
+    <text x="634" y="559">返</text>
+    <text x="654" y="559">回</text>
+    <text x="684" y="559">·</text>
+    <text x="704" y="559">Q</text>
+    <text x="724" y="559">退</text>
+    <text x="744" y="559">出</text>
   </g>
 </svg>

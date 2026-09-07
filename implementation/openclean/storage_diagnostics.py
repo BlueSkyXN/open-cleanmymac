@@ -611,9 +611,14 @@ def _measure_retention_root(
     *,
     task: str,
     now: float,
+    include_directory_mtime: bool = False,
+    entry_limit: int | None = None,
 ) -> _RetentionMeasurement:
     assert root_facts.stat is not None
     measurement = _RetentionMeasurement()
+    if include_directory_mtime:
+        measurement.newest_mtime = root_facts.stat.st_mtime
+    visited = 0
     seen: set[tuple[int, int]] = set()
     stack = [root_facts.path]
     while stack:
@@ -621,6 +626,13 @@ def _measure_retention_root(
         try:
             entries = scandir_entries(directory)
             for entry in entries:
+                if entry_limit is not None and visited >= entry_limit:
+                    issues.append(ScanIssue(
+                        code="diagnostic_entry_limit", message="诊断条目超过上限，结果仅为部分测量",
+                        task=task, path=root_facts.path, blocking=True,
+                    ))
+                    return measurement
+                visited += 1
                 path = Path(entry.path)
                 if _knowledge_base_ignores(protection, path):
                     measurement.excluded_paths += 1
@@ -643,6 +655,8 @@ def _measure_retention_root(
                     measurement.cloud_file_count += 1
                     continue
                 if stat.S_ISDIR(stat_result.st_mode):
+                    if include_directory_mtime:
+                        measurement.newest_mtime = max(measurement.newest_mtime, stat_result.st_mtime)
                     stack.append(path)
                     continue
                 if not stat.S_ISREG(stat_result.st_mode):
@@ -676,6 +690,8 @@ def scan_retention_rules(
     process_snapshot: ProcessSnapshot | None,
     open_files: OpenFileSnapshot | None,
     now: float | None = None,
+    include_directory_mtime: bool = False,
+    entry_limit: int | None = None,
 ) -> ScanResult:
     """按 7/14/30 天报告公开存储根物理占用；始终只读且不可执行。"""
 
@@ -723,6 +739,8 @@ def scan_retention_rules(
             result.issues,
             task=rule.category,
             now=observed_at,
+            include_directory_mtime=include_directory_mtime,
+            entry_limit=entry_limit,
         )
         if measurement.file_count == 0 and measurement.allocated_bytes == 0:
             continue
@@ -776,6 +794,7 @@ def scan_retention_rules(
                 preselected=False,
                 excluded_paths=measurement.excluded_paths,
                 cross_device_paths=measurement.cross_device_paths,
+                cloud_file_count=measurement.cloud_file_count,
                 running_process_markers=rule.process_markers,
                 diagnostic_kind="retention",
                 open_handle_count=open_handles,

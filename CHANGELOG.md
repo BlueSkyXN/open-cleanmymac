@@ -4,11 +4,43 @@
 [功能预览](docs/PREVIEW.md) · [架构](docs/ARCHITECTURE.md) ·
 [安全](SECURITY.md) · [规格索引](specs/_index.md)
 
-本文件记录用户可见变化，格式参考 Keep a Changelog。GitHub Release 是唯一计划的正式发布渠道，
-当前尚未创建 Release；项目不通过 PyPI、Homebrew 或其他包管理器分发。以下版本表示代码基线，
-不代表已经创建 GitHub Release。
+本文件记录用户可见变化，格式参考 Keep a Changelog。GitHub Releases 是唯一发行渠道；
+项目不通过 PyPI、Homebrew 或其他包管理器分发。具体发布状态、tag 和附件以发行页为准。
 
 ## [Unreleased]
+
+后续变更记录于此。
+
+## [0.24.0a1] - 2026-09-07
+
+首个 GitHub Alpha 预发行。保留经典五域清理与 Agent 接口，不宣称已实现 Optimize、
+特权 helper、正式知识库发布源或完成真实 Docker daemon 验收。
+
+### Release validation
+
+- 独立安装 wheel 的验收覆盖 Codex/WorkBuddy 的发现、详情、预览与只读拒绝，以及临时项目的精确清理和再次扫描。
+- GitHub Release 提供 wheel、sdist 与 SHA256SUMS；产物来自通过 CI 的发行提交。
+
+### Added / Changed — Agent 使用与个人经验
+
+- 从项目历史及个人复核记录恢复 WorkBuddy 经验：识别日志 `.expired-` 后缀、numeric Worker
+  整组 traces 年龄，以及 session/Partitions 中的精确 Electron 缓存；始终只读，支持有界发现/测量。
+- Worker 整组有保护跳过、云占位、跨卷或测量错误时年龄标为未知；保留期 JSON 补齐已有云占位计数字段。
+- 补齐 `com.tencent.workbuddy.mac.BundleMigration` 的 WorkBuddy 运行应用归属保护，不扩大相似名称匹配。
+- 新增 `inspect workbuddy` 只读包，与经典 AI 域复用 detector；Codex hash、JSON schema、
+  生产动作审批和经典执行边界不变，不把历史“安全”判断自动升级为删除权限。
+- Agent 调用指南覆盖用户指挥、扫描、解释、精确预览、已有明确授权内的经典执行与结果核对；
+  自有经验来源及不能泛化的条件记录在 `docs/EXPERIENCE.md`。
+
+### Added / Changed — CLI 核心流程与特色展示
+
+- 无参数 TTY 主菜单提供 Clean/Purge/Analyze/Optimize/Config，方向键与 Enter 导航、More/Cat，
+  子任务结束后保留结果并返回；初始化失败退回行式菜单，非 TTY 无参数仍仅输出帮助。
+- Clean/Purge 逐项列表新增 `I` 只读详情，支持长路径和证据滚动、未知值、阻断及子集说明；
+  Clean 文本同步展示 retention/SQLite/updater/Codex/Crashpad/deleted-open 摘要。
+- 主菜单不附加 `--yes`，Optimize 仍不可用；选择与执行保护、默认范围、JSON schema、
+  Agent 接口和生产策略状态不变。
+- 能力地图按五项用户流程列出对齐依据、具体差距和自有增强，不以命令存在代替功能等效。
 
 ### Development workflow
 
@@ -40,7 +72,7 @@
   并统一 `plan.plan_items` 与 CLI schema v2。
 - 修正 staging 计量前后变化检测、根目录年龄、部分扫描处理及空过测试。
 - 版本为候选版；P0b 的结构匹配器、真实 Observation 和生产策略审批仍未完成，内置 7 条策略均只读。
-  本次未发布 tag、Release 或软件仓库包，macOS 原生验证由接手环境执行。
+  候选开发阶段未开放生产动作；实际 tag、验证和发行产物以本版本发行页为准。
 
 ### Changed
 

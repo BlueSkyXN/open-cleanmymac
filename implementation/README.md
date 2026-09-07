@@ -64,11 +64,12 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 
 ## Agent Runtime 命令面（附加）
 
-当前 `0.24.0a1` 交付 P0a：内置 Codex 的 7 条策略均为 active/report_only，支持探测、
+当前 `0.24.0a1` 内置 Codex 的 7 条策略及 WorkBuddy 的 1 条结构策略，均为 active/report_only，支持探测、
 持久化展示和计划预览，不启用生产清理动作。与经典命令和 TUI 并存。
 
 ```bash
 openclean inspect codex --json
+openclean inspect workbuddy --json
 openclean inspect all --json
 openclean show --run RUN_ID --finding FINDING_ID --json
 openclean clean --run RUN_ID --finding FINDING_ID --json   # 仅预览
@@ -78,6 +79,9 @@ openclean strategy verify --json
 
 `inspect` 不修改候选，但写入本机 Run Store。未安装 pack 返回 `pack_not_found` / exit 1。
 内置包的 `clean --run ... --yes` 返回 blocked / exit 1，不能绕过不可动作原因。
+WorkBuddy 经典 AI 域与该包共用 expired/Worker/Electron 只读 detector，经验依据见
+[EXPERIENCE.md](../docs/EXPERIENCE.md)。不要求经典可执行功能先迁入 Pack；Agent 授权内的经典调用见
+[AI_USAGE.md](../docs/AI_USAGE.md)。
 
 Run bundle schema 2 包含 HOME、策略版本和完整 Finding 清单；单文件 8 MiB、总计 64 MiB、
 最多 64 Run，最早写入优先淘汰，最长 TTL 24h。旧格式/过期/损坏数据需重新 inspect，绝不自动重扫。
@@ -93,6 +97,12 @@ CLI envelope 为 schema 2，计划数组仅为 `plan.plan_items[]`。混合阻�
 长期架构见 [specs/agent-runtime/](../specs/agent-runtime/_index.md)。
 
 ## 选择与执行
+
+无参数 `openclean` 在 TTY 下打开五项主菜单：Clean、Purge、Analyze、Optimize、Config。
+方向键移动、Enter 进入，`M` 打开 More（Cat/返回）。主菜单 `Q/Esc` 退出，次级菜单返回；
+子任务完成后保留结果，按 Enter 返回原菜单。终端初始化失败退回行式菜单。
+菜单调度保留子命令默认范围，不附加 `--yes`；Optimize 只展示现有 refusal。
+非 TTY 无参数仍输出帮助并退出 0，显式命令与 JSON 不进入菜单。
 
 - 没有 `--yes` 时，`clean`/`purge`/`analyze` 即使带选择参数也只预览。
 - 没有 `--select` 时，普通 `safe` 扫描点可默认预选；扫描点可以独立关闭默认选择，AI 域
@@ -117,6 +127,11 @@ CLI envelope 为 schema 2，计划数组仅为 `plan.plan_items[]`。混合阻�
 `--no-interactive` 和任何参数化选择 flag 不打开 TUI。TUI 的选择只是选择；实际执行仍
 要求启动命令带 `--yes`，并在汇总页再次按 `Y`。快捷键见
 [docs/PREVIEW.md](../docs/PREVIEW.md)。
+
+Clean/Purge 的逐项列表新增 `I` 只读详情：方向键滚动、Esc/左键返回原位置，`Q` 取消审阅。
+Space/Enter 仍在逐项列表切换选择，详情页不改变选择。详情只读取当前 Item 的路径/identifier、
+说明、年龄、句柄和诊断字段；未测数据标为未知。Clean 文本报告同步提供简短诊断摘要，
+JSON 字段与容量口径不变。子集锚点不代表父目录可删除，retention 年龄桶有重叠、不可累加。
 
 ## JSON schema v2
 

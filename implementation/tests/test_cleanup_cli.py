@@ -49,6 +49,30 @@ def _rules(path: Path) -> Path:
 
 
 class CleanupCliTests(unittest.TestCase):
+    def test_clean_text_shows_diagnostic_evidence_without_changing_json_or_totals(self) -> None:
+        item = Item(path=Path("/Preview/retention"), size=4096, category="Logs", domain="system",
+                    actionable=False, diagnostic_kind="retention", retention_file_count=4,
+                    retention_7d_bytes=4096, retention_14d_bytes=2048, retention_30d_bytes=0)
+        result = ScanResult(items=[item])
+        before = io.StringIO()
+        text = io.StringIO()
+        after = io.StringIO()
+        with contextlib.redirect_stdout(before):
+            _print_clean_report(result, True, "junk")
+        with contextlib.redirect_stdout(text):
+            _print_clean_report(result, False, "junk")
+        with contextlib.redirect_stdout(after):
+            _print_clean_report(result, True, "junk")
+        self.assertEqual(before.getvalue(), after.getvalue())
+        payload = json.loads(after.getvalue())
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["reclaimable_bytes"], 0)
+        self.assertEqual(payload["potential_bytes"], 4096)
+        self.assertIsNone(payload["cleanup"])
+        self.assertIn("重叠桶，不累加", text.getvalue())
+        self.assertIn("文件数：4", text.getvalue())
+        self.assertNotIn("重叠桶", after.getvalue())
+
     def test_text_report_distinguishes_preview_from_execution(self) -> None:
         item = Item(
             path=Path("/Preview/Library/Caches/pip"),
