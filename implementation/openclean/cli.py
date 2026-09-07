@@ -52,7 +52,10 @@ from .runtime.run_store import RunStore, finding_to_dict, default_run_store_dir
 from .scanpoints import DOMAINS
 from .space_tui import SpaceTUIUnavailable, review_space
 from .strategies.registry import StrategyRegistry, pack_hash
-from .tui import ReviewGroup, TUIUnavailable, review_cleanup
+from .tui import (
+    MENU_ITEMS, MENU_TITLES, MenuChoice, ReviewGroup, TUIUnavailable,
+    choose_menu, item_diagnostic_summary, review_cleanup,
+)
 
 ALL_DOMAINS = list(DOMAINS.keys()) + ["project"]
 CLEAN_CATEGORY_DOMAINS = {
@@ -669,39 +672,64 @@ def _print_cleanup_summary(report: CleanupReport) -> None:
     )
 
 
+def _line_menu(menu: str) -> MenuChoice:
+    items = MENU_ITEMS[menu]
+    while True:
+        print(f"\n{MENU_TITLES[menu]}\n  完整命令与参数：openclean --help")
+        for index, (_, label) in enumerate(items, 1):
+            print(f"  {index}. {label}")
+        print("  m. More  q/Esc. Quit" if menu == "root" else "  q/Esc. 返回主菜单")
+        choice = input("选择：").strip().lower()
+        if choice in {"q", "quit", "exit", "\x1b"}:
+            return MenuChoice("quit" if menu == "root" else "back", 0)
+        if menu == "root" and choice == "m":
+            return MenuChoice("more", 0)
+        for index, (action, _) in enumerate(items):
+            if choice == str(index + 1):
+                return MenuChoice(action, index)
+        print("无效选择。", file=sys.stderr)
+
+
 def _run_root_menu() -> int:
     actions = {
-        "1": ["clean"],
-        "2": ["purge"],
-        "3": ["analyze"],
-        "4": ["config"],
-        "5": ["cat"],
+        "clean": ["clean"], "purge": ["purge"], "analyze": ["analyze"],
+        "config": ["config"], "cat": ["cat"],
+        "ram": ["optimize", "ram"], "purgeable": ["optimize", "purgeable"],
     }
+    menu = "root"
+    cursors = dict.fromkeys(MENU_ITEMS, 0)
+    line_mode = False
     while True:
-        print(
-            "\nopenclean · Quick actions\n"
-            "  完整命令与参数：openclean --help\n"
-            "  1. Clean    扫描并审阅垃圾\n"
-            "  2. Purge    查找项目构建产物\n"
-            "  3. Analyze  分析磁盘空间\n"
-            "  4. Config   查看 CLI 偏好\n"
-            "  5. Cat      召唤一位朋友\n"
-            "  q. Quit"
-        )
         try:
-            choice = input("选择：").strip().lower()
+            if line_mode:
+                choice = _line_menu(menu)
+            else:
+                try:
+                    choice = choose_menu(menu, cursors[menu])
+                except TUIUnavailable as exc:
+                    print(f"{exc}；改用行式菜单。", file=sys.stderr)
+                    line_mode = True
+                    continue
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
-        if choice in {"q", "quit", "exit"}:
+        cursors[menu] = choice.cursor
+        if choice.action == "quit":
             return 0
-        command = actions.get(choice)
-        if command is None:
-            print("无效选择。", file=sys.stderr)
+        if choice.action in {"more", "optimize", "back"}:
+            menu = "root" if choice.action == "back" else choice.action
             continue
+        command = actions[choice.action]
         status = main(command)
+        if status:
+            print(f"{' '.join(command)} 返回退出码 {status}；请查看上述结果。", file=sys.stderr)
         if status not in {0, 1}:
             return status
+        try:
+            input("按 Enter 返回菜单：")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
 
 
 def _issue_payload(issue) -> dict[str, object]:
@@ -925,6 +953,8 @@ def _print_clean_report(
                 f"{human(item.size):>10}  {item.safety:<8} "
                 f"{_item_location(item)}{cloud}{_item_annotations(item)}"
             )
+            for evidence in item_diagnostic_summary(item):
+                print(f"      {evidence}")
     print("\n" + "─" * 88)
     print(
         f"发现 {human(result.total)}；当前选择 "

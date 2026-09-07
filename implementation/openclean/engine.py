@@ -66,6 +66,7 @@ from .storage_diagnostics import (
 from .task_graph import TaskSpec as GraphTaskSpec
 from .task_graph import execute_task_graph
 from .updater import assess_updater_candidate
+from .workbuddy import scan_workbuddy_storage
 
 
 class Cancelled(Exception):
@@ -982,6 +983,8 @@ def _scan_dynamic_point_with_progress(
             result = scan_open_unlinked_diagnostics(protection)
         elif point.scanner == "codex-storage-artifacts":
             result = scan_codex_storage_artifact_diagnostics(protection)
+        elif point.scanner == "workbuddy-storage":
+            result = scan_workbuddy_storage(protection)
         else:
             result = ScanResult(
                 issues=[

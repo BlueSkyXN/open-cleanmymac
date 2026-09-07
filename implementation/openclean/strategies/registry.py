@@ -52,6 +52,7 @@ DETECTOR_WHITELIST = frozenset(
         "browser_cache",
         "docker",
         "startup_items",
+        "workbuddy",
     }
 )
 
@@ -92,6 +93,7 @@ def pack_from_mapping(payload: Any) -> StrategyPack:
                 "crashpad": {"subkind": str},
                 "retention": {"category": str, "include_partitions": bool},
                 "sqlite_freelist": {"category": str},
+                "workbuddy": {},
             }.get(strategy.detector.name)
             if expected is not None:
                 for key, value in strategy.detector.params.items():

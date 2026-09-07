@@ -10,8 +10,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from openclean.cli import CAT_ART, main
+from openclean.cli import CAT_ART, _run_root_menu, main
 from openclean.config import CliConfig, ConfigError, ConfigStore
+from openclean.tui import MenuChoice, TUIUnavailable
 
 
 class _TTYBuffer(io.StringIO):
@@ -167,15 +168,91 @@ class ConfigAndRootCliTests(unittest.TestCase):
         with mock.patch.object(sys, "stdin", stdin), contextlib.redirect_stdout(
             stdout
         ), contextlib.redirect_stderr(stderr), mock.patch(
-            "builtins.input", side_effect=["invalid", "5", "q"]
+            "builtins.input", side_effect=["invalid", "m", "1", "", "q", "q"]
+        ), mock.patch(
+            "openclean.cli.choose_menu", side_effect=TUIUnavailable("no tty")
         ):
             status = main([])
 
         self.assertEqual(status, 0)
         self.assertIn("无效选择", stderr.getvalue())
         self.assertIn("openclean", stdout.getvalue())
-        self.assertIn("Quick actions", stdout.getvalue())
+        self.assertIn("主菜单", stdout.getvalue())
         self.assertIn(CAT_ART, stdout.getvalue())
+        self.assertIn("改用行式菜单", stderr.getvalue())
+
+    def test_root_dispatch_preserves_defaults_and_pauses_after_wrapper_returns(self) -> None:
+        expected = [["clean"], ["purge"], ["analyze"], ["config"], ["cat"],
+                    ["optimize", "ram"], ["optimize", "purgeable"]]
+        choices = [MenuChoice(action, 0) for action in
+                   ("clean", "purge", "analyze", "config", "more", "cat", "back",
+                    "optimize", "ram", "purgeable", "back", "quit")]
+        events = []
+
+        def choose(menu, cursor):
+            events.append(("menu", menu))
+            return choices.pop(0)
+
+        def dispatch(command):
+            self.assertEqual(events[-1][0], "menu")
+            events.append(("command", command))
+            return 0
+
+        def pause(prompt):
+            self.assertEqual(events[-1][0], "command")
+            events.append(("pause", prompt))
+            return ""
+
+        with mock.patch("openclean.cli.choose_menu", side_effect=choose), \
+                mock.patch("openclean.cli.main", side_effect=dispatch) as command, \
+                mock.patch("builtins.input", side_effect=pause) as wait:
+            self.assertEqual(_run_root_menu(), 0)
+        self.assertEqual(command.call_args_list, [mock.call(args) for args in expected])
+        self.assertEqual(wait.call_count, len(expected))
+        self.assertIn(("menu", "more"), events)
+        self.assertIn(("menu", "optimize"), events)
+
+    def test_menu_retains_cursors_and_does_not_hide_child_exit_status(self) -> None:
+        stderr = io.StringIO()
+        with mock.patch("openclean.cli.choose_menu", side_effect=[
+            MenuChoice("optimize", 3), MenuChoice("ram", 0), MenuChoice("back", 0),
+            MenuChoice("quit", 3),
+        ]) as chooser, mock.patch("builtins.input", return_value=""), \
+                contextlib.redirect_stderr(stderr):
+            self.assertEqual(_run_root_menu(), 0)
+        self.assertEqual(chooser.call_args_list[-1], mock.call("root", 3))
+        self.assertIn("返回退出码 1", stderr.getvalue())
+        self.assertIn("未执行任何操作", stderr.getvalue())
+
+        for status in (2, 130):
+            with self.subTest(status=status), \
+                    mock.patch("openclean.cli.choose_menu", return_value=MenuChoice("clean", 0)), \
+                    mock.patch("openclean.cli.main", return_value=status), \
+                    mock.patch("builtins.input") as wait, contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(_run_root_menu(), status)
+                wait.assert_not_called()
+
+    def test_menu_input_eof_and_interrupt_exit_without_dispatch(self) -> None:
+        for error in (EOFError(), KeyboardInterrupt()):
+            with self.subTest(error=type(error)), \
+                    mock.patch("openclean.cli.choose_menu", side_effect=TUIUnavailable("no tty")), \
+                    mock.patch("builtins.input", side_effect=error), \
+                    mock.patch("openclean.cli.main") as command, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(_run_root_menu(), 0)
+                command.assert_not_called()
+
+    def test_noninteractive_commands_never_enter_menu_or_wait_for_input(self) -> None:
+        for argv in ([], ["cat", "--json"], ["optimize", "ram", "--json"]):
+            with self.subTest(argv=argv), \
+                    mock.patch.object(sys, "stdin", io.StringIO()), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    mock.patch("openclean.cli.choose_menu") as chooser, \
+                    mock.patch("builtins.input") as wait:
+                status = main(argv)
+                self.assertEqual(status, 1 if "optimize" in argv else 0)
+                chooser.assert_not_called()
+                wait.assert_not_called()
 
 
 if __name__ == "__main__":

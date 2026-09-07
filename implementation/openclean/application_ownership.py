@@ -45,6 +45,10 @@ APPLICATION_PATH_RULES: tuple[ApplicationPathRule, ...] = (
         ("WorkBuddy.app", "WorkBuddy Helper"),
     ),
     ApplicationPathRule(
+        "Library/Caches/com.tencent.workbuddy.mac.BundleMigration",
+        ("WorkBuddy.app", "WorkBuddy Helper"),
+    ),
+    ApplicationPathRule(
         "Library/Caches/TRAE SOLO CN",
         ("TRAE SOLO CN.app", "TRAE SOLO CN Helper"),
     ),

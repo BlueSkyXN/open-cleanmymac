@@ -10,7 +10,8 @@
 ## 净室边界
 
 - 只依据 `specs/`、公开文档和可独立验证的通用 macOS 行为实现。
-- 不读取、提交、引用或复制 `analysis/`；不把 `local/` 过程材料带入代码或文档。
+- 不读取、提交、引用或复制 `analysis/`；不提交 `local/` 原始过程材料或机器数据。
+  用户授权的个人经验只可沉淀为脱敏结构事实，并记录独立验证和不能泛化的边界，不能复制原始私有记录。
 - 不提交参考软件代码、反编译表达、私有规则库、商业扫描指纹或原厂数据。
 - 新扫描点必须说明公开来源或通用命名依据，并采用保守安全级。
 - 不在 issue、测试、截图、日志或 commit 中加入真实用户路径、凭据或机器扫描结果。
@@ -76,7 +77,7 @@ Pull request 应列出行为变化、安全影响、验证命令与结果、未�
 | [README.md](README.md) | 用户、审阅者 | 安装、命令、能力总表、许可证 |
 | [docs/PREVIEW.md](docs/PREVIEW.md) | 想先看效果的人 | 隔离预览、合成 TUI、退出码 |
 | [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | 要核对范围的人 | 能力状态、来源、验证证据 |
-| [docs/AI_USAGE.md](docs/AI_USAGE.md) | AI agent 接入方 | 只读调用、JSON 判读和停止边界 |
+| [docs/AI_USAGE.md](docs/AI_USAGE.md) | AI agent 接入方 | JSON 判读、精确预览、授权内执行与停止边界 |
 | [implementation/README.md](implementation/README.md) | 实现者 / 自动化 | 选择语义、JSON schema、规则格式 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 开发者 | 模块、数据流、路径/外部边界 |
 | [SECURITY.md](SECURITY.md) | 安全审阅 | 报告渠道、威胁模型、支持范围 |

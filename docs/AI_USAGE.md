@@ -1,14 +1,17 @@
-# AI 使用指南（只读）
+# Agent 调用契约：用户指挥，Agent 完成调用
 
-`openclean` 是面向 macOS 的垃圾文件扫描 CLI。本页供 AI agent 调用：先取得 JSON 事实，
-再向用户报告候选与风险。**流程到建议为止，不自动清理。**
+`openclean` 是 macOS 清理 CLI。用户描述目标与授权范围，Agent 负责发现、解释、预览、
+在已有明确授权内调用执行，并核对结果。用户不需要手工传递 JSON 或逐条敲命令。
+**未获清理授权时只扫描与预览；actionable 不等于授权。**
 
 ## 工作方式
 
 1. 先运行 `openclean --help` 或对应子命令的 `--help`，不要猜参数。
 2. 使用不带执行授权的 JSON 命令扫描。
 3. 同时检查容量、候选属性、退出码和 `issues`。
-4. 汇报精确结果后停止；任何写入都需要用户重新明确授权。
+4. 精确选择本次发现，生成预览；没有覆盖该动作的授权时，向用户报告范围并等待决定。
+5. 已有明确授权且候选、风险和范围一致时，由 Agent 完成执行和结果核对，不重复索要同一授权。
+6. 新风险、范围变化、探测不完整或阻断条件出现时停止扩面，不用替代删除命令绕过。
 
 ```bash
 ROOT="$HOME/Projects"
@@ -31,7 +34,7 @@ openclean analyze "$ROOT" --top 20 --no-interactive --json
 |---|---|---|
 | `system` | `~/Library/Caches`、updater、日志、Xcode、失效启动项 | 报告候选和阻断原因，不绕过特权、应用或版本保护。 |
 | `developer` | pip、uv、npm、Go、Cargo、Homebrew、Docker 报告 | 普通缓存只建议审阅；Docker 只报告。 |
-| `ai` | Claude、Codex 精确 cache/SQLite/临时结构诊断、Gemini、Chrome DevTools MCP、OpenCode、Cursor | 报告大小和保护状态；不把 Codex `.tmp` 整根当作缓存。 |
+| `ai` | Claude、Codex、WorkBuddy 已观察结构、Gemini、Chrome DevTools MCP、OpenCode、Cursor | 报告大小和保护状态；不把 Codex `.tmp` 或 WorkBuddy 工作目录整根当缓存。 |
 | `project` | `node_modules`、`.venv`、`target`、DerivedData 等可重建产物 | 只分析明确的项目根，不扩大范围。 |
 | `trash` | `~/.Trash` 与挂载卷 Trash | 只报告；清空是永久操作。 |
 
@@ -75,6 +78,29 @@ freelist 只有在应用完全退出、无 WAL/句柄、有备份和足够临时
 参数、规则、路径或配置错误；`130` 表示用户中断。`optimize ram|purgeable` 当前返回
 `status=unavailable`、`executed=false` 和 exit `1`，这是预期安全拒绝。
 
+## 已授权的经典清理流程
+
+经典清理已具备真实执行路径，不必等每个领域都有 Pack。以用户明确选定的普通文件系统候选为例：
+
+```bash
+openclean clean dev --json
+openclean clean dev --select "EXACT_SCANNED_PATH" --json
+# 仅当用户授权已经覆盖上面精确候选及处理方式时：
+openclean clean dev --select "EXACT_SCANNED_PATH" --yes --json
+```
+
+`EXACT_SCANNED_PATH` 必须从本次原始 JSON 的候选路径取值，不是模型猜出的路径。
+Agent 使用参数数组调用，不能把路径插入未转义 shell 命令。`confirm/critical` 目标仍需对应
+`--include-confirm/--include-critical`，仅在用户授权涵盖该风险时使用；不能自动改成 `--all` 或 `--force`。
+
+解析预览的 `categories[].items[]`、`preselected`、`actionable`、`issues` 和容量；显式
+`--select` 从空集选择，不继承其他默认项。经典执行会重新扫描和执行前复核，不是一个持久化事务；
+用户要求严格冻结前次对象时，不得声称普通路径 selector 已提供该保证，应停止并说明限制。
+
+执行后读取 `cleanup.outcomes[]`、`complete`、移动与永久释放字节，逐项核对实际结果。
+必要时再只读扫描相同范围。部分成功不能写成全部成功，移入 Trash 不能写成已释放磁盘空间。
+Trash 清空、Docker prune、修改配置/ignore、知识库更新和特权操作均须有对应的独立明确授权。
+
 ## Agent Runtime（Finding 驱动，附加）
 
 面向 AI agent 的附加命令面，与上面的经典只读命令并存。它把“发现”固化为可跨命令引用的
@@ -82,6 +108,7 @@ Run/Finding，让 agent 用稳定 id（而非易变的绝对路径）向用户�
 
 ```bash
 openclean inspect codex --json                           # 只读探测，固化 Run/Finding
+openclean inspect workbuddy --json                       # 个人经验结构：expired/Worker/Electron
 openclean show --run RUN_ID --finding FINDING_ID --json   # 只读读取单个 Finding 完整证据
 openclean strategy list --json                           # 只读查看已安装策略包
 ```
@@ -94,15 +121,15 @@ openclean strategy list --json                           # 只读查看已安装
 - `--redact-paths` 输出 `redaction.selection_replayable=false`，脱敏后的 id 不能回放执行。
 - 聚合根 Finding（`target.kind=filesystem_subset`）永不作为动作目标，只用于报告。
 
-计划预览使用 `clean --run RUN_ID --finding FINDING_ID`。当前 7 条内置策略均只读，
+计划预览使用 `clean --run RUN_ID --finding FINDING_ID`。当前 Codex 的 7 条策略及 WorkBuddy 包均只读，
 即使加 `--yes` 也不执行。未来生产策略须先具备真实结构证据与明确审批；执行前还需重新探测。
 `inspect` 只读候选，但会写本机 Run Store。契约见 [当前状态](AGENT_RUNTIME_STATUS.md)。
 
 ## 停止边界
 
-AI 不得自行添加 `--yes`（包括 `clean --run --finding --yes`），也不得自动清空 Trash、执行 Docker prune、修改 ignore/config、
-更新知识库、调用 sudo 或绕过 `actionable=false`。普通清理通常进入同卷 Trash，但仍属于
-文件写入。用户要求执行时，应把它作为新的写入任务重新核对精确目标和当前 `--help`。
+AI 不得在用户授权之外添加 `--yes`（包括 Finding 清理），也不得扩大到清空 Trash、Docker prune、
+修改 ignore/config、更新知识库、sudo 或绕过 `actionable=false`。已有明确授权允许 Agent 完成
+范围内的步骤，不代表可以自动增加新的对象、风险等级或动作。失败时先报告实际原因，不降级为任意路径删除。
 
 ## 汇报模板
 
@@ -124,5 +151,6 @@ AI 不得自行添加 `--yes`（包括 `clean --run --finding --yes`），也不
 - [能力地图](CAPABILITIES.md)：能力状态与外部前提。
 - [隔离预览](PREVIEW.md)：TemporaryDirectory 场景和只读示例。
 - [实现说明](../implementation/README.md)：完整 CLI、JSON 和选择契约。
+- [自有经验](EXPERIENCE.md)：历史成果、WorkBuddy 个人观察与不可泛化条件。
 
 文档与当前程序不一致时，以 `openclean <command> --help` 和实际 JSON 为准。

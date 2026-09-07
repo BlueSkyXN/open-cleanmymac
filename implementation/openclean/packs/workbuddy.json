@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "name": "workbuddy",
+  "strategies": [
+    {
+      "id": "workbuddy.storage.observed-structures",
+      "version": 1,
+      "pack": "workbuddy",
+      "status": "active",
+      "provenance": [
+        {"kind": "personal_experience", "observation_id": "obs:personal:workbuddy:20260901"}
+      ],
+      "locator": {"roots": ["~/.workbuddy"]},
+      "detector": {"name": "workbuddy", "params": {}},
+      "assessment": {"classification": "report_only", "certainty": "medium", "action_risk": "critical"},
+      "recommendation": {
+        "summary": "WorkBuddy 已观察结构只读诊断；分类、整组年龄和说明见 evidence.payload。",
+        "do_not_do": [
+          "expired 是日期目录后缀，不是 .expired-* 前缀；命中名称不是删除授权",
+          "traces 按 numeric Worker 整组最新修改时间判断，不按单文件年龄拆删",
+          "保留 binaries、plugins、connectors-marketplace、skills、会话及历史",
+          "不修改 Cookies、IndexedDB、Local Storage 或整个 session",
+          "不得由禁用 session-history 清理的环境变量推断日志清理机制"
+        ]
+      },
+      "action": {"name": "report_only", "supported": false}
+    }
+  ]
+}

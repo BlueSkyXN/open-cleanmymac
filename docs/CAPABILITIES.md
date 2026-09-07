@@ -9,8 +9,8 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 用户入口见 [README.md](../README.md)；本页是范围与验证的权威表。
 
 > **两套命令面并存**：经典五域面（`scan`/`clean <category>`/`analyze`/`purge` + TUI）
-> 与新增的 **Agent Runtime v1**（`inspect`/`show`/`clean --run --finding`/`strategy`，P0 仅
-> `codex` pack）同时可用，共享同一套底层探测器、计量、保护闸与同卷 Trash 执行器。
+> 与 **Agent Runtime**（`inspect`/`show`/`clean --run --finding`/`strategy`，当前内置
+> `codex` 和 `workbuddy` pack）同时可用，共享同一套底层探测器、计量、保护闸与同卷 Trash 执行器。
 > Agent Runtime 契约见 [specs/agent-runtime/](../specs/agent-runtime/_index.md)。
 
 ## 状态定义
@@ -29,12 +29,33 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 ## 用户能力矩阵
 
+### 核心流程对照
+
+对标版本为 CleanMyMac CLI v1.0.0 Public Beta。五项主入口及其用途依据该版本公开菜单；
+细化功能依据仓库净室规格 [00](../specs/00-architecture.md)、
+[02](../specs/02-scan-points.md)、[06](../specs/06-system-flow.md) 和本项目源码。
+菜单只能证明入口及用途，不能证明扫描覆盖或清理效果等效；尚无同状态对比实验的部分保留待核实。
+
+| 参考流程 | OpenClean 入口与实现 | 对齐状态及具体差距 | 自有增强与验证入口 |
+|---|---|---|---|
+| Clean：扫描、审阅并处理垃圾 | `clean [junk/dev/ai/trash]`；`engine.py`、`cleanup.py`、`tui.py` | 部分对齐：用户态流程可用，扫描点为保守子集，特权系统清理未实现；逐对象识别效果待核实 | 精确选择、运行应用/updater 保护、只读诊断；`test_cleanup_cli.py`、`test_cleanup.py`、`test_tui.py` |
+| Purge：扫描并审阅开发产物 | `purge [path]`；项目发现、按项目分组、同卷 Trash | 部分对齐：公开产物字典可用；参考产品逐类型覆盖与默认选择差异待核实 | 年龄/嵌套/精确选择保护；`test_cleanup_cli.py` 和项目扫描测试；Docker 是另有真实环境前提的扩展 |
+| Analyze：可视化存储占用 | `analyze [path]`；`analyzer.py`、`space_tui.py`、`navigator.py` | 部分对齐：空间浏览、排序与精确选择可用；完整参考交互及扫描效果待核实 | 按卷边界、云占位保护，不将占用视作可回收；`test_space_tui.py`、`test_analyze_cleanup.py` |
+| Optimize：维护任务 | `optimize ram/purgeable`；CLI refusal | 执行能力未实现：命令可调用但返回 unavailable/exit 1，不算优化功能等效 | 原因透明，不以制造内存压力冒充优化；`test_optimize_cli.py` |
+| Config：CLI 偏好 | `config`、`ignore`；`config.py`、`knowledge_base.py` | 部分对齐：配置与忽略生命周期可用；参考产品全部偏好项待核实 | 独立 JSON 规则与签名更新客户端；`test_config_cli.py`；正式发布 channel 未配置 |
+
+“已对齐、部分对齐、未实现、有意不做”描述参考功能差距，不替换下表能力状态或 JSON 枚举。
+Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围。Cat 为原创彩蛋，不计入平替声明。
+上述测试文件是验证入口，不是对当前工作区或真实环境已通过的声明。
+
 | capability | command | status | boundary / exclusion |
 |---|---|---|---|
-| Agent Runtime 探测 | `inspect <target>` | `available`（仅 `codex`） | 只读探测，固化 Run/Finding 到本机 Run Store；其余 target 为已规划 pack，fail-closed `pack_not_found`/exit 1 |
+| 五项主菜单 | 无参数 TTY | `available` | 方向键/Enter、More/Cat、Optimize 原因展示；子任务后暂停返回；初始化失败退回行式菜单；不附加 `--yes` |
+| 候选只读详情 | Clean/Purge TUI 的 `I` | `available` | 当前 Item 证据、长路径滚动、未知值与子集说明；不重新扫描、不改变选择；Clean 文本提供诊断摘要，JSON 不变 |
+| Agent Runtime 探测 | `inspect <target>` | `available`（`codex`、`workbuddy`） | 只读探测，固化 Run/Finding 到本机 Run Store；未交付 target 返回 `pack_not_found`/exit 1 |
 | Finding 审阅 | `show --run --finding` | `available` | 从 Run Store 读取完整证据；只读 |
 | Finding 驱动清理 | `clean --run --finding` | `preview-only`（P0a） | 内置 7 条策略均只读；P0b 结构匹配与生产审批未完成；见 [当前状态](AGENT_RUNTIME_STATUS.md) |
-| 策略包查看/校验 | `strategy list/show/verify` | `available` | 只读；`codex` pack 随包分发，hash 稳定 |
+| 策略包查看/校验 | `strategy list/show/verify` | `available` | 只读；`codex`/`workbuddy` pack 随包分发，各自 hash 稳定 |
 | 五域聚合扫描 | `scan` | `available` | `scan` 始终只读；扫描点是保守公开子集 |
 | 分类清理 | `clean junk / dev / ai` | `available` | 默认预览；`--yes` 只执行当前已审阅选择 |
 | Trash 审阅与清空 | `clean trash` | `available` | confirm；内容永久删除，根目录保留 |
@@ -54,6 +75,7 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 | updater 版本状态保护 | `scan/clean junk` | `available` | 新版/应用缺失/未知状态不可执行；同版/旧版 critical 精确选择并在执行前重判 |
 | 按卷容量汇总 | JSON 扫描/预览 | `available` | 按运行时 device 分组系统盘与外置盘；非文件系统资源不归卷 |
 | 日志/runtime/download 保留期 | `scan/clean junk` | `read-only` | WorkBuddy、Codex、Lark、Shadowrocket、TRAE、UURemote 的公开根；Codex 另按 `YYYY/MM/DD` 分区；不读取正文/包内容或批量删除 |
+| WorkBuddy 个人经验结构 | `scan --domain ai` / `clean ai` / `inspect workbuddy` | `read-only` | expired 后缀、numeric Worker 整组年龄和精确 Electron 缓存；不触碰 binaries、插件、技能、会话历史；见 [经验依据](EXPERIENCE.md) |
 | 浏览器 CacheStorage 保留期 | `scan/clean junk` | `read-only` | Chrome/Brave/Edge/Comet Default/Profile 根；不读取 origin、Cookies、Login Data、IndexedDB 或整个 Profile |
 | SQLite freelist | `scan/clean ai` | `read-only` | immutable page/freelist/WAL/句柄；不 `VACUUM` 或删除数据库 |
 | Codex 临时结构与 Crashpad 配对 | `scan/clean ai` | `read-only` | `.tmp` 整根固定保护；只报告精确 staging、Git 空壳和无同名 dump 的 sidecar；staging 超限返回有界部分结果 |
@@ -70,6 +92,8 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 | capability | origin_kind | implementation | validation |
 |---|---|---|---|
+| 主菜单与只读详情 | `project-extension` | `cli.py`、`tui.py` | `test_config_cli.py`、`test_tui.py`、`test_cleanup_cli.py`：调度/返回/终端失败、详情状态、诊断摘要与容量兼容 |
+| WorkBuddy 经验结构 | `project-extension` | `workbuddy.py`、`storage_diagnostics.py`、`packs/workbuddy.json` | `test_workbuddy.py`：正反结构、整组年龄、边界/上限、经典扫描及 inspect→show→preview→拒绝执行 |
 | Agent Runtime（P0 Codex 切片） | `project-extension` | `core/`、`strategies/`、`runtime/`、`actions/`、`packs/codex.json`、`cli.py` | `test_agent_*`：模型不变量、注册/hash、Run Store 权限/TTL、Item↔Finding 投影、inspect 编排、planner can_execute、Finding 驱动执行、命令面契约 |
 | 五域聚合扫描 | `public-cli` | `cli.py`、`engine.py`、`scanpoints.py` | 单测 + `scan-all-domains` preview |
 | 分类清理 | `public-cli` | `cleanup.py`、`tui.py` | 选择/执行单测 + 临时 Trash preview |
