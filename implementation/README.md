@@ -256,13 +256,15 @@ fd 和 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`。Docker prune �
 
 ```bash
 make check
-make package
-make release-check
+make test-focused TEST_PATTERN=test_agent_identifiers.py
 ```
+
+本地不要求开发依赖，只运行轻量检查和受影响测试；GitHub Actions 负责 `make ci-check`、
+`make package`、`make release-check` 和 wheel 安装验证。完整目标仍可按需在本机复现。
 
 wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成器、release checker、
 `openclean_cli.py`、README 和 TODO。剩余工作见 [TODO.md](TODO.md)。检查结果以当前
-checkout 的 `make check` 为准。
+checkout 的轻量结果和 exact-head CI 分别报告。
 
 本包随仓库以 [GNU GPL v3](LICENSE) 许可。GitHub Release 是唯一计划的正式发布渠道，当前尚未创建
 Release；项目不通过 PyPI、Homebrew 或其他包管理器分发。

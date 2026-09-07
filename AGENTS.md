@@ -11,7 +11,7 @@
 
 ```bash
 make preview          # TemporaryDirectory 隔离演示，不碰真实 HOME
-make check            # lint + 测试 + 隔离预览
+make check            # 本地轻量语法和 CLI 启动检查，无需开发依赖
 cat implementation/TODO.md
 ```
 
@@ -116,9 +116,14 @@ OpenClean **自有**的下一代架构契约（Agent Runtime v1：对象模型�
 
 ```bash
 make check
-make package
-make release-check
+make test-focused TEST_PATTERN=test_agent_identifiers.py  # 换成受影响测试文件
 ```
+
+本地默认只跑轻量检查和受影响测试；文档修改只需差异检查。不自动安装或升级开发工具，
+不要求 Python 3.13 或重复全量验证。Python 3.11 是当前基线。
+GitHub Actions 负责 `make ci-check`、构建、归档审计和 wheel 独立安装验证；
+本地仅在排查相关 CI 失败或用户明确要求时按需复现。Ruff 是可选本地工具，精确版本仅供 CI 复现。
+减轻本地验证不改变执行保护条件；云端未运行时报告待验证，不宣称已通过。
 
 修改公开 CLI、JSON schema 或安全级时，同步测试、README、相关 `docs/` 页和 CHANGELOG。
 检查结果以当前 checkout 的命令输出和 exact-head CI 为准，不要把历史测试计数写进文档。

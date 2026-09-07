@@ -1,3 +1,5 @@
+# CI 可复现工具集；本地 make check/test-focused 无需安装。
+# 本地可直接使用已有 Ruff，不要求为了普通修改安装这一精确版本。
 build==1.4.0
 ruff==0.16.0
 setuptools==82.0.0

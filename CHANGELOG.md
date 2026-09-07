@@ -10,6 +10,12 @@
 
 ## [Unreleased]
 
+### Development workflow
+
+- `make check` 改为无需开发依赖的本地轻量检查；新增 `test-focused` 按文件选择测试。
+- 原全量检查保留为 `make ci-check`，由 GitHub Actions 执行；云端增加已安装 wheel 的 Agent 预览链路验证。
+- Python 3.11 基线不变，本地不强制额外 Python 版本或精确 Ruff 版本；清理保护和运行时依赖不变。
+
 ### Fixed / Performance — local cleanup follow-up (2026-09-05)
 
 - 非 UTF-8 的配置和规则文件现在返回既有 `config_error` / `rules_error`，不再抛出未捕获异常或改写原文件。

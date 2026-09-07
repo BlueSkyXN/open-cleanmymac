@@ -104,8 +104,10 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 ## 验证边界
 
-当前自动化基线是 `make check`：lint、完整 unittest，以及 `TemporaryDirectory` 隔离
-预览。这能证明当前 checkout 的本地逻辑、归档和合成写路径，但不能替代以下验收：
+本地 `make check` 仅做语法和 CLI 启动检查，修改相关逻辑时补充定向测试。
+GitHub Actions 的 `make ci-check` 运行 lint、完整 unittest 和 `TemporaryDirectory` 隔离
+预览，再单独构建、审计归档和验证安装。以 exact-head 结果证明相应逻辑、归档和合成写路径，
+不能替代以下验收：
 
 - 真实 iCloud Drive/第三方 File Provider 的 dataless 状态保持；
 - 用户明确授权的 Docker 测试 daemon before/after；

@@ -77,7 +77,8 @@ CLI envelope 使用 `schema_version=2`。`clean` 返回 `mode`、`executed`、`p
 
 ## 开发与验证
 
-macOS 正常入口是 `make check && make package && make release-check`；运行 `make preview`
+macOS 本地默认只运行 `make check` 和受影响测试；全量测试、构建、归档与安装验证由
+GitHub Actions 完成，不要求本机额外 Python 版本或精确开发工具版本。按需运行 `make preview`
 只处理 TemporaryDirectory，不应拿真实 HOME 来演示写操作。
 Linux 可以检查纯逻辑，但不能代替 Darwin `renameatx_np`、SF_DATALESS、真实 lsof、签名帮助器
 和真实 Docker 的验证。私人交接包的 `local/README.md` 提供本次环境、原始日志与接手步骤。

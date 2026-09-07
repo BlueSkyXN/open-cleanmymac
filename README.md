@@ -126,13 +126,13 @@ schema v2 以 `openclean <command> --help` 和
 ## 开发
 
 ```bash
-python3 -m pip install -r requirements-dev.txt
 make check
-make package
-make release-check
+make test-focused TEST_PATTERN=test_agent_identifiers.py  # 按修改选择测试文件
 ```
 
-检查门以当前 checkout 的 `make check` 为准。文档分层见
+本地默认使用 Python 3.11，无需安装开发依赖或其他 Python 版本。`make check` 仅检查语法和
+CLI 启动；全量测试、Ruff、构建、归档和独立安装验证由 GitHub Actions 执行，结果以 exact-head CI 为准。
+需要复现云端失败时才安装 `requirements-dev.txt` 并运行相应目标。文档分层见
 [CONTRIBUTING.md](CONTRIBUTING.md)；缺口见
 [implementation/TODO.md](implementation/TODO.md)。
 
