@@ -41,3 +41,6 @@ version = {attr = "openclean.__version__"}
 where = ["."]
 include = ["openclean*"]
 exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+openclean = ["packs/*.json", "schemas/*.json"]

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openclean:schema:cleanup-plan:v1",
+  "title": "CleanupPlan",
+  "description": "resolve_plan 的静态 can_execute 结果（AR-01 §7 / AR-04 §4）。mode=preview 时 executed 必须为 false；live guard 由 execute_cleanup 在执行前复核。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "run_id", "executed"],
+  "properties": {
+    "mode": {"enum": ["preview", "execute"]},
+    "run_id": {"type": "string", "pattern": "^run:"},
+    "executed": {"type": "boolean"},
+    "plan_items": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["finding_id", "strategy_id", "can_execute"], "properties": {"finding_id": {"type": "string"}, "strategy_id": {"type": "string"}, "strategy_version": {"type": "integer"}, "action_name": {"type": "string"}, "action_supported": {"type": "boolean"}, "can_execute": {"type": "boolean"}, "block_reasons": {"type": "array", "items": {"type": "string"}}, "resolved_targets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["display_path"], "properties": {"display_path": {"type": "string"}, "identity": {"type": ["object", "null"]}}}}}}}
+  }
+}

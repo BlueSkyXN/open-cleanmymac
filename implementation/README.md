@@ -62,6 +62,50 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 前四条会修改文件；清空 Trash 和 Docker prune 是永久操作。验证写路径应运行
 `make preview`。
 
+## Agent Runtime 命令面（附加）
+
+与上面的经典五域命令**并存**，面向 AI Agent 的“探测 → 审阅 → 授权执行”闭环。P0 仅
+分发 `codex` 策略包；其余 `TARGET`（`qoder`/`workbuddy`/`macos-system`/…）为已规划 pack，
+`inspect` 会 fail-closed 返回 `pack_not_found`（exit 1），不伪装完成。
+
+只读：
+
+```bash
+openclean inspect codex --json          # 探测并固化 Run/Finding 到本机 Run Store
+openclean inspect all --json            # 已加载 pack 的并集
+openclean show --run RUN_ID --finding FINDING_ID --json   # 单个 Finding 完整证据
+openclean strategy list --json          # 已安装策略包与 hash
+openclean strategy show --id codex.marketplace.old-staging --json
+openclean strategy verify --json
+```
+
+写操作（Finding 驱动，仅 `trusted` 策略可执行）：
+
+```text
+openclean clean --run RUN_ID --finding FINDING_ID                          # 预览（不写）
+openclean clean --run RUN_ID --finding FINDING_ID --include-confirm --yes   # 执行到同卷 Trash
+```
+
+契约要点：
+
+- `inspect` 产出的 `run_id`/`finding_id` 固化在本机私有 Run Store
+  （`$XDG_STATE_HOME/openclean/runs`，回退 `~/.local/state/...`；目录 `0700`、文件 `0600`，
+  默认 24h TTL）。过期 Run 拒绝复用且**绝不自动重扫**。
+- `clean --run --finding` 只接受 Run Store 里的 `finding_id`，不接受任意路径；选择即授权边界。
+- `can_execute` 是八项合取（用户 `--yes`、策略 `trusted`、动作 supported、Run 未过期、
+  pack hash 匹配、目标 identity 匹配、当前 protect/ignore 允许、实时 guard 通过）；任一不成立
+  该项 `can_execute=false` 并带 `block_reasons`，整批 all-or-nothing。
+- 聚合根（`filesystem_subset`，如 `.staging` 汇总）永不作为动作目标；trusted 策略用逐目标枚举。
+- `--redact-paths` 同时脱敏 `run_id`/`finding_id`（`run:redacted`/`finding:redacted`），输出
+  `redaction.selection_replayable=false`，不能回放执行。
+- JSON envelope：`inspect` 返回 `run_id`/`requested_target`/`totals`/`findings[]`/`issues[]`/
+  `redaction`；`show` 返回单个 Finding（`target`/`measurement`/`assessment`/`evidence`/
+  `recommendation`）；`clean` 返回 `mode`/`executed`/`plan.items[]`/`outcome`。
+- 退出码沿用经典语义：`1` 含 `pack_not_found` 与选中项全部被阻断；`2` 含 `finding_not_in_run`。
+
+对象模型、Run Store、执行不变量与策略生命周期的完整契约见
+[specs/agent-runtime/](../specs/agent-runtime/_index.md)。
+
 ## 选择与执行
 
 - 没有 `--yes` 时，`clean`/`purge`/`analyze` 即使带选择参数也只预览。

@@ -10,6 +10,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Agent Runtime v1（P0 Codex 切片）**：新增 `inspect <target>` / `show` /
+  `clean --run --finding` / `strategy list|show|verify` 命令面，以 Run/Finding/CleanupPlan
+  对象与本机私有 Run Store（`0700`/`0600`、默认 24h TTL、过期拒绝且不自动重扫）承载
+  “探测 → 审阅 → 授权执行”；仅 `trusted` 策略可执行，执行前复核 pack hash、目标
+  identity、protect/ignore 与实时 guard。首个策略包 `codex`（含一条 trusted 逐目标
+  marketplace 暂存清理策略）随包分发。`--redact-paths` 同时脱敏 `run_id`/`finding_id`，
+  脱敏输出 `selection_replayable=false`。这是**附加**命令面：既有
+  `scan`/`clean <category>`/`analyze`/`purge` 与 TUI 全部保留，底层探测器、计量、保护闸
+  与同卷 Trash 执行器复用、未重写。契约见 `specs/agent-runtime/`。
+
 ### Changed
 
 - 文档按读者分层：根 README 收缩为用户首页；CLI/JSON/规则契约留在

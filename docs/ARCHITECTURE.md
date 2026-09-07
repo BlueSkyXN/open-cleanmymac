@@ -35,6 +35,32 @@ flowchart TD
     AUDIT -. 不可执行 .-> XPC[未来 native XPC helper]
 ```
 
+### 1.1 Agent Runtime（附加命令面）
+
+P0 新增面向 AI agent 的 `inspect`/`show`/`clean --run --finding`/`strategy`，与上面的经典
+五域面**并存**，复用同一套探测器、保护闸与同卷 Trash 执行器；差异是把“发现”固化为
+Run/Finding 并按 `finding_id` 授权执行。
+
+```mermaid
+flowchart TD
+    A[用户 / AI Agent] --> CLI2[cli.py\ninspect / show / clean --run / strategy]
+    CLI2 --> INS[runtime/inspect_service.py\n按 pack 加载 strategy → detector]
+    INS --> DET[detectors\nstorage_diagnostics / filesystem / processes / updater]
+    DET --> GATE2[predicates.ProtectionGate + knowledge_base\n最外层保护闸]
+    GATE2 --> PROJ[runtime/finding_projection.py\nItem ↔ Finding 双向投影]
+    PROJ --> STORE[runtime/run_store.py\nRun + Finding · 0700/0600 · 24h TTL]
+    STORE --> SHOW[show / clean 预览\n按 run_id + finding_id 解析]
+    SHOW --> PLAN[actions/planner.py\nresolve_plan：can_execute 八项合取]
+    PLAN --> EXEC[actions/planner.execute_plan\n→ cleanup.execute_cleanup 零改动复用]
+    EXEC --> TRASH2[同卷 Trash]
+```
+
+`strategies/registry.py` 从 `packs/*.json` 加载策略（detector/action 走内置白名单，JSON 不含
+可执行代码）；`core/models.py` 定义 Strategy/Run/Finding/CleanupPlan 对象与不变量；
+`core/errors.py` 映射退出码；`runtime/finding_projection.py` 是唯一的薄适配层（Finding↔Item
+全字段无损投影）。融合发生在**策略生产阶段**（研究平面 → pack），不在每次运行时，因此没有
+运行时 merger。完整契约见 [specs/agent-runtime/](../specs/agent-runtime/_index.md)。
+
 ## 2. 模块边界
 
 | 模块 | 职责 | 不负责 |

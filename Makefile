@@ -16,7 +16,7 @@ lint:
 	cd implementation && ruff check openclean tests scripts
 
 test:
-	cd implementation && $(PYTHON) -W error -m py_compile openclean/*.py tests/*.py scripts/*.py
+	cd implementation && $(PYTHON) -W error -m py_compile openclean/*.py openclean/*/*.py tests/*.py scripts/*.py
 	cd implementation && PYTHONPATH=. $(PYTHON) scripts/capture_tui_assets.py --check
 	cd implementation && PYTHONPATH=. $(PYTHON) -W error -m unittest discover -s tests -q
 

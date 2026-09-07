@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openclean:schema:strategy:v1",
+  "title": "Strategy",
+  "description": "策略平面基本单元（AR-01 §3 / AR-02 §2）。packs/*.json 承载，不含可执行代码；运行时以 core/models.py 的 dataclass 与 __post_init__ 为准，本 schema 为描述性契约。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "pack", "status", "detector", "action"],
+  "properties": {
+    "id": {"type": "string", "description": "分层标识，必须以 '<pack>.' 开头且含 '.'"},
+    "version": {"type": "integer", "minimum": 1},
+    "pack": {"type": "string", "minLength": 1},
+    "status": {"enum": ["draft", "active", "trusted", "deprecated"]},
+    "detector": {
+      "type": "object", "additionalProperties": false, "required": ["name"],
+      "properties": {"name": {"type": "string", "description": "registry.DETECTOR_WHITELIST 之一"}, "params": {"type": "object"}}
+    },
+    "action": {
+      "type": "object", "additionalProperties": false, "required": ["name"],
+      "properties": {"name": {"type": "string", "description": "registry.ACTION_WHITELIST 之一"}, "supported": {"type": "boolean", "description": "仅 trusted 策略可为 true"}}
+    },
+    "provenance": {"type": "array", "items": {"type": "object", "required": ["kind"], "additionalProperties": false, "properties": {"kind": {"enum": ["cleanmymac_public", "cleanmymac_observation", "personal_experience", "ai_research"]}, "observation_id": {"type": "string"}}}},
+    "locator": {"type": "object", "additionalProperties": false, "properties": {"roots": {"type": "array", "items": {"type": "string"}}}},
+    "conditions": {"type": "object", "additionalProperties": false, "properties": {"minimum_age_days": {"type": ["integer", "null"], "minimum": 0}, "require_structure_match": {"type": "boolean"}, "require_no_open_handles": {"type": "boolean"}}},
+    "guards": {"type": "object", "additionalProperties": false, "properties": {"do_not_generalize_parent": {"type": "boolean"}, "protect_running_processes": {"type": "boolean"}}},
+    "assessment": {"type": "object", "additionalProperties": false, "properties": {"classification": {"enum": ["cleanup_candidate", "report_only", "protected"]}, "certainty": {"enum": ["low", "medium", "high"]}, "action_risk": {"type": "string"}}},
+    "recommendation": {"type": "object", "additionalProperties": false, "properties": {"summary": {"type": "string"}, "do_not_do": {"type": "array", "items": {"type": "string"}}}}
+  }
+}

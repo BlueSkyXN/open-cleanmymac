@@ -28,7 +28,8 @@ fail-closed，不会伪报成功。
 > 永久删除数据。请先跑隔离预览，再阅读 [安全](#安全)。
 
 当前基线是 **0.23.0 Alpha**。用户态扫描、预览、选择、同卷 Trash、空间分析和 TUI
-已实现。Docker prune 仅有受限代码路径与隔离验证，真实 daemon 尚未验收。特权帮助器和
+已实现；并新增面向 AI Agent 的 **Agent Runtime** 命令面（`inspect`/`show`/
+`clean --run --finding`/`strategy`，首个策略包 `codex`），与既有命令**并存**。Docker prune 仅有受限代码路径与隔离验证，真实 daemon 尚未验收。特权帮助器和
 `optimize ram / purgeable` 执行器不可用。GitHub Release 是唯一计划的正式发布渠道；当前尚未创建
 Release，也不计划通过 PyPI、Homebrew 或其他包管理器分发。
 
@@ -58,6 +59,9 @@ python3 -m venv .venv
 .venv/bin/openclean --version
 .venv/bin/openclean scan --json
 .venv/bin/openclean clean dev --no-interactive
+# Agent Runtime（附加命令面，与上面命令并存）：
+.venv/bin/openclean inspect codex --json
+.venv/bin/openclean strategy list
 ```
 
 这些命令不会执行清理。不要在尚未审阅候选时加 `--yes`。
@@ -66,6 +70,7 @@ python3 -m venv .venv
 
 | 能力 | 预览 | 执行 | 当前边界 |
 |---|---|---|---|
+| Agent Runtime（`inspect`/`show`/`clean --run`/`strategy`） | 是 | 用户态（仅 `trusted` 策略） | P0 仅 `codex` pack；其余 target fail-closed |
 | 五域扫描（system / developer / ai / trash / project） | 是 | 只读 | `scan` 始终只读 |
 | `clean junk / dev / ai` | 是 | 用户态 | 默认预览；`--yes` 才执行当前选择 |
 | `clean trash` | 是 | 永久删除 | 清空内容，保留 Trash 根 |

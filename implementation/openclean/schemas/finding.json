@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openclean:schema:finding:v1",
+  "title": "Finding",
+  "description": "某条 Strategy 在当前机器上的实际命中（AR-01 §5）。finding_id 不构成授权；类型化 evidence 承载差异。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["finding_id", "run_id", "strategy_id", "strategy_version", "target", "measurement", "assessment", "evidence"],
+  "properties": {
+    "finding_id": {"type": "string", "pattern": "^finding:"},
+    "run_id": {"type": "string", "pattern": "^run:"},
+    "strategy_id": {"type": "string"},
+    "strategy_version": {"type": "integer", "minimum": 1},
+    "target": {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"type": "string", "description": "filesystem 可动作；filesystem_subset 为聚合根，永不动作"}, "display_path": {"type": ["string", "null"]}, "identifier": {"type": "string"}, "identity": {"type": ["object", "null"], "additionalProperties": false, "properties": {"device": {"type": "integer"}, "inode": {"type": "integer"}, "owner": {"type": "integer"}}}}},
+    "measurement": {"type": "object", "additionalProperties": false, "properties": {"size": {"type": "integer", "minimum": 0}, "allocated_bytes": {"type": ["integer", "null"]}, "logical_bytes": {"type": ["integer", "null"]}, "age_days": {"type": ["integer", "null"]}, "latest_mtime": {"type": ["number", "null"]}}},
+    "assessment": {"type": "object", "additionalProperties": false, "required": ["classification", "certainty", "action_risk", "actionable"], "properties": {"classification": {"enum": ["cleanup_candidate", "report_only", "protected"]}, "certainty": {"enum": ["low", "medium", "high"]}, "action_risk": {"type": "string"}, "actionable": {"type": "boolean"}, "block_reasons": {"type": "array", "items": {"type": "string"}}, "requires_privilege": {"type": "boolean"}, "is_cloud_file": {"type": "boolean"}, "requires_explicit_selection": {"type": "boolean"}}},
+    "evidence": {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"type": "string"}, "payload": {"type": "object"}}},
+    "recommendation": {"type": "object", "additionalProperties": false, "properties": {"summary": {"type": "string"}, "do_not_do": {"type": "array", "items": {"type": "string"}}}}
+  }
+}
