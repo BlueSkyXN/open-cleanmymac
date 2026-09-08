@@ -65,7 +65,7 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 
 ## Agent Runtime 命令面（附加）
 
-当前 `0.24.0a1` 内置 Codex 的 7 条策略及 WorkBuddy 的 1 条结构策略，均为 active/report_only，支持探测、
+当前 `0.24.0a2` 内置 Codex 的 7 条策略及 WorkBuddy 的 1 条结构策略，均为 active/report_only，支持探测、
 持久化展示和计划预览，不启用生产清理动作。与经典命令和 TUI 并存。
 
 ```bash
@@ -196,7 +196,8 @@ JSON 字段与容量口径不变。子集锚点不代表父目录可删除，ret
 没有 blocking issue；仍应检查 `issues`。
 
 Agent `clean` 的嵌套计划也应脱敏路径和 Run/Finding ID。已发布 `0.24.0a1` 在此处存在
-元组遍历遗漏；修复见 Unreleased，旧安装包输出不能因带有 `redaction.enabled=true` 就视为可公开分享。
+元组遍历遗漏；`0.24.0a2` 已在源码修复，旧安装包输出不能因带有 `redaction.enabled=true` 就视为可公开分享。
+升级后重新 inspect；不同 runtime version 的旧 Run 不能直接用于执行。
 
 ## 自建规则
 

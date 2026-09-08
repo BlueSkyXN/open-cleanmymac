@@ -57,7 +57,7 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | 候选只读详情 | Clean/Purge TUI 的 `I` | `available` | 当前 Item 证据、长路径滚动、未知值与子集说明；不重新扫描、不改变选择；Clean 文本提供诊断摘要，JSON 不变 |
 | Agent Runtime 探测 | `inspect <target>` | `available`（`codex`、`workbuddy`） | 只读探测，固化 Run/Finding 到本机 Run Store；未交付 target 返回 `pack_not_found`/exit 1 |
 | Finding 审阅 | `show --run --finding` | `available` | 从 Run Store 读取完整证据；只读 |
-| Finding 驱动清理 | `clean --run --finding` | `preview-only`（P0a） | 内置 7 条策略均只读；P0b 结构匹配与生产审批未完成；见 [当前状态](AGENT_RUNTIME_STATUS.md) |
+| Finding 驱动清理 | `clean --run --finding` | `preview-only`（P0a） | 内置 Codex 7 条与 WorkBuddy 1 条策略均只读；P0b 结构匹配与生产审批未完成；见 [当前状态](AGENT_RUNTIME_STATUS.md) |
 | 策略包查看/校验 | `strategy list/show/verify` | `available` | 只读；`codex`/`workbuddy` pack 随包分发，各自 hash 稳定 |
 | 五域聚合扫描 | `scan` | `available` | `scan` 始终只读；扫描点是保守公开子集 |
 | 分类清理 | `clean junk / dev / ai` | `available` | 默认预览；`--yes` 只执行当前已审阅选择 |

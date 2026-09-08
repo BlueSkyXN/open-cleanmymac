@@ -22,7 +22,7 @@ TUI 仍服务人工审阅。两种使用方式复用同一内核，不要求经�
 |---|---|---|
 | SRC-GOAL | [AGENTS.md](../AGENTS.md) 的产品主线与用户批准的规格重写 | 产品方向、保留经典能力、用户指挥与 Agent 实际调用 |
 | SRC-CLI-MENU | 用户提供的 CleanMyMac CLI v1.0.0 Beta 菜单与用途说明 | 五项入口及其用途；本轮未运行参考二进制，不能据此证明扫描/动作等效 |
-| SRC-CODE | 当前 [implementation](../implementation/)；本轮起点为提交 `8aa1910` 加 Unreleased 修复 | OpenClean 已有实现，不自动证明参考软件行为或程序无缺陷 |
+| SRC-CODE | 当前 [implementation](../implementation/)；规格重写起点为 `8aa1910`，后续修复见 CHANGELOG | OpenClean 已有实现，不自动证明参考软件行为或程序无缺陷 |
 | SRC-CONTRACT | [实现契约](../implementation/README.md)、[架构](../docs/ARCHITECTURE.md)、[安全](../SECURITY.md) | 现有接口、共享边界和有意限制 |
 | SRC-EXPERIENCE | [自有经验](../docs/EXPERIENCE.md) 及其代码/历史引用 | 可公开的个人观察、已有特色和来源限制，不是删除授权 |
 | SRC-TEST | 各篇链接的 [tests](../implementation/tests/) | 可运行的验证入口；列出测试不等于本轮或某个发行版已通过 |
@@ -64,7 +64,7 @@ TUI 仍服务人工审阅。两种使用方式复用同一内核，不要求经�
 | [EXPERIENCE](../docs/EXPERIENCE.md) | 经验摘要与实现来源 | 保存真实用户扫描数据 |
 | [CHANGELOG](../CHANGELOG.md) / Release | 修复与版本交付边界 | 将源码修复冒充旧安装包已更新 |
 
-当前已发布 Alpha 与 Unreleased 源码要分开。尤其嵌套脱敏与零测试成功的修复见 CHANGELOG；
+已发布 Alpha 与后续源码变更要分开。尤其嵌套脱敏与零测试成功的修复见 CHANGELOG 的 0.24.0a2；
 这些契约不能因旧安装包有缺陷而被降低。
 
 ## 5. 重写与交接边界

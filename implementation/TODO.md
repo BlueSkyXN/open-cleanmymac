@@ -5,7 +5,7 @@
 [安全](../SECURITY.md) · [规格索引](../specs/_index.md) ·
 [实现说明](README.md)
 
-当前候选：`openclean 0.24.0a1`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
+当前版本：`openclean 0.24.0a2`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
 本清单只保留尚未完成或需要外部验收的工作。已完成功能以
 [docs/CAPABILITIES.md](../docs/CAPABILITIES.md)、CHANGELOG 和 exact-head CI 为准。
 CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI 对齐目标。

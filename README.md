@@ -5,7 +5,7 @@
 macOS 磁盘清理 CLI · 安装后的命令名为 **`openclean`**
 
 [![CI](https://github.com/BlueSkyXN/open-cleanmymac/actions/workflows/ci.yml/badge.svg)](https://github.com/BlueSkyXN/open-cleanmymac/actions/workflows/ci.yml)
-[![Version 0.24.0a1 Alpha](https://img.shields.io/badge/version-0.24.0a1_Alpha-orange)](CHANGELOG.md)
+[![Version 0.24.0a2 Alpha](https://img.shields.io/badge/version-0.24.0a2_Alpha-orange)](CHANGELOG.md)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple&logoColor=white)](docs/PREVIEW.md)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
@@ -43,7 +43,7 @@ fail-closed，不会伪报成功。
 上图由当前 Clean TUI 的生产绘制函数生成，使用固定合成候选。更多画面见
 [docs/PREVIEW.md](docs/PREVIEW.md)。
 
-> 当前候选版本 `0.24.0a1`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
+> 当前版本 `0.24.0a2`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
 > 完整范围与 JSON/Run 版本见 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
 
 ## 快速开始
@@ -53,13 +53,13 @@ fail-closed，不会伪报成功。
 
 ### 安装 GitHub 预发行包
 
-`0.24.0a1` 为 Alpha，不是全功能稳定版。通过 GitHub CLI 下载 wheel 与校验文件：
+`0.24.0a2` 为 Alpha，不是全功能稳定版。通过 GitHub CLI 下载 wheel 与校验文件：
 
 ```bash
-gh release download v0.24.0a1 --repo BlueSkyXN/open-cleanmymac --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
+gh release download v0.24.0a2 --repo BlueSkyXN/open-cleanmymac --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
 shasum -a 256 -c SHA256SUMS
 python3 -m venv .venv
-.venv/bin/python -m pip install --no-deps ./open_cleanmymac-0.24.0a1-py3-none-any.whl
+.venv/bin/python -m pip install --no-deps ./open_cleanmymac-0.24.0a2-py3-none-any.whl
 .venv/bin/openclean --version
 .venv/bin/openclean strategy list --json
 ```
@@ -155,7 +155,7 @@ schema v2 以 `openclean <command> --help` 和
 身份、Docker binding 和知识库安装细节见 [SECURITY.md](SECURITY.md)。
 
 已发布 `0.24.0a1` 的 Agent `clean --redact-paths` 存在嵌套计划脱敏遗漏，不应直接公开其输出。
-源码修复状态见 [CHANGELOG 的 Unreleased](CHANGELOG.md#unreleased)，不代表旧安装包已更新。
+`0.24.0a2` 修复此问题，见 [CHANGELOG](CHANGELOG.md)；旧安装包不会自动更新。升级后重新 inspect，不沿用旧版本 Run 执行。
 
 ## 开发
 

@@ -1,4 +1,4 @@
-# Agent Runtime 当前实现：0.24.0a1
+# Agent Runtime 当前实现：0.24.0a2
 
 **当前提供 Codex 与 WorkBuddy 只读探测、持久化 Run/Finding、展示、计划预览；生产清理策略尚未启用。**
 经典 `scan`、`clean <category>`、`analyze`、`purge` 和 TUI 保留，与 Agent 命令并存。

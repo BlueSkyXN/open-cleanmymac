@@ -55,7 +55,7 @@ PYTHONPATH=. python3 scripts/preview_all.py --json
 ```text
 open-cleanmymac · 隔离功能预览
 所有写操作均限制在 TemporaryDirectory；不会修改真实 HOME。
-PASS  version                            exit=0   openclean 0.24.0a1
+PASS  version                            exit=0   openclean 0.24.0a2
 PASS  scan-all-domains                   exit=0   隔离扫描得到 8 个候选，覆盖五域
 PASS  clean-junk-preview                 exit=0   junk 只读预览 2 个候选
 PASS  clean-dev-preview                  exit=0   dev 只读预览 2 个候选
