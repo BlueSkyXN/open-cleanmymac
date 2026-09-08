@@ -93,8 +93,9 @@ notarization 和真实安装/升级/回滚验收。Python wheel 本身不能安�
 
 ### 5. macOS/Python 兼容矩阵
 
-当前 CI 基线是 `macos-14 + Python 3.11`，本地不要求额外解释器。只有明确扩展兼容目标时，
-才在云端增加相应 Python/macOS 验证，不将完整版本矩阵作为日常修改门槛。重点检查 curses、`st_blocks`、`getconf`、`tmutil`、mount、
+CI 已配置 `macos-15`、`macos-26` 双版本，均使用 Python 3.11；新矩阵的通过情况以对应提交的 Actions 为准。
+两边均运行完整测试、隔离预览、构建、归档与独立安装检查；失败不取消另一系统的检查，产物名称按系统区分。
+本地不要求额外解释器；进一步扩展 Python/macOS 版本仍需明确目标，不自动扩展所有版本组合。重点检查 curses、`st_blocks`、`getconf`、`tmutil`、mount、
 Trash 权限和 OpenSSL CLI 差异。
 
 另需在专用测试账号/隔离 File Provider 数据上验证 `SF_DATALESS`：扫描前后占位状态不变、

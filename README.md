@@ -48,7 +48,8 @@ fail-closed，不会伪报成功。
 
 ## 快速开始
 
-要求：macOS、Python 3.11+。当前 CI 只验证 Python 3.11。
+要求：macOS、Python 3.11+。CI 配置为 macOS 15 / 26 双版本，Python 保持 3.11；
+实际通过情况以对应提交的 GitHub Actions 为准，不代表其它系统或 Python 版本已验证。
 
 ### 安装 GitHub 预发行包
 

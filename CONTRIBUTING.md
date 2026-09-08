@@ -18,7 +18,7 @@
 
 ## 开发环境
 
-要求 macOS 和 Python 3.11+；当前 CI 只验证 Python 3.11：
+要求 macOS 和 Python 3.11+；CI 配置为 macOS 15 / 26、Python 3.11，实际结果按对应提交核对：
 
 ```bash
 make check

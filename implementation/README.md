@@ -5,7 +5,8 @@
 [安全](../SECURITY.md) · [规格索引](../specs/_index.md)
 
 `openclean` 的 Python 实现层。运行时只使用标准库，要求 macOS 和 Python 3.11+；
-当前 CI 只验证 Python 3.11。许可证为随包 [GPL-3.0](LICENSE)。用户安装与安全默认见
+CI 配置为 macOS 15 / 26 双版本、Python 3.11；通过情况以对应提交的 Actions 为准。
+许可证为随包 [GPL-3.0](LICENSE)。用户安装与安全默认见
 [仓库 README](../README.md)；本页只记录 CLI、JSON、选择和规则契约。
 
 ## 安装与入口

@@ -16,8 +16,12 @@ concurrency:
 
 jobs:
   quality:
-    name: macOS / Python 3.11
-    runs-on: macos-14
+    name: ${{ matrix.os }} / Python 3.11
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -44,6 +48,14 @@ jobs:
       - name: Audit release archives
         run: make release-check
 
+      - name: Validate focused runner from sdist
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/openclean-sdist"
+          tar -xzf implementation/dist/*.tar.gz -C "$RUNNER_TEMP/openclean-sdist"
+          cd "$RUNNER_TEMP/openclean-sdist"/open_cleanmymac-*
+          PYTHONPATH=. python -W error scripts/run_focused_tests.py test_focused_runner.py
+
       - name: Install wheel in an isolated venv
         shell: bash
         run: |
@@ -57,7 +69,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: open-cleanmymac-dist
+          name: open-cleanmymac-dist-${{ matrix.os }}
           path: implementation/dist/*
           if-no-files-found: error
           retention-days: 14
