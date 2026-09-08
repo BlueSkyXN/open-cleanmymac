@@ -1,54 +1,81 @@
-# specs/ · 设计规格索引
+# OpenClean 规格索引
 
-[README](../README.md) · [能力地图](../docs/CAPABILITIES.md) ·
-[功能预览](../docs/PREVIEW.md) · [架构](../docs/ARCHITECTURE.md) ·
-[安全](../SECURITY.md) · [实现说明](../implementation/README.md)
+> 文档 ID：OC-SPEC · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 责任：项目维护者；范围由用户决定。类型：产品与软件行为规格。
+> 本次是文档重写，不授权新增清理对象、模型迁移或发布。
 
-> 这是净室规格的**参考事实来源**。实现只依据这里描述的功能事实，不复用参考软件代码。
-> 阅读顺序见 [AGENTS.md](../AGENTS.md)。本表给出每份规格的实现状态。
->
-> **范围语义**：部分章节记录参考对象或 Desktop 侧的背景能力，并不自动成为本项目的
-> CLI 交付要求。是否进入当前实现范围，以本索引、根 README、
-> [docs/CAPABILITIES.md](../docs/CAPABILITIES.md) 和
-> [implementation/TODO.md](../implementation/TODO.md) 为准。
+## 1. 产品与使用者
 
-| # | 规格 | 内容 | 实现状态 |
-|---|---|---|---|
-| 00 | [总体架构](00-architecture.md) | 进程模型、命令树、模块职责 | 🟡 公开命令壳已落；`optimize` 无安全执行器，特权层未完成 |
-| 01 | [扫描引擎](01-scan-engine.md) | 任务图、加权进度、暂停/恢复/取消 | 🟡 DAG、并发、加权进度、快照和共享三态已落；Countable total、每任务 Control 聚合/observer 未落 |
-| 02 | [扫描点字典](02-scan-points.md) | 扫哪里：路径、模式、安全等级 | 🟡 公开 CLI 的保守子集已落；并非内部/System Junk 字典逐项全覆盖 |
-| 03 | [知识库](03-knowledge-base.md) | 忽略/保护规则、应用附加文件 | 🟡 自建 JSON、用户 ignore、签名更新客户端已落；应用附加字段尚未接生产扫描器，正式 channel 未配置 |
-| 04 | [IPC 协议](04-ipc-protocol.md) | XPC 特权操作、防不当提权 | ⛔ external-prerequisite：需 native 签名链和真实安装验收 |
-| 05 | [关键算法](05-algorithms.md) | 目录大小、硬链接、云文件、fat 瘦身 | 🟡 物理/逻辑大小、硬链接、云占位已落；lipo 未实现 |
-| 06 | [系统流程](06-system-flow.md) | 数据流/控制流 | 🟡 用户态清理、同卷 Trash、Docker 白名单已落；XPC/optimize 未完成 |
-| 07 | [谓词引擎](07-predicate-engine.md) | 是否忽略的谓词系统 | 🟡 CLI 使用子集已落；Reachability/FileAccess 专项语义未实现 |
+OpenClean 用 Python 独立实现 CleanMyMac CLI 核心功能和使用流程的开源平替，
+保留个人经验积累的识别、诊断与清理特色，并方便人、脚本和 AI Agent 使用。
+Clean、Purge、Analyze、Optimize、Config 是产品主线；Agent 是调用方，不是另一个产品中心。
 
-## 图例
+用户可以只给出目标、范围和动作授权，由 Agent 获取证据、精确预览、执行受支持动作并核对结果。
+TUI 仍服务人工审阅。两种使用方式复用同一内核，不要求经典功能先变成 Pack/Finding。
 
-- ✅ 已实现并验证
-- 🟡 部分实现
-- ❌ 未实现（是否可认领仍以 `implementation/TODO.md` 为准）
-- ⛔ 外部前提未满足；不得当作普通代码任务直接启用
+## 2. 依据与效力
 
-## 本项目相对规格的差异
+本目录每篇的需求与验收继承本节来源；具体实现和测试锚点在各篇末尾。
+文档修订号不是 CLI、pack 或持久化 schema 版本。
 
-规格正文描述参考对象。下列差异是本项目有意选择，细节在能力地图和实现契约中：
-
-- 规则存储用明文 JSON，不解析 `.cmmkb`。
-- `openclean cat` 是原创终端猫彩蛋，不计入兼容性声明。
-- ApplicationLanguages、universal binary thinning、日志/缓存/updater 诊断默认只读或未实现写入。
-- `analyze` 只报告实际占用，不把占用自动标为可回收空间。
-- 用户态删除走同卷 Trash；Docker 只开放固定 prune 白名单。
-- 特权 XPC 与 `optimize ram|purgeable` 保持 fail-closed。
-
-## 规格 ↔ 代码对照
-
-| 规格 | 对应实现文件 | 缺口 |
+| 来源 ID | 来源 | 可以证明什么 |
 |---|---|---|
-| 02 扫描点 | `scanpoints.py`、`application_languages.py`、`startup_items.py`、`storage_diagnostics.py`、`updater.py` | System Junk 为公开 CLI 保守子集；项目内 `.Trash` 未启用；语言包写入与 lipo 有意不提供 |
-| 01 引擎 / 05 算法 | `engine.py`、`progress.py`、`task_graph.py`、`models.py`、`filesystem.py` | lipo 未实现；Countable/Control 聚合与 observer 未完成 |
-| 00 命令树 / 06 流程 | `cli.py`、`redaction.py`、`cleanup.py`、`tui.py`、`space_tui.py` | `optimize`、特权 XPC |
-| 07 谓词 / 03 知识库 | `predicates.py`、`knowledge_base.py`、`knowledge_update.py` | Reachability/FileAccess、application fields 生产接线、正式规则 channel |
+| SRC-GOAL | [AGENTS.md](../AGENTS.md) 的产品主线与用户批准的规格重写 | 产品方向、保留经典能力、用户指挥与 Agent 实际调用 |
+| SRC-CLI-MENU | 用户提供的 CleanMyMac CLI v1.0.0 Beta 菜单与用途说明 | 五项入口及其用途；本轮未运行参考二进制，不能据此证明扫描/动作等效 |
+| SRC-CODE | 当前 [implementation](../implementation/)；规格重写起点为 `8aa1910`，后续修复见 CHANGELOG | OpenClean 已有实现，不自动证明参考软件行为或程序无缺陷 |
+| SRC-CONTRACT | [实现契约](../implementation/README.md)、[架构](../docs/ARCHITECTURE.md)、[安全](../SECURITY.md) | 现有接口、共享边界和有意限制 |
+| SRC-EXPERIENCE | [自有经验](../docs/EXPERIENCE.md) 及其代码/历史引用 | 可公开的个人观察、已有特色和来源限制，不是删除授权 |
+| SRC-TEST | 各篇链接的 [tests](../implementation/tests/) | 可运行的验证入口；列出测试不等于本轮或某个发行版已通过 |
 
-认领任务请去 [implementation/TODO.md](../implementation/TODO.md)。能力状态词见
-[docs/CAPABILITIES.md](../docs/CAPABILITIES.md)。
+正文区分三种效力：
+
+- **有效契约（baseline）**：已经批准的行为要求；实现违反它属于缺陷，不能改文档掩盖。
+- **条件设计（change-pending）**：只有用户批准对应功能、证据和环境满足后才能进入实现；不是默认待办。
+- **参考/待核实**：帮助提出问题，不作为删除规则或强制架构。名称、符号、字符串不能单独证明完整行为。
+
+旧版 00–07 中无法逐条追溯的内部协议、符号和算法还原结论不再充当规范依据。
+不得重新读取 `analysis/` 来补证据，也不把旧材料改写成虚构的公开来源。
+需要比较具体功能时，记录公开来源/版本或获授权的独立实验；证据不足就写待核实。
+
+## 3. 按任务阅读
+
+先读 00 和 06，再读本次修改涉及的篇目；不要为普通功能任务通读所有 Agent 设计。
+
+| 文档 | 负责的契约 | 效力 |
+|---|---|---|
+| [00 产品与架构](00-architecture.md) | 五项任务、入口、模块边界、兼容性 | 有效 |
+| [01 扫描与进度](01-scan-engine.md) | 调度、完整性、控制和错误 | 有效；增强计数仅为条件提案 |
+| [02 识别对象与特色](02-scan-points.md) | 五域、专项经验、纳入与排除条件 | 有效 |
+| [03 规则与配置](03-knowledge-base.md) | 自建 JSON、ignore/protect、托管规则边界 | 有效；正式服务需外部前提 |
+| [04 特权边界](04-ipc-protocol.md) | 当前拒绝行为与未来 helper 的启用条件 | 拒绝行为有效；native 协议未定 |
+| [05 计量与诊断](05-algorithms.md) | 物理/逻辑占用、重复计量、诊断意义 | 有效 |
+| [06 用户与 Agent 流程](06-system-flow.md) | 发现、审阅、预览、执行、结果 | 有效 |
+| [07 保护判定](07-predicate-engine.md) | 保护闸、运行状态、身份与资源限制 | 有效 |
+| [Agent 接口索引](agent-runtime/_index.md) | 已有 Run/Finding 附加接口；研究与扩展边界 | 各篇分别标注 |
+
+## 4. 文档分工
+
+| 位置 | 维护内容 | 不承担 |
+|---|---|---|
+| 本目录 | 应当如何工作、验收条件、明确排除项 | 实测日志、全量完成度或平行任务库 |
+| [CAPABILITIES](../docs/CAPABILITIES.md) | 当前能力状态、五项流程对照、验证入口 | 仅凭命令名宣称等效 |
+| [TODO](../implementation/TODO.md) | 真实缺口、环境前提、待决策项 | 强制按 Agent 阶段推进产品 |
+| [AI_USAGE](../docs/AI_USAGE.md) | Agent 如何实际调用 | 新定义另一套执行权限 |
+| [EXPERIENCE](../docs/EXPERIENCE.md) | 经验摘要与实现来源 | 保存真实用户扫描数据 |
+| [CHANGELOG](../CHANGELOG.md) / Release | 修复与版本交付边界 | 将源码修复冒充旧安装包已更新 |
+
+已发布 Alpha 与后续源码变更要分开。尤其嵌套脱敏与零测试成功的修复见 CHANGELOG 的 0.24.0a2；
+这些契约不能因旧安装包有缺陷而被降低。
+
+## 5. 重写与交接边界
+
+DEC-OC-001：撤销旧 Agent 平台产品定义及全量 Item→Finding/TUI 退役路线，不保留为必经未来。
+DEC-OC-002：保留已有经典和 Agent 接口、共享探测器与执行保护；本次不调整公共参数或 schema。
+DEC-OC-003：原文件路径保留便于引用；旧正文由 Git 历史保存，不另复制一套仍会被误执行的路线图。
+
+实现前说明用户功能、已有能力、具体差距和相关验收。发现代码与有效契约冲突时先复现，
+属于缺陷则修实现；确需改契约时说明兼容性并取得范围决定。
+未批准提案不能直接认领。没有来源的具体扫描对象、原生 API 或动作收益不猜测补齐。
+
+文档验收：链接可达、需求对应验收与实现锚点、无虚构命令、无默认强制迁移、无隐私数据。
+文档修改不重复全量测试；源码变更按根开发规范验证，exact-head CI 与实际环境验收分别报告。

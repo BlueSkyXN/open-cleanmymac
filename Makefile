@@ -25,7 +25,7 @@ check:
 
 test-focused:
 	@test -n "$(TEST_PATTERN)" || { printf '%s\n' '请指定 TEST_PATTERN，例如 test_agent_identifiers.py'; exit 2; }
-	cd implementation && PYTHONPATH=. $(PYTHON) -W error -m unittest discover -s tests -p '$(TEST_PATTERN)' -q
+	cd implementation && PYTHONPATH=. $(PYTHON) -W error scripts/run_focused_tests.py '$(TEST_PATTERN)'
 
 test:
 	cd implementation && $(PYTHON) -W error -m py_compile openclean/*.py openclean/*/*.py tests/*.py scripts/*.py

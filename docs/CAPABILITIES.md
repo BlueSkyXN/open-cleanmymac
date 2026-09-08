@@ -26,14 +26,17 @@ Desktop 背景事实不会自动变成 CLI backlog；高风险能力可以有意
 
 `origin_kind` 仅用于解释来源范围：`public-cli`、`internal`、`desktop-background` 或
 `project-extension`，不表示复用参考实现代码或私有数据。
+这些既有标签不证明参考行为已逐条核实；内部名称与历史材料仅能提供研究线索。
+规格重写后保留能力状态与标签，不把来源重新分类当成运行时能力变更。
 
 ## 用户能力矩阵
 
 ### 核心流程对照
 
 对标版本为 CleanMyMac CLI v1.0.0 Public Beta。五项主入口及其用途依据该版本公开菜单；
-细化功能依据仓库净室规格 [00](../specs/00-architecture.md)、
-[02](../specs/02-scan-points.md)、[06](../specs/06-system-flow.md) 和本项目源码。
+OpenClean 的实现与验收要求见 [00](../specs/00-architecture.md)、
+[02](../specs/02-scan-points.md)、[06](../specs/06-system-flow.md) 和本项目源码；
+这些自有契约不替代参考产品细化功能的公开来源或同状态实验。
 菜单只能证明入口及用途，不能证明扫描覆盖或清理效果等效；尚无同状态对比实验的部分保留待核实。
 
 | 参考流程 | OpenClean 入口与实现 | 对齐状态及具体差距 | 自有增强与验证入口 |
@@ -54,7 +57,7 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | 候选只读详情 | Clean/Purge TUI 的 `I` | `available` | 当前 Item 证据、长路径滚动、未知值与子集说明；不重新扫描、不改变选择；Clean 文本提供诊断摘要，JSON 不变 |
 | Agent Runtime 探测 | `inspect <target>` | `available`（`codex`、`workbuddy`） | 只读探测，固化 Run/Finding 到本机 Run Store；未交付 target 返回 `pack_not_found`/exit 1 |
 | Finding 审阅 | `show --run --finding` | `available` | 从 Run Store 读取完整证据；只读 |
-| Finding 驱动清理 | `clean --run --finding` | `preview-only`（P0a） | 内置 7 条策略均只读；P0b 结构匹配与生产审批未完成；见 [当前状态](AGENT_RUNTIME_STATUS.md) |
+| Finding 驱动清理 | `clean --run --finding` | `preview-only`（P0a） | 内置 Codex 7 条与 WorkBuddy 1 条策略均只读；P0b 结构匹配与生产审批未完成；见 [当前状态](AGENT_RUNTIME_STATUS.md) |
 | 策略包查看/校验 | `strategy list/show/verify` | `available` | 只读；`codex`/`workbuddy` pack 随包分发，各自 hash 稳定 |
 | 五域聚合扫描 | `scan` | `available` | `scan` 始终只读；扫描点是保守公开子集 |
 | 分类清理 | `clean junk / dev / ai` | `available` | 默认预览；`--yes` 只执行当前已审阅选择 |

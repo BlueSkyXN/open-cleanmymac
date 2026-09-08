@@ -1,282 +1,114 @@
-# AR-01 · 对象模型
+# AR-01 · 已有对象与字段契约
 
-> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
-> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
-> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+> 文档 ID：AR-01 · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 来源：SRC-CODE、SRC-CONTRACT；不是 Item 迁移计划。
+> 完整字段由 [core/models.py](../../implementation/openclean/core/models.py) 与严格解码器定义。
 
+## 1. 对象关系
 
-[契约索引](_index.md) · [AR-00 架构](ar-00-architecture.md) ·
-[AR-04 Run Store 与执行](ar-04-run-store-and-execution.md)
+| 对象 | 作用 | 不意味着 |
+|---|---|---|
+| Item / ScanResult | 经典扫描、诊断、选择和共享执行器的数据 | 即将退役或必须换模型 |
+| Strategy / StrategyPack | Agent 接口的定位、detector、条件、说明与动作声明 | 声明可信、代码已接线或具备执行权限 |
+| Run | 一次 inspect 的环境、期限、策略与 Finding 清单 | 保存用户授权 |
+| Finding | 一次策略命中的目标、计量、判断和证据 | 凭 ID 就可删除 |
+| CleanupPlan / CleanupPlanItem | 指定选择的动作解析与阻断原因 | 可以脱离 Run/registry 直接执行 |
+| CleanupOutcomeRecord | 逐项执行结果 | 保证所有项成功或磁盘已净释放 |
+| Observation | 经验研究中的记录概念 | 已有运行时类、JSON Schema 或 lab 命令 |
 
-> OpenClean 自有前瞻契约，非 CleanMyMac 参考事实。状态：📐 契约已定，未实现。
-> 本文件定义五个核心领域对象与一个回执对象的字段、不变量与示意 JSON，并给出现有
-> `Item` → `Finding` 的投影映射。策略生命周期见 [AR-02](ar-02-strategy-and-lifecycle.md)。
+Observation 的维护方式见 [AR-05](ar-05-research-governance.md)。
+当前不为它补造 schema 或运行时对象。
 
-## 1. 五对象关系
+## 2. 通用类型与版本
 
-最终模型是**五个核心对象 + 一个回执**，不是四个，也不是把 `Item` 一拆为三。
+REQ-AR-MODEL-001：输入必须按实际 dataclass/严格解码器验证字段、类型、枚举和有限数值；
+未知字段、重复 JSON 键、字符串布尔值或非法 schema 不能默默接纳。
+VAL-AR-MODEL-001：模型、序列化、Run Store 和 pack 反例测试明确拒绝。
 
-```text
-Observation ──(研究证据)──► Strategy ──(运行时加载)──► Run
-                                                       │
-                                              detector 探测
-                                                       ▼
-                                                    Finding ──(resolve)──► CleanupPlan
-                                                                              │
-                                                                    用户确认 + live recheck
-                                                                              ▼
-                                                                       CleanupOutcome
-```
+| 项 | 当前定义 |
+|---|---|
+| 策略状态 | draft / active / trusted / deprecated |
+| classification | cleanup_candidate / report_only / protected |
+| certainty | low / medium / high |
+| action_risk | safe / confirm / critical；不是 low/medium/high |
+| target.kind | filesystem / filesystem_subset / docker；支持该类型不等于已有动作 |
+| ID | run:、finding: 前缀加不透明 token；不把路径编码进 ID |
+| 时间 | created_at/expires_at 是有限数值时间戳，不是旧示意中的 ISO 字符串 |
+| CLI envelope | schema_version 2 |
+| Run bundle | schema_version 2；独立于 CLI envelope |
+| StrategyPack | schema_version 1 |
 
-| 对象 | 作用 | 进入普通运行时 | 能触发动作 |
-|---|---|---:|---:|
-| `Observation` | 记录某个来源观察到了什么 | 否（研究平面） | 否 |
-| `Strategy` | 定义如何发现、判断、解释、处理 | 是（只加载 active/trusted） | 仅 `trusted` |
-| `Run` | 固化一次 inspect 的环境、策略版本与结果集合 | 是 | 否 |
-| `Finding` | 当前机器上某条 Strategy 的实际命中 | 是 | 本身**不**构成授权 |
-| `CleanupPlan` | 将选中 Finding 解析为精确动作 + live guard | 是 | 用户确认后才执行 |
-| `CleanupOutcome` | 执行回执（区分暂存与永久删除） | 是 | 是执行结果，非第六个领域对象 |
+[schemas](../../implementation/openclean/schemas/) 中现有文件也应与模型保持一致。
+不承诺已有 Observation/CleanupOutcome 独立 schema；新增格式必须独立决定兼容性。
 
-**关键区分**：`Observation` 与 `Strategy` 属于知识生产阶段；`Finding` 才是运行时对象，
-是 `Item` 的运行时替代 / 外部投影。三者不是对 `Item` 的并列替代类型。
+## 3. Strategy / StrategyPack
 
-## 2. Observation
+StrategyPack 字段为 schema_version、name、strategies。
+Strategy 包括 id、version、pack、status、provenance、locator、detector、conditions、guards、
+assessment、recommendation、action；字段意义和状态矩阵见 [AR-02](ar-02-strategy-and-lifecycle.md)。
 
-研究证据，不是扫描规则，也不进入普通运行时。
-
-```json
-{
-  "observation_id": "obs:cleanmymac:codex:001",
-  "source": "cleanmymac_experiment",
-  "target": "codex",
-  "environment": {
-    "product_version": "recorded-version",
-    "macos_version": "recorded-version"
-  },
-  "method": "read_only_scan_diff",
-  "observation": {
-    "detected_path_shape": "~/.codex/.tmp/marketplaces/.staging/marketplace-upgrade-*",
-    "category": "ai_junk",
-    "reported_bytes": 104857600
-  },
-  "limitations": ["单版本单环境", "未做清理前后对比"],
-  "negative_examples": [],
-  "linked_strategies": ["codex.marketplace.old-staging"]
-}
-```
-
-不变量：
-
-- `source ∈ {cleanmymac_public, cleanmymac_experiment, personal_hypothesis, ai_research}`。
-- `reported_bytes`、`detected_path_shape` 等是**观察记录**，不直接转化为删除动作。
-- 公开提交的 Observation 必须去标识化；真实路径、容量、文件内容与机器标识不入公开库
-  （见 [AR-05](ar-05-research-governance.md)）。
-- 个人线索（`personal_hypothesis`）首先是研究线索，需经 `explore` 与验证才能形成 draft。
-
-## 3. Strategy
-
-最终策略库的基本单元。字段结构、状态生命周期、版本与冲突规则在
-[AR-02](ar-02-strategy-and-lifecycle.md) 完整定义；此处只给对象骨架与不变量。
-
-```json
-{
-  "id": "codex.marketplace.old-staging",
-  "version": 1,
-  "pack": "codex",
-  "status": "active",
-  "provenance": [
-    {"kind": "cleanmymac_observation", "observation_id": "obs:cleanmymac:codex:003"},
-    {"kind": "personal_experience", "observation_id": "obs:personal:codex:002"}
-  ],
-  "locator": {"roots": ["~/.codex/.tmp/marketplaces/.staging"]},
-  "detector": {"name": "codex_marketplace_staging", "params": {}},
-  "conditions": {"minimum_age_days": 7, "require_structure_match": true, "require_no_open_handles": true},
-  "guards": {"do_not_generalize_parent": true, "protect_running_processes": true},
-  "assessment": {"classification": "cleanup_candidate", "certainty": "high", "action_risk": "confirm"},
-  "recommendation": {"summary": "符合已验证结构的旧 Marketplace 升级暂存目录。", "do_not_do": ["不能把整个 .staging 父目录视为垃圾"]},
-  "action": {"name": "move_to_trash", "supported": false}
-}
-```
-
-不变量：
-
-- `detector.name` 与 `action.name` 必须来自 Python 内置白名单；JSON **不承载可执行代码**，
-  不得出现任意 shell、任意表达式或通用 `{delete, path}`。
-- `id` 全局唯一；同 `id` 通过 `version` 单调演进（见 [AR-02](ar-02-strategy-and-lifecycle.md) §4）。
-- `status` 决定运行时可见性与可执行性（见 [AR-02](ar-02-strategy-and-lifecycle.md) §3）。
+id 要有所属 pack 前缀，version 为正整数。同包重复策略 ID、重复包名拒绝。
+provenance 的 kind 是来源分类，不验证原始观察是否真实存在。
 
 ## 4. Run
 
-`Run` 是跨命令 Agent 工作流成立的关键：一次 `inspect` 固化环境、策略版本与 Finding 集合，
-后续 `show`/`clean` 从 Run Store 按 `run_id` 解析，而不是让 Agent 重放或重新拼接路径。
+| 字段组 | 内容 |
+|---|---|
+| 身份/期限 | run_id、created_at、expires_at、requested_target |
+| 环境 | openclean_version、macos_version、home |
+| 绑定 | strategy_pack_hashes、strategy_versions、protect_config_hash |
+| 完整性 | complete、issues（code/message/blocking）、finding_ids |
 
-```json
-{
-  "run_id": "run:01HXXXXCODEX",
-  "created_at": "2026-09-03T10:00:00+08:00",
-  "expires_at": "2026-09-04T10:00:00+08:00",
-  "openclean_version": "0.23.0",
-  "macos_version": "recorded-version",
-  "requested_target": "codex",
-  "strategy_pack_hashes": {"codex": "sha256:…"},
-  "protect_config_hash": "sha256:…",
-  "complete": true,
-  "issues": [],
-  "finding_ids": ["finding:01HXXXXA", "finding:01HXXXXB"]
-}
-```
-
-不变量：存储位置、权限、TTL、容量上限、过期拒绝与标识稳定性在
-[AR-04](ar-04-run-store-and-execution.md) §2–§3 定义。`Run` 本身不触发动作。
+REQ-AR-MODEL-002：Run manifest 与实际 Findings 的归属、清单、策略版本一致；
+complete 与 blocking issue 不矛盾；期限为正且不超过 24h。
+VAL-AR-MODEL-002：删改清单/归属/版本/期限的 bundle 被拒绝，不补造旧格式缺失字段。
 
 ## 5. Finding
 
-Finding 是运行时命中记录。**必须采用稳定核心字段 + 类型化 `evidence`，禁止重蹈 `Item`
-大平面覆辙**：SQLite、Crashpad、retention、Docker 等互斥差异放进各自的
-`evidence.payload`，不再向 Finding 顶层不断追加字段。
-
-```json
-{
-  "finding_id": "finding:01HXXXXA",
-  "run_id": "run:01HXXXXCODEX",
-  "strategy_id": "codex.marketplace.old-staging",
-  "strategy_version": 1,
-  "target": {
-    "kind": "filesystem",
-    "display_path": "~/.codex/.tmp/marketplaces/.staging/marketplace-upgrade-2024x",
-    "identity": {"device": 1, "inode": 2, "owner": 501}
-  },
-  "measurement": {
-    "allocated_bytes": 104857600,
-    "logical_bytes": 130000000,
-    "age_days": 12,
-    "latest_mtime": 1717000000.0
-  },
-  "assessment": {
-    "classification": "cleanup_candidate",
-    "certainty": "high",
-    "action_risk": "confirm",
-    "actionable": false,
-    "block_reasons": ["strategy_not_trusted"]
-  },
-  "recommendation": {"summary": "…", "do_not_do": ["…"]},
-  "evidence": {"kind": "codex_marketplace_staging", "payload": {}}
-}
-```
-
-核心字段不变量：
-
-- `target.kind ∈ {filesystem, filesystem_subset, docker}`（沿用现有 `RESOURCE_KINDS`）。
-- `target.identity` 复用 `FileIdentity(device, inode, owner)`；非文件系统资源用稳定
-  `identifier` 而非路径。
-- `finding_id` 稳定、唯一、**不编码路径**（决策 3）。
-- `assessment.actionable=false` 时必须在 `block_reasons` 给出结构化原因；只读诊断
-  （retention/sqlite/updater_temp/open_unlinked/codex_transient/crashpad_pairing）永远
-  `actionable=false`，与现有 `Item.__post_init__` 的约束一致。
-- `evidence.kind` 与 `strategy.detector.name` 对应；`payload` 是该 detector 的类型化证据。
-- `finding_id` 本身**不是**授权；执行条件见 [AR-04](ar-04-run-store-and-execution.md) §4。
-
-`evidence.payload` 示例（按 kind 限定字段组，避免顶层膨胀）：
-
-| `evidence.kind` | payload 关键字段（来自现有诊断） |
+| 字段组 | 内容与含义 |
 |---|---|
-| `retention` | `retention_file_count`、`open_handle_count`、`retention_7d/14d/30d_bytes` |
-| `sqlite_freelist` | `sqlite_page_size/page_count/freelist_count`、`sqlite_internal_free_bytes/ratio`、`sqlite_wal_bytes` |
-| `codex_marketplace_staging` | `total_count`、`measured_count`、`measurement_complete`、`open_handle_count` |
-| `crashpad_pairing` | `total_count`、`paired_artifact_count`、`recent_artifact_count` |
-| `open_unlinked` | `logical_bytes`、`total_count`、`related_process_count`、`open_handle_count` |
-| `updater_temp` | `updater_status`、`installed_version`、`staged_version`、`updater_external_install` |
-| `docker` | `identifier`、`resource_total_bytes`、target binding 摘要（binding 本体不进 JSON） |
+| 绑定 | finding_id、run_id、strategy_id、strategy_version |
+| target | kind、display_path、identifier、identity（device/inode/owner） |
+| measurement | size、allocated_bytes、logical_bytes、age_days、latest_mtime |
+| assessment | classification、certainty、action_risk、actionable、block_reasons、requires_privilege、is_cloud_file、requires_explicit_selection |
+| evidence | kind、payload；保存诊断与执行资格所需的现有 Item 信息 |
+| recommendation | summary、do_not_do |
 
-## 6. 现有 `Item` → `Finding` 迁移映射
+REQ-AR-MODEL-003：只读 evidence 不得 actionable；filesystem_subset 与允许的子集诊断对应，
+锚点不得作为父目录删除目标。高 certainty 不是低风险或可执行保证。
+VAL-AR-MODEL-003：模型反例和投影 round-trip 保留诊断限制、精确目标和保护元数据。
 
-项目未发布、无兼容负担，`Finding` **真正取代** `Item` 成为运行时主模型，而不是长期并存的
-投影层。当前 `Item`（`implementation/openclean/models.py`）与其 JSON 面 `_item_payload`
-（`implementation/openclean/cli.py`）已承载大部分证据，迁移是**重组**而非重新采集；下表是
-逐字段迁移路径（`runtime/finding_projection.py` 仅为迁移期过渡，逐域迁移完成后 `Item` 退役）：
+## 6. Item 与 Finding 投影
 
-| 现有 `Item` 字段 | 迁移到 Finding |
-|---|---|
-| `path`、`resource_kind`、`identifier` | `target.kind`、`target.display_path` / `identifier` |
-| `identity`（`FileIdentity` device/inode/owner） | `target.identity` |
-| `size`、`allocated_size`、`logical_size`、`age_days`、`latest_mtime` | `measurement.*` |
-| `safety`、`actionable`、`action_block_reason`、`requires_privilege`、`is_cloud_file`、`requires_explicit_selection` | `assessment.actionable`、`assessment.action_risk`、`assessment.block_reasons` |
-| `category`、`domain`、`note` | `assessment.classification`、`recommendation.summary` |
-| `diagnostic_kind` + `retention_*` / `sqlite_*` / `paired_artifact_count` / `recent_artifact_count` / `related_process_count` / `open_handle_count` / `updater_*` / `total_count` / `measured_count` / `measurement_complete` / `running_process_markers` | `evidence.kind` + `evidence.payload`（类型化） |
-| —（`Item` 无） | **新增** `finding_id`、`run_id`、`strategy_id`、`strategy_version`、结构化 `recommendation.do_not_do` |
+投影是有效接口边界，不是等待清除的过渡负担：
+path/resource_kind/identifier/identity 对应 target，计量对应 measurement，
+风险/阻断对应 assessment，诊断与其它必要字段进入 evidence.payload，说明进入 recommendation。
+category/domain、excluded_paths、cross_device_paths、cloud_file_count 等不得在转换中遗失。
 
-实现修正（已落地，与本契约一致）：
-
-- `assessment.action_risk` **沿用 `SAFETY_LEVELS`（`safe`/`confirm`/`critical`）**，不用
-  low/medium/high；因为 `--include-confirm`/`--include-critical` 授权按该枚举匹配。
-- 除上表字段外，`Item`→`Finding` 无损迁移还必须保留 `_audit_item` 的硬阻断输入：
-  `excluded_paths`、`cross_device_paths`、`cloud_file_count`、`cloud_logical_size`、`domain`
-  （丢失即静默放宽安全闸）；它们存于 `evidence.payload`。
-- `Item.category`（中文人类标签，也是批量键）与枚举 `assessment.classification` **并存**，
-  不互相替代；人类标签进 `evidence.payload`。
-
-迁移完成后：JSON 输出围绕 Run/Finding 重新设计，**不冻结于 schema v2**；旧命令
-`scan`/`clean <category>` 继续保留（处置见 [AR-03](ar-03-cli-and-io-contract.md) §9）。逐模块
-转化顺序见 [AR-07](ar-07-implementation-roadmap.md)。
+REQ-AR-MODEL-004：从持久化 payload 还原 Item 不能直接获得执行路由权限；
+真正执行使用实时重新发现的 Item，见 AR-04。
+VAL-AR-MODEL-004：伪造旧 evidence/路由/计量不能通过执行边界。
 
 ## 7. CleanupPlan
 
-`Finding` → `resolve` → `CleanupPlan` → `preview` → 用户确认 → `live recheck` → `Action`。
-Finding ID **不等于**动作授权；CleanupPlan 才是可预览、可审阅的动作解析结果。
+CleanupPlan 有 mode、run_id、executed、plan_items。
+每个 plan item 的实际字段是 finding_id、strategy_id、strategy_version、action_name、
+action_supported、can_execute、resolved_targets、block_reasons；不是旧示例的嵌套 action。
+resolved_targets 包含精确 display_path 与 identity。内部可用 tuple，JSON 输出仍为数组。
 
-```json
-{
-  "mode": "preview",
-  "run_id": "run:01HXXXXCODEX",
-  "executed": false,
-  "plan_items": [
-    {
-      "finding_id": "finding:01HXXXXA",
-      "strategy_id": "codex.marketplace.old-staging",
-      "strategy_version": 1,
-      "action": {"name": "move_to_trash", "supported": false},
-      "resolved_targets": [
-        {"display_path": "…/marketplace-upgrade-2024x", "identity": {"device": 1, "inode": 2, "owner": 501}}
-      ],
-      "can_execute": false,
-      "block_reasons": ["strategy_not_trusted"]
-    }
-  ]
-}
-```
+REQ-AR-MODEL-005：preview 的 executed 固定 false；active 也可以生成被阻断的预览计划；
+“生成计划”与“可执行”分开。计划不持久化为可重放授权文件。
+VAL-AR-MODEL-005：预览/嵌套序列/只读拒绝的 JSON 与模型保持一致。
 
-不变量：
+## 8. 回执与验收入口
 
-- 不带 `--yes` 时固定 `mode="preview"`、`executed=false`（见 [AR-03](ar-03-cli-and-io-contract.md) §4）。
-- `resolved_targets` 必须是**精确目标集合**，逐个携带 identity；聚合根（如 `.staging`、
-  `.tmp` 父目录、`filesystem_subset` 锚点）**不得**直接作为动作目标（见
-  [AR-06](ar-06-codex-p0-acceptance.md) §4）。
-- `can_execute` 的完整合取条件见 [AR-04](ar-04-run-store-and-execution.md) §4。
+逐项记录 finding_id、status、bytes_affected、destination、message。
+聚合 outcome 使用实际 planner/CLI 结构；不根据本页编造另一份 envelope。
+moved/deleted 的含义见 [05](../05-algorithms.md)。
 
-## 8. CleanupOutcome（回执）
-
-执行结果形成回执，复用现有 `CleanupReport` 语义（`implementation/openclean/cleanup.py`）：
-
-```json
-{
-  "mode": "execute",
-  "executed": true,
-  "complete": true,
-  "outcomes": [
-    {"finding_id": "finding:01HXXXXA", "status": "moved_to_trash", "bytes_affected": 104857600, "destination": "…/.Trashes/501/…"}
-  ],
-  "moved_to_trash_bytes": 104857600,
-  "permanently_deleted_bytes": 0
-}
-```
-
-不变量：沿用 `moved_bytes`（移到同卷 Trash，**暂存、尚未释放**）与 `deleted_bytes`
-（Trash 清空或 Docker prune，**永久删除**）的区分；不得把「发现可回收容量」等同于
-「已释放空间」。批量 all-or-nothing 与逐项 live 复核见 [AR-04](ar-04-run-store-and-execution.md) §5。
-
-## 9. 建模红线
-
-1. 不让 Finding 再次变成新的大平面模型：差异进 `evidence.payload`。
-2. Observation/Strategy 是知识生产对象，Finding 才是运行时对象；不要三者并列替换 `Item`。
-3. 聚合诊断根不直接当动作目标；每个实际目标单独成 Finding 或在计划中保存精确目标集合。
-4. `finding_id`/`run_id` 不编码路径，脱敏输出不可 replay（见 [AR-03](ar-03-cli-and-io-contract.md) §5）。
+[test_agent_models.py](../../implementation/tests/test_agent_models.py)、
+[test_agent_projection.py](../../implementation/tests/test_agent_projection.py)、
+[test_agent_review_store.py](../../implementation/tests/test_agent_review_store.py)、
+[test_agent_planner.py](../../implementation/tests/test_agent_planner.py)、
+[test_agent_review_execution.py](../../implementation/tests/test_agent_review_execution.py)、
+[test_agent_review_cli.py](../../implementation/tests/test_agent_review_cli.py)。

@@ -5,7 +5,7 @@
 [安全](../SECURITY.md) · [规格索引](../specs/_index.md) ·
 [实现说明](README.md)
 
-当前候选：`openclean 0.24.0a1`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
+当前版本：`openclean 0.24.0a2`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
 本清单只保留尚未完成或需要外部验收的工作。已完成功能以
 [docs/CAPABILITIES.md](../docs/CAPABILITIES.md)、CHANGELOG 和 exact-head CI 为准。
 CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI 对齐目标。
@@ -14,7 +14,7 @@ CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI �
 > 内置 7 条 Codex 策略及新增 WorkBuddy 结构策略均只读；不能把测试用 synthetic approval 当生产策略证据。
 > 经典命令、TUI 和共享执行器继续保留。详见 [当前状态](../docs/AGENT_RUNTIME_STATUS.md)。
 
-## Agent 下一阶段
+## Agent 附加接口的缺口（不作为产品固定排期）
 
 | 工作 | 当前状态 | 完成依据 |
 |---|---|---|
@@ -24,7 +24,7 @@ CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI �
 | 真实 Observation 与逐策略 promotion | 未完成 | 用户提供/批准的来源和固定 pack hash；不可补造 |
 | 首条生产策略启用 | 未完成 | 上述条件满足后的单独变更，不由本候选版默认开启 |
 | WorkBuddy 经验结构 | 已实现只读识别及 inspect；正反样本测试 | 见 `docs/EXPERIENCE.md`，不启用删除 |
-| 其余未交付 pack / explore / lab / MCP | 规划 | 分阶段实现，不删除经典能力来凑完成率 |
+| 其余未交付 pack / explore / lab / MCP | 未批准具体实现的候选 | 先确认用户功能与既有 CLI 的真实缺口；不要求全量 pack 化 |
 
 ## P0：发布前必须保持的阻断边界
 
@@ -93,8 +93,9 @@ notarization 和真实安装/升级/回滚验收。Python wheel 本身不能安�
 
 ### 5. macOS/Python 兼容矩阵
 
-当前 CI 基线是 `macos-14 + Python 3.11`，本地不要求额外解释器。只有明确扩展兼容目标时，
-才在云端增加相应 Python/macOS 验证，不将完整版本矩阵作为日常修改门槛。重点检查 curses、`st_blocks`、`getconf`、`tmutil`、mount、
+CI 已配置 `macos-15`、`macos-26` 双版本，均使用 Python 3.11；新矩阵的通过情况以对应提交的 Actions 为准。
+两边均运行完整测试、隔离预览、构建、归档与独立安装检查；失败不取消另一系统的检查，产物名称按系统区分。
+本地不要求额外解释器；进一步扩展 Python/macOS 版本仍需明确目标，不自动扩展所有版本组合。重点检查 curses、`st_blocks`、`getconf`、`tmutil`、mount、
 Trash 权限和 OpenSSL CLI 差异。
 
 另需在专用测试账号/隔离 File Provider 数据上验证 `SF_DATALESS`：扫描前后占位状态不变、
@@ -127,9 +128,9 @@ universal binary thinning 未实现。若未来仅做审计，需要结构化记
 ### 8. Countable 进度与任务控制聚合
 
 当前已实现固定权重百分比、不可变快照、任务成功/失败/取消终态和共享三态协作控制；
-`processed_items` 仍是启发式进度输入，不是已知总量的 Countable 完成数/总数。后续若 UI
-需要完整对齐规格 01，还需为可计数任务建模 total，并提供每任务 Control、引擎级聚合和
-Control 状态 observer；不能把进度 callback 当作 Control observer。
+`processed_items` 仍是启发式进度输入，不是已知总量的 Countable 完成数/总数。
+Countable total、每任务 Control 聚合和 observer 仅是条件增强；需先证明具体 UI/自动化需求，
+不是参考对象出现同名机制就必须实现。若获批，须区分未知 total、进度 callback 与控制事件。
 
 ### 9. 浏览器 origin 与版本化 CLI 缓存
 

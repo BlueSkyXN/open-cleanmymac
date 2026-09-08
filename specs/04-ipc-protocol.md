@@ -1,72 +1,56 @@
-# 04 · IPC / 特权操作协议规格
+# 04 · 特权清理边界与 helper 条件设计
 
-> 来源：参考对象 IPC/特权协议的类型事实。
-> 描述 CLI 与特权帮助器/主程序通信的"协议形状"，供独立实现参考。不含原代码。
+> 文档 ID：OC-04 · 修订：2 · 更新：2026-09-08
+> 状态：当前拒绝契约 baseline；未来 native host/helper 协议 change-pending。
+> 来源：SRC-GOAL、SRC-CONTRACT、[TODO](../implementation/TODO.md)；不是参考产品的 IPC 协议副本。
 
-## 1. 为什么需要 IPC
+## 1. 当前产品行为
 
-清理涉及两类操作：
-- **用户态即可完成**：删 `~/Library/Caches` 下自有文件。
-- **需提权**：删 `/Library`、`/private/var`、他人文件、受 SIP 保护边界外的系统区。
+REQ-PRIV-001：没有已验证的 native host/helper、签名与安装链时，
+需要特权的候选只能报告，保持 `requires_privilege=true`、`actionable=false`。
+`--yes`、critical 确认、Agent Strategy 或 root 身份都不能使未实现能力变成已交付能力。
+VAL-PRIV-001：扫描可解释原因；经典/Agent 执行均拒绝，没有 sudo shell 替代路径。
 
-CLI 把"需提权的操作"委托给一个**特权帮助器（Privileged Helper）**，
-两者通过 **XPC**（macOS 原生安全 IPC）通信。CLI 也可能与**主程序**交换能力/许可状态。
+当前 Python wheel 没有特权服务。普通用户态清理不依赖此服务，
+也不需要先开发 helper 才能改进其他产品功能。
 
-## 2. 协议分层（事实）
+## 2. 权限不能混为一谈
 
-从 `IPCProtocol` 模块还原出的组件（功能事实）：
+- 当前用户的可访问性、Full Disk Access、管理员权限、SIP 与签名 bundle 变更是不同边界。
+- 目录以 `/Library` 或 `/private/var` 开头不能单独确定是否可执行；按具体资源判定。
+- root 不等于 File Provider/FDA/SIP/签名限制全部消失。
+- 不要求用户为一个尚无 executor 的能力修改系统设置。
 
-```
-XPCListener / XPCConnection           连接与监听（XPC 通道）
-XPCClientEngine / XPCServerEngine     客户端/服务端引擎（收发调度）
-XPCMessageMapper                      消息 <-> 领域对象 映射
-XPCMessageJSONEncoder                 消息体以 JSON 编码
-XPCMessageValidator                   入站消息校验（防伪造/越权）
-XPCRemoteProxyType                    远端代理抽象（调用对端如本地对象）
-RequestProxy（XPCConnection 内）       请求-响应配对（异步回调）
-```
+这些是设计约束，不新增公共权限枚举或改变现有 JSON。
 
-## 3. 协议契约（行为描述）
+## 3. 未来专项的输入与非目标
 
-| 项 | 约定 |
-|---|---|
-| 传输 | XPC（命名 Mach 服务；帮助器经 `launchd`/`SMAppService` 注册） |
-| 编码 | 消息体 **JSON**（字段化，便于版本演进） |
-| 模式 | 请求-响应 + 事件推送（进度/完成回调） |
-| 安全 | 入站**消息校验**；对端代码签名/teamID 校验；最小权限（仅暴露必要操作） |
-| 生命周期 | 惰性建立连接 → 发送操作 → 收进度事件 → 完成/错误 → 空闲断开 |
+只有用户批准具体操作、目标范围和签名/测试环境后，才制定可执行 native 规格。
+需核对当时 Apple 官方 API、最低 macOS、注册方式和 entitlements；
+不把未经验证的 Swift API 拼写或参考软件内部类型写成可直接使用的接口。
 
-## 4. 典型特权操作（推导）
+待交付物应包括：host/helper 身份、领域操作与参数 schema、授权模型、
+安装/升级/卸载/回滚流程、威胁模型、正反样本和真实安装证据。
+本篇不预定 Mach service 名、Team ID、消息 JSON 格式或后台服务产品形态。
 
-- 删除受保护路径（系统缓存/日志、他人文件、外卷 `.Trashes`）。
-- 清空所有用户废纸篓、管理系统迁移残留、dyld 缓存重建触发。
-- 卸载应用时移除其 LaunchDaemons/PrivilegedHelperTools。
+## 4. 启用时不得降低的要求
 
-## 5. 独立实现提示
+以下仅在该专项获批时成为实现验收，不代表已存在 executor：
 
-- 帮助器用 `SMJobBless`（旧）或 `SMAppService.privilegedHelper`（新）安装。
-- 校验对端：从 XPC audit token 校验 designated requirement；Team ID 只能作为要求的一部分，
-  不能单独作为身份凭证。host 与 helper 必须双向限制预期签名。
-- 消息校验白名单化：只接受枚举内的**领域操作**和严格参数，禁止通用
-  `{op: delete, path: absolutePath}`。
-- 独立实现可采用同样的 XPC+JSON 形态（macOS 标准做法，非其专有）。
+| 需求 | 条件设计 | 对应验收 |
+|---|---|---|
+| REQ-PRIV-002 身份 | 基于 audit token 与预期 designated requirement 双向校验；不能只比 Team ID | VAL-PRIV-002：错误签名/伪造 peer/失效身份拒绝 |
+| REQ-PRIV-003 服务端授权 | helper 自行验证固定 root、相对目标与领域条件，不信任 CLI 的 safety/路径判断 | VAL-PRIV-003：任意路径、未知动作、参数注入和越界请求拒绝 |
+| REQ-PRIV-004 路径复核 | no-follow、device/inode/owner/mount 与业务状态在操作前重判 | VAL-PRIV-004：替换目标、祖先 symlink、跨卷、恢复有效的启动项拒绝 |
+| REQ-PRIV-005 协议失败 | 定义版本/大小上限、超时、取消、幂等与稳定错误；不假设断线等于没执行 | VAL-PRIV-005：重复请求/断线/超限/版本不匹配结果可解释 |
+| REQ-PRIV-006 生命周期 | 安装、升级、签名变化、卸载和回滚都有真实 macOS 验证 | VAL-PRIV-006：失败不遗留无约束特权入口；host/helper 不兼容拒绝 |
 
-## 6. 独立实现启用前的强制安全契约
+禁止通用文件删除、任意写入、任意 shell 或跨用户批量处理接口。
+不使用 sudo 包装器绕过上述设计；不将对方使用 XPC 当成必须复刻其内部消息格式的理由。
 
-在 native host/helper、entitlements 和签名链齐备前，特权项必须保持不可执行。
-不得用 sudo shell wrapper 代替 XPC 设计。启用前至少满足：
+## 5. 验证边界
 
-1. **服务端重新授权**：helper 根据固定 root、相对组件和领域状态重新发现目标，不信任
-   CLI 提交的路径、safety、`requires_privilege` 或扫描时判定。
-2. **路径与身份**：逐组件 no-follow，核对 device/inode、owner、mount 和目标类型；操作
-   前重新执行业务判定，例如 broken startup item 必须重解析 plist。
-3. **权限分类**：区分 Full Disk Access、admin helper、SIP unsupported 和签名 bundle
-   mutation unsupported；helper/root 不等于自动拥有或绕过其他能力。
-4. **协议治理**：版本号、request ID、消息大小上限、超时、取消、幂等语义、稳定错误码和
-   不含敏感路径的审计事件。
-5. **生命周期**：安装、升级、密钥/签名变化、失效 helper、卸载和回滚都有真实 macOS
-   验收；host/helper 版本不匹配时 fail-closed。
-6. **范围限制**：只提供有限操作，例如“某个已验证系统缓存根下的一级子项”，不提供
-   任意文件写入、任意命令执行或跨用户通用删除。
-
-完成协议、威胁模型和 native 签名环境之前，本规格是未来设计门槛，不是已实现能力。
+当前拒绝行为入口：[cleanup.py](../implementation/openclean/cleanup.py)、
+[test_cleanup.py](../implementation/tests/test_cleanup.py)、
+[test_agent_review_execution.py](../implementation/tests/test_agent_review_execution.py)。
+其余验收尚无对应 native 实现，不能标为通过。发布门槛与外部前提统一见 TODO。

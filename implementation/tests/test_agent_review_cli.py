@@ -16,6 +16,46 @@ from openclean.strategies.registry import StrategyRegistry, load_pack, pack_from
 
 
 class ReviewCliTests(AgentFixture):
+    def test_clean_preview_redacts_nested_plan_without_changing_selection(self):
+        code, run = self.cli(["inspect", "codex", "--json"])
+        self.assertEqual(code, 0)
+        finding = next(f for f in run["findings"] if f["display_path"] == str(self.target))
+        args = ["clean", "--run", run["run_id"], "--finding", finding["finding_id"], "--json"]
+        code, original = self.cli(args)
+        self.assertEqual(code, 0)
+        code, redacted = self.cli([*args, "--redact-paths"])
+        self.assertEqual(code, 0)
+        self.assertFalse(redacted["executed"])
+        self.assertFalse(redacted["plan"]["executed"])
+        self.assertFalse(redacted["redaction"]["selection_replayable"])
+        self.assertEqual(redacted["run_id"], "run:redacted")
+        self.assertEqual(redacted["plan"]["run_id"], "run:redacted")
+        item = redacted["plan"]["plan_items"][0]
+        self.assertEqual(item["finding_id"], "finding:redacted")
+        self.assertRegex(item["resolved_targets"][0]["display_path"], r"^path:\d{4,}$")
+        serialized = json.dumps(redacted)
+        for private in (str(self.home), finding["finding_id"], run["run_id"]):
+            self.assertNotIn(private, serialized)
+        original_item = original["plan"]["plan_items"][0]
+        self.assertEqual(original_item["finding_id"], finding["finding_id"])
+        self.assertEqual(original_item["resolved_targets"][0]["display_path"], str(self.target))
+        self.assertEqual(item["can_execute"], original_item["can_execute"])
+        self.assertEqual((self.target / "blob").read_bytes(), b"a" * 4096)
+
+    def test_redaction_handles_mixed_sequences_without_mutating_input(self):
+        path = str(self.target)
+        payload = {"groups": ({"paths": (path,), "finding_ids": ("finding:private",),
+                               "block_reasons": (f"Cannot use {path}",)},)}
+        before = json.dumps(payload)
+        redacted = redact_json_payload(payload)
+        group = redacted["groups"][0]
+        self.assertRegex(group["paths"][0], r"^path:\d{4,}$")
+        self.assertEqual(group["finding_ids"], ["finding:redacted"])
+        self.assertNotIn(path, json.dumps(redacted))
+        self.assertIn(group["paths"][0], group["block_reasons"][0])
+        self.assertEqual(json.dumps(payload), before)
+        self.assertEqual(redacted, redact_json_payload(json.loads(before)))
+
     def test_builtin_pack_has_no_production_action(self):
         registry = StrategyRegistry.load()
         strategies = registry.runtime_visible("codex")

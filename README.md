@@ -5,7 +5,7 @@
 macOS 磁盘清理 CLI · 安装后的命令名为 **`openclean`**
 
 [![CI](https://github.com/BlueSkyXN/open-cleanmymac/actions/workflows/ci.yml/badge.svg)](https://github.com/BlueSkyXN/open-cleanmymac/actions/workflows/ci.yml)
-[![Version 0.24.0a1 Alpha](https://img.shields.io/badge/version-0.24.0a1_Alpha-orange)](CHANGELOG.md)
+[![Version 0.24.0a2 Alpha](https://img.shields.io/badge/version-0.24.0a2_Alpha-orange)](CHANGELOG.md)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple&logoColor=white)](docs/PREVIEW.md)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
@@ -43,22 +43,23 @@ fail-closed，不会伪报成功。
 上图由当前 Clean TUI 的生产绘制函数生成，使用固定合成候选。更多画面见
 [docs/PREVIEW.md](docs/PREVIEW.md)。
 
-> 当前候选版本 `0.24.0a1`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
+> 当前版本 `0.24.0a2`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
 > 完整范围与 JSON/Run 版本见 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
 
 ## 快速开始
 
-要求：macOS、Python 3.11+。当前 CI 只验证 Python 3.11。
+要求：macOS、Python 3.11+。CI 配置为 macOS 15 / 26 双版本，Python 保持 3.11；
+实际通过情况以对应提交的 GitHub Actions 为准，不代表其它系统或 Python 版本已验证。
 
 ### 安装 GitHub 预发行包
 
-`0.24.0a1` 为 Alpha，不是全功能稳定版。通过 GitHub CLI 下载 wheel 与校验文件：
+`0.24.0a2` 为 Alpha，不是全功能稳定版。通过 GitHub CLI 下载 wheel 与校验文件：
 
 ```bash
-gh release download v0.24.0a1 --repo BlueSkyXN/open-cleanmymac --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
+gh release download v0.24.0a2 --repo BlueSkyXN/open-cleanmymac --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
 shasum -a 256 -c SHA256SUMS
 python3 -m venv .venv
-.venv/bin/python -m pip install --no-deps ./open_cleanmymac-0.24.0a1-py3-none-any.whl
+.venv/bin/python -m pip install --no-deps ./open_cleanmymac-0.24.0a2-py3-none-any.whl
 .venv/bin/openclean --version
 .venv/bin/openclean strategy list --json
 ```
@@ -153,6 +154,9 @@ schema v2 以 `openclean <command> --help` 和
 `safe`、`confirm`、`critical` 是候选风险级别，不是数据价值保证。路径竞态、Trash
 身份、Docker binding 和知识库安装细节见 [SECURITY.md](SECURITY.md)。
 
+已发布 `0.24.0a1` 的 Agent `clean --redact-paths` 存在嵌套计划脱敏遗漏，不应直接公开其输出。
+`0.24.0a2` 修复此问题，见 [CHANGELOG](CHANGELOG.md)；旧安装包不会自动更新。升级后重新 inspect，不沿用旧版本 Run 执行。
+
 ## 开发
 
 ```bash
@@ -171,7 +175,7 @@ CLI 启动；全量测试、Ruff、构建、归档和独立安装验证由 GitHu
 | 路径 | 作用 |
 |---|---|
 | `implementation/` | Python 包、测试、隔离预览与发行检查 |
-| `specs/` | 净室功能规格 |
+| `specs/` | OpenClean 行为与验收规格；参考依据、条件设计和未批准提案分别标注 |
 | `docs/` | 架构、能力地图与功能预览 |
 | `analysis/` | 受隔离的原始分析材料；禁止提交/读取 |
 | `local/` | 本机过程材料；被 `.gitignore` 排除 |

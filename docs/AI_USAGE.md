@@ -73,6 +73,9 @@ freelist 只有在应用完全退出、无 WAL/句柄、有备份和足够临时
 
 默认 JSON 包含绝对路径。输出需要离开本机会话时使用 `--json --redact-paths`；脱敏后的
 `path:0001` 只能用于报告，不能作为后续 selector。
+注意：已发布 `0.24.0a1` 的 Agent `clean` 嵌套计划存在脱敏遗漏；`0.24.0a2` 修复该问题，
+使用该旧安装包时不要将其输出直接对外分享，`redaction.enabled=true` 不能证明嵌套内容已脱敏。
+升级后重新 inspect，不能直接执行不同 runtime version 的旧 Run。
 
 退出码：`0` 表示命令按契约完成；`1` 表示结果不完整、失败或能力 unavailable；`2` 表示
 参数、规则、路径或配置错误；`130` 表示用户中断。`optimize ram|purgeable` 当前返回

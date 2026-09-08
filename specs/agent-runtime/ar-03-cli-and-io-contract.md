@@ -1,205 +1,107 @@
-# AR-03 · 命令与 I/O 契约
+# AR-03 · 当前命令、JSON 与脱敏
 
-> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
-> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
-> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+> 文档 ID：AR-03 · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 来源：SRC-CODE、SRC-CONTRACT；[cli.py](../../implementation/openclean/cli.py) 是当前参数和 payload 实现锚点。
 
+## 1. 可调用命令
 
-[契约索引](_index.md) · [AR-00 架构](ar-00-architecture.md) ·
-[AR-01 对象模型](ar-01-object-model.md) · [实现说明](../../implementation/README.md)
-
-> OpenClean 自有前瞻契约，非 CleanMyMac 参考事实。状态：📐 契约已定，未实现。
-> 本文件定义 Agent 主接口与研究命令的参数、JSON 输出、退出码，以及旧命令的保留关系。
-> 执行阶段的授权与 live guard 见 [AR-04](ar-04-run-store-and-execution.md)。
-
-## 1. 命令树
-
-```text
-openclean
-├── inspect   TARGET [--json]                 # 按策略包识别，产出 run_id + Finding 摘要
-├── explore   PATH [--max-depth N] [--max-entries N] [--json]   # 只读研究证据
-├── show      --run RUN --finding FINDING [--json]              # 单个 Finding 完整证据
-├── clean     --run RUN --finding FINDING [--yes] [--json]      # 预览 / 执行
-├── strategy  {list, show STRATEGY_ID, verify} [--json]         # 只读策略查询
-├── config    …                                                 # 现有 + Run Store / pack 配置
-└── lab       {capture, compare, draft, validate, promote, demote}   # 研究命令，非 Agent 主接口
-```
-
-当前实施为附加 Agent 接口；经典命令、TUI、ignore/config/cat 保留，optimize 继续明确拒绝。
-
-## 2. `inspect TARGET`
-
-按策略包运行识别，`TARGET ∈ {codex, qoder, workbuddy, claude, cursor, macos-system,
-developer-tools, browsers, docker, project-artifacts, all}`（全集见
-[AR-08](ar-08-strategy-pack-catalog.md)）；`all` = 已加载 pack 的并集。实现按
-[AR-07](ar-07-implementation-roadmap.md) 分阶段落地，Codex 为首个切片。
-
-```bash
-openclean inspect codex --json
-```
-
-输出（示意）：
-
-```json
-{
-  "schema_version": 2,
-  "command": "inspect codex",
-  "run_id": "run:01HXXXXCODEX",
-  "expires_at": "2026-09-04T10:00:00+08:00",
-  "requested_target": "codex",
-  "complete": true,
-  "issues": [],
-  "totals": {"findings": 2, "potential_bytes": 104857600, "actionable_bytes": 0},
-  "findings": [
-    {
-      "finding_id": "finding:01HXXXXA",
-      "strategy_id": "codex.marketplace.old-staging",
-      "classification": "cleanup_candidate",
-      "certainty": "high",
-      "action_risk": "low",
-      "actionable": false,
-      "potential_bytes": 104857600,
-      "display_path": "~/.codex/.tmp/marketplaces/.staging/marketplace-upgrade-2024x"
-    }
-  ]
-}
-```
-
-不变量：
-
-- `inspect` **只返回目标 pack** 的 Finding，Agent 不再需要从全量 AI 域结果里自行猜哪些属于
-  Codex（这是首切片的核心验收判据，见 [AR-06](ar-06-codex-p0-acceptance.md) §2）。
-- `inspect` 永远只读，产出 `run_id` 并写入 Run Store（见 [AR-04](ar-04-run-store-and-execution.md) §2）。
-- 摘要里的 `finding_id`/`run_id` 稳定、不含路径；完整证据只在 `show` 返回。
-
-## 3. `explore PATH`
-
-面向 Agent 研究：提供目录结构、容量、年龄、进程与句柄证据，供 AI 提出 Observation 或
-Strategy draft。**`explore` 提供研究证据，不生成任意可删除目标。**
-
-```bash
-openclean explore ~/.codex --max-depth 4 --max-entries 5000 --json
-```
-
-只读约束（硬性）：
-
-- 永远只读；输出**不能直接进入 cleanup**（不产生 `finding_id`，不写 Run Store 的可执行目标）。
-- 不读取普通文件正文；不跟随 symlink。
-- 有深度（`--max-depth`）、数量（`--max-entries`）、时间与容量预算；超预算时结构化截断并报告。
-- 遇到跨卷、`SF_DATALESS`/疑似云占位、权限错误时结构化报告（沿用现有 `cross_device_paths`、
-  dataless 阻断与 issue code 语义）。
-- 复用现有 `analyzer.py` 的一级计量能力，但增加树摘要与预算控制；`analyze`（保留）与
-  `explore` 的处置见 §9。
-
-## 4. `show --run --finding`
-
-返回单个 Finding 的完整证据、判断、阻断原因与允许的动作。
-
-```bash
-openclean show --run run:01HXXXXCODEX --finding finding:01HXXXXA --json
-```
-
-输出为 [AR-01](ar-01-object-model.md) §5 的完整 Finding 对象（含 `evidence.payload`、
-`assessment.block_reasons`、`recommendation`）外加 `allowed_actions`。
-
-不变量：
-
-- `--finding` 必须属于 `--run`；否则退出码 `2`（`finding_not_in_run`）。
-- Run 过期或不存在时拒绝，退出码 `1`（`run_expired` / `run_not_found`），**不自动重新扫描**
-  并假装是同一个 Finding。
-- `show` 只读，不改变 Run 状态。
-
-## 5. `clean --run --finding`
-
-Finding 驱动的清理。默认预览，`--yes` 才执行。
-
-```bash
-# 预览
-openclean clean --run run:01HXXXXCODEX --finding finding:01HXXXXA --json
-# 执行（用户对当前 Finding 明确授权后）
-openclean clean --run run:01HXXXXCODEX --finding finding:01HXXXXA --yes --json
-```
-
-预览输出固定（见 [AR-01](ar-01-object-model.md) §7）：
-
-```json
-{"schema_version": 2, "command": "clean", "mode": "preview", "executed": false, "run_id": "run:01HXXXXCODEX", "plan": { "…": "CleanupPlan" }}
-```
-
-不变量：
-
-- **不带 `--yes` 永不写**：固定 `mode="preview"`、`executed=false`。
-- 目标只能从 Run Store 按 `run_id + finding_id` 解析；**不接受 AI 任意拼接路径**。当前
-  并不存在 `openclean delete /arbitrary/path` 这样的入口，v1 也不新增。
-- `--finding` 可重复以选择多个 Finding；批量执行 all-or-nothing（见
-  [AR-04](ar-04-run-store-and-execution.md) §5）。
-- `confirm`/`critical` 风险级别仍要求额外授权 flag（沿用现有 `--include-confirm`/
-  `--include-critical` 语义）；**`finding_id` 不能替代风险确认**。
-- 执行入口复用现有 `cleanup.py` 的 `execute_cleanup` 安全执行器（预检 + live 复核 +
-  同卷 Trash），只是选择来源从「本次扫描的 path/identifier」改为「Run Store 的 Finding」。
-- `active`（非 `trusted`）策略的 Finding，预览返回 `can_execute=false`、
-  `block_reasons=["strategy_not_trusted"]`；`--yes` 也拒绝执行。
-
-## 6. `strategy` 与 `lab`
-
-普通运行时只需要只读策略查询：
-
-```bash
-openclean strategy list --json
-openclean strategy show codex.marketplace.old-staging --json
-openclean strategy verify --json          # 校验已加载 pack 的结构与白名单引用
-```
-
-研究与写入放到 `lab`（占位契约，P0 不要求自动化实现，见
-[AR-06](ar-06-codex-p0-acceptance.md) §5）：
-
-```bash
-openclean lab capture  --source cleanmymac --scenario codex-ai-junk
-openclean lab compare  --scenario codex-ai-junk --reference cleanmymac --candidate openclean
-openclean lab draft    --from-observation obs:personal:qoder:001
-openclean lab validate --strategy codex.marketplace.old-staging
-openclean lab promote  --strategy codex.marketplace.old-staging --to active
-openclean lab demote   --strategy codex.marketplace.old-staging --to deprecated
-```
-
-不变量：
-
-- **`promote`/`demote` 必须是显式人工动作。** AI 可以生成 draft 与 validate 报告，**不能**
-  自行把策略晋级到 `trusted`（见 [AR-00](ar-00-architecture.md) §3、
-  [AR-02](ar-02-strategy-and-lifecycle.md) §3）。
-- `lab` 写入只影响本地研究材料，不改变已加载 pack，除非显式 `promote` 后重新加载。
-
-## 7. `--redact-paths` 不可 replay（决策 5）
-
-沿用现有 `redaction.py` 脱敏机制（单文档 opaque path ref）：
-
-- 所有新 JSON 命令支持 `--redact-paths`，在最终序列化阶段把同一文档内路径映射成稳定
-  opaque ref（如 `path:0001`）。
-- **脱敏输出同时替换 actionable ID**：`run_id`/`finding_id` 在脱敏文档中不可用于后续
-  `show`/`clean`。输出声明 `selection_replayable=false`。
-- 脱敏结果只能用于向用户报告，不能作为 selector 回放；这与「`finding_id` 不编码路径、
-  不可跨会话重放」一致（见 [AR-04](ar-04-run-store-and-execution.md) §3）。
-
-## 8. 退出码
-
-沿用现有语义（[implementation/README.md](../../implementation/README.md) 退出码节）：
-
-| code | 含义 | 新命令典型场景 |
-|---:|---|---|
-| `0` | 命令按契约完成 | `inspect`/`show`/`clean` 预览成功 |
-| `1` | 有 blocking issue、outcome 失败或能力 unavailable | Run 过期/不存在、执行被 live guard 阻断、`active` 策略请求执行 |
-| `2` | 参数、规则、路径、选择或配置错误 | `--finding` 不属于 `--run`、未知 `TARGET`、未知 `strategy_id` |
-| `130` | 用户中断 | TTY 下中断 |
-
-## 9. 命令面与旧能力处置（决策 1）
-
-当前命令面并存，不删除经典入口：
-
-| 现有入口 | 当前处置 | Agent 关系 |
+| 命令 | 输入与结果 | 副作用/边界 |
 |---|---|---|
-| scan / clean category / analyze / purge | 全部保留 | 新增 inspect/show/clean --run，不替换旧调用 |
-| optimize ram/purgeable | 保持不可执行 | 未实现公开执行器 |
-| ignore/config/cat | 保留 | Agent 应用同一保护配置 |
-| curses TUI | 保留 | 人类界面，不是 Agent 输出替代品 |
+| `inspect TARGET --json` | 目标 pack 的 Run 与 Finding 摘要 | 只读候选，写本机 Run Store；all 仅为加载的 pack |
+| `show --run RUN_ID --finding FINDING_ID --json` | 单个 Finding 的目标、计量、判断、evidence 和 allowed_actions | 读取 Store；过期清理可能删除 bundle，不修改候选 |
+| `clean --run RUN_ID --finding FINDING_ID --json` | 解析指定结果并返回计划 | 无 --yes 不修改候选；可预览不可执行项 |
+| 上述 clean 加 `--yes` | 请求执行；仍需相应风险 flag 和完整执行条件 | 当前生产包拒绝，不能当成自动开启动作 |
+| `strategy list --json` | 已加载包/策略信息 | 查询 |
+| `strategy show STRATEGY_ID --json` | 指定策略声明 | 查询；声明不等于动作获批 |
+| `strategy verify --json` | 包结构与白名单检查 | 不是动作测试、实验验证或正式 promotion |
 
-当前 CLI envelope 固定为 schema v2；对象和持久化容器独立版本。长期扩展须单独更新契约。
+当前随包目标为 Codex/WorkBuddy，详见 AR-08。不将未来包名列为现有支持目标。
+`explore`、`lab`、MCP 不在当前命令树；不提供可误执行的占位示例。
+`config` 沿用现有偏好/规则功能，没有因 Agent 扩展新增 pack/Store 持久配置项。
+
+REQ-AR-CLI-001：使用者先从现有 help/strategy 查询目标与参数；缺少 pack、
+未知命令/策略或非法参数返回真实错误，不装作完整空结果。
+VAL-AR-CLI-001：有效调用、缺包/未知策略/参数冲突有结构化结果和正确退出码。
+
+## 2. inspect 的字段语义
+
+外层有 schema_version、command、status、developer_mode、home、run_store、run_id、
+requested_target、created_at、expires_at、openclean_version、macos_version、
+strategy_pack_hashes、protect_config_hash、complete、totals、findings、issues、redaction。
+
+totals 当前是 findings/actionable/report_only 的**计数**，不是旧规格中的 potential_bytes 总量。
+Finding 摘要有 finding_id/run_id、strategy_id/version、actionable/classification/action_risk、
+block_reasons、target_kind、display_path、identifier、size、evidence_kind、summary、do_not_do。
+完整 evidence/measurement/assessment 通过 show 获取，不能在摘要中假设有全部字段。
+
+REQ-AR-CLI-002：字段单位和类型以 AR-01/实现为准；单项 size 不保证可回收，
+聚合/单体 Finding 可重叠，不能简单求和当唯一磁盘收益。
+VAL-AR-CLI-002：摘要与 show 对应同一 Finding，诊断不可回收，不完整 inspect 说明 issues。
+
+## 3. HOME、Store 与开发入口
+
+`inspect --home PATH` 用于隔离：locator 展开、默认规则、日志分区和默认 Store 均以该 HOME 为准。
+自定义 HOME 的 Store 为 PATH/.local/state/openclean/runs，后续 show/clean 预览应显式传 `--run-store`。
+默认环境使用绝对 XDG_STATE_HOME，否则回退 HOME，详见 AR-04。
+
+REQ-AR-CLI-003：`--packs-dir`、`--run-store`、自定义 HOME 是开发边界；
+生产执行只接受当前 HOME、默认 Store 与内置获批包，不把开发路径作为越权通道。
+VAL-AR-CLI-003：隔离 HOME 不读取真实 HOME 规则；非默认 Store/pack 只可预览或被拒绝执行。
+
+## 4. show、选择与 clean
+
+REQ-AR-CLI-004：finding 必须属于指定 run；`--finding` 可重复。
+Agent Run 选择与经典 category/path 选择互斥；不将脱敏 ID 当真实选择。
+VAL-AR-CLI-004：错误归属、混用选择、脱敏占位符和缺失 ID 不能动作。
+
+计划外层有 command/status/mode/run_id/executed/plan；执行阶段另有 outcome，
+失败时有 error。计划数组是 `plan.plan_items[]`，字段见 AR-01 §7，不是 plan.items。
+active 策略能生成阻断预览，不等于执行支持；预览正常完成可以 exit 0。
+请求 --yes 时仍需 --include-confirm/--include-critical 等风险确认以及 AR-04 条件。
+
+REQ-AR-CLI-005：预览 executed=false；执行前整批拒绝时 executed=false，
+outcome.complete=false，逐项 blocked/not_run；已尝试动作但失败必须保留已尝试事实。
+VAL-AR-CLI-005：混合批次不以空成功回执掩盖拒绝；部分操作失败不伪装全成功/全回滚。
+
+## 5. ID 与跨命令使用
+
+原始 run_id/finding_id 在有效 Store 生命周期内可跨命令引用，不编码路径。
+ID 不是授权，也不保证目标没有变化。“不可回放”指脱敏占位符，不是禁止正常跨命令工作流。
+Run 过期、版本不兼容、策略变化时重新获取证据，不能伪造同一个 Finding。
+
+## 6. JSON 与错误通道
+
+REQ-AR-CLI-006：JSON stdout 是单一 JSON 文档，菜单/装饰不混入；不隐藏等待键盘。
+错误应携带既有 error.code/message，不能把 stderr 文本当结构化成功。
+VAL-AR-CLI-006：显式 JSON、非 TTY、解析前错误与运行时拒绝均可被无人值守调用解析。
+
+| exit | 含义与示例 |
+|---:|---|
+| 0 | 命令按契约完成；包括全部不可执行的正常预览 |
+| 1 | 不完整、能力不可用、缺少/过期 Run、缺包、执行受阻/失败 |
+| 2 | 参数、规则、选择归属、未知 strategy 等错误 |
+| 130 | 用户中断 |
+
+不要把“未知 TARGET 一律 exit 2”当契约；语法有效但未安装的 pack 是 pack_not_found/exit 1。
+
+## 7. 脱敏契约
+
+REQ-AR-CLI-007：`--json --redact-paths` 在输出边界把路径换成单文档 opaque ref，
+同时替换 run_id/finding_id（含序列和文本中的引用），输出 selection_replayable=false。
+递归覆盖 dict/list/tuple，包括 plan_items/resolved_targets/路径序列；
+不改变原始对象、Store 或未脱敏精确选择。
+
+VAL-AR-CLI-007：真实 clean CLI 的嵌套路径与 ID 不再等于原值，
+未脱敏输出仍精确，候选未被预览修改；脱敏输入不能用于 show/clean。
+已发布 0.24.0a1 曾遗漏嵌套元组；源码修复与发布状态见 [CHANGELOG](../../CHANGELOG.md)。
+不能因为 metadata 写 enabled=true 就认定旧安装包全部脱敏，也不能假定本机 Store 已被擦除。
+
+## 8. 验收锚点
+
+[test_agent_inspect.py](../../implementation/tests/test_agent_inspect.py)、
+[test_agent_contract.py](../../implementation/tests/test_agent_contract.py)、
+[test_agent_review_cli.py](../../implementation/tests/test_agent_review_cli.py)、
+[test_agent_p0_correction.py](../../implementation/tests/test_agent_p0_correction.py)、
+[test_json_redaction.py](../../implementation/tests/test_json_redaction.py)。
+安装包链路见 [check_installed_wheel.py](../../implementation/scripts/check_installed_wheel.py)；
+源码/已安装 wheel/CI 三层结果不能互相替代。

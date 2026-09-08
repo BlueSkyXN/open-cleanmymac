@@ -5,7 +5,8 @@
 [安全](../SECURITY.md) · [规格索引](../specs/_index.md)
 
 `openclean` 的 Python 实现层。运行时只使用标准库，要求 macOS 和 Python 3.11+；
-当前 CI 只验证 Python 3.11。许可证为随包 [GPL-3.0](LICENSE)。用户安装与安全默认见
+CI 配置为 macOS 15 / 26 双版本、Python 3.11；通过情况以对应提交的 Actions 为准。
+许可证为随包 [GPL-3.0](LICENSE)。用户安装与安全默认见
 [仓库 README](../README.md)；本页只记录 CLI、JSON、选择和规则契约。
 
 ## 安装与入口
@@ -64,7 +65,7 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 
 ## Agent Runtime 命令面（附加）
 
-当前 `0.24.0a1` 内置 Codex 的 7 条策略及 WorkBuddy 的 1 条结构策略，均为 active/report_only，支持探测、
+当前 `0.24.0a2` 内置 Codex 的 7 条策略及 WorkBuddy 的 1 条结构策略，均为 active/report_only，支持探测、
 持久化展示和计划预览，不启用生产清理动作。与经典命令和 TUI 并存。
 
 ```bash
@@ -94,7 +95,8 @@ CLI envelope 为 schema 2，计划数组仅为 `plan.plan_items[]`。混合阻�
 脱敏输出的 Run/Finding ID 不可回放。
 
 详细契约、错误与仍未实现的能力见 [Agent Runtime 当前状态](../docs/AGENT_RUNTIME_STATUS.md)；
-长期架构见 [specs/agent-runtime/](../specs/agent-runtime/_index.md)。
+已有对象、接口与执行契约见 [specs/agent-runtime/](../specs/agent-runtime/_index.md)；
+全量迁移与退役经典能力的旧路线已撤销，未批准扩展不作为当前开发任务。
 
 ## 选择与执行
 
@@ -193,6 +195,10 @@ JSON 字段与容量口径不变。子集锚点不代表父目录可删除，ret
 `selection_replayable=false`，不能直接用于后续 `--select`。`complete=true` 只表示
 没有 blocking issue；仍应检查 `issues`。
 
+Agent `clean` 的嵌套计划也应脱敏路径和 Run/Finding ID。已发布 `0.24.0a1` 在此处存在
+元组遍历遗漏；`0.24.0a2` 已在源码修复，旧安装包输出不能因带有 `redaction.enabled=true` 就视为可公开分享。
+升级后重新 inspect；不同 runtime version 的旧 Run 不能直接用于执行。
+
 ## 自建规则
 
 默认规则路径是 `~/.config/openclean/rules.json`；`--rules FILE` 使用显式单文件。
@@ -281,5 +287,6 @@ wheel 只含运行时包；sdist 有意包含 tests、preview、TUI 资产生成
 `openclean_cli.py`、README 和 TODO。剩余工作见 [TODO.md](TODO.md)。检查结果以当前
 checkout 的轻量结果和 exact-head CI 分别报告。
 
-本包随仓库以 [GNU GPL v3](LICENSE) 许可。GitHub Release 是唯一计划的正式发布渠道，当前尚未创建
-Release；项目不通过 PyPI、Homebrew 或其他包管理器分发。
+本包随仓库以 [GNU GPL v3](LICENSE) 许可。GitHub Release 是唯一正式发布渠道；
+实际 tag、附件与未发布修复分别核对发行页和 CHANGELOG，不以源码版本号推断安装包已更新。
+项目不通过 PyPI、Homebrew 或其他包管理器分发。

@@ -1,4 +1,4 @@
-# Agent Runtime 当前实现：0.24.0a1
+# Agent Runtime 当前实现：0.24.0a2
 
 **当前提供 Codex 与 WorkBuddy 只读探测、持久化 Run/Finding、展示、计划预览；生产清理策略尚未启用。**
 经典 `scan`、`clean <category>`、`analyze`、`purge` 和 TUI 保留，与 Agent 命令并存。
@@ -82,5 +82,6 @@ macOS 本地默认只运行 `make check` 和受影响测试；全量测试、构
 GitHub Actions 完成，不要求本机额外 Python 版本或精确开发工具版本。按需运行 `make preview`
 只处理 TemporaryDirectory，不应拿真实 HOME 来演示写操作。
 Linux 可以检查纯逻辑，但不能代替 Darwin `renameatx_np`、SF_DATALESS、真实 lsof、签名帮助器
-和真实 Docker 的验证。私人交接包的 `local/README.md` 提供本次环境、原始日志与接手步骤。
+和真实 Docker 的验证。若存在私人交接包，先核对其中 README 的日期、范围和证据，
+不能把历史阶段日志当作当前运行结果。有效契约与条件提案见 [规格索引](../specs/agent-runtime/_index.md)。
 公开 wheel/sdist 不含 `local/`、`analysis/` 或 `.git/`。
