@@ -80,14 +80,14 @@ class JsonPathRedactor:
         if isinstance(value, dict):
             for child_key, child_value in value.items():
                 if child_key in PATH_VALUE_KEYS:
-                    if isinstance(child_value, list):
+                    if isinstance(child_value, (list, tuple)):
                         for entry in child_value:
                             self._remember(entry)
                     else:
                         self._remember(child_value)
                 self._collect(child_value, child_key)
             return
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             for entry in value:
                 self._collect(entry, key)
 
@@ -135,7 +135,7 @@ class JsonPathRedactor:
                 if reference is not None:
                     transformed["name"] = reference
             return transformed
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             return [self._transform(entry, key) for entry in value]
         if not isinstance(value, str):
             return value

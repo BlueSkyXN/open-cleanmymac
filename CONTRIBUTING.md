@@ -26,6 +26,7 @@ make test-focused TEST_PATTERN=test_agent_identifiers.py
 ```
 
 以上目标只需标准库。按修改选择测试文件；不要求本地安装 Ruff、构建工具或额外 Python 版本。
+`test-focused` 的模式为空或发现零项测试时明确失败；测试失败也保持非零退出码，不以 `0 tests` 作为验证通过。
 本地已有 Ruff 可直接使用 `make lint`，精确工具版本只用于云端复现。
 项目显式选择 `E4/E7/E9/F` 基础错误规则，不把导入排序、嵌套写法等风格偏好作为合并门禁。
 

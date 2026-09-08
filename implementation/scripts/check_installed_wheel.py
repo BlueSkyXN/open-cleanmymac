@@ -47,6 +47,13 @@ def main() -> None:
         plan = call("clean", *selection)
         assert plan["mode"] == "preview" and not plan["executed"]
         assert not plan["plan"]["plan_items"][0]["can_execute"]
+        redacted = call("clean", *selection, "--redact-paths")
+        redacted_item = redacted["plan"]["plan_items"][0]
+        assert redacted_item["finding_id"] == "finding:redacted"
+        assert redacted_item["resolved_targets"][0]["display_path"].startswith("path:")
+        for private in (str(home), run["run_id"], run["findings"][0]["finding_id"]):
+            assert private not in json.dumps(redacted)
+        assert not redacted["executed"]
         assert candidate.read_bytes() == b"synthetic fixture"
 
         logs = home / ".workbuddy/logs/2026-01-01.expired-1700000000000-a1b2c3d4"

@@ -154,6 +154,9 @@ schema v2 以 `openclean <command> --help` 和
 身份、Docker binding 和知识库安装细节见 [SECURITY.md](SECURITY.md)。
 
 ## 开发
+已发布 `0.24.0a1` 的 Agent `clean --redact-paths` 存在嵌套计划脱敏遗漏，不应直接公开其输出。
+源码修复状态见 [CHANGELOG 的 Unreleased](CHANGELOG.md#unreleased)，不代表旧安装包已更新。
+
 
 ```bash
 make check

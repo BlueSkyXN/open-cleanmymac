@@ -195,6 +195,9 @@ JSON 字段与容量口径不变。子集锚点不代表父目录可删除，ret
 
 ## 自建规则
 
+Agent `clean` 的嵌套计划也应脱敏路径和 Run/Finding ID。已发布 `0.24.0a1` 在此处存在
+元组遍历遗漏；修复见 Unreleased，旧安装包输出不能因带有 `redaction.enabled=true` 就视为可公开分享。
+
 默认规则路径是 `~/.config/openclean/rules.json`；`--rules FILE` 使用显式单文件。
 规范格式只支持 JSON：
 
