@@ -14,7 +14,7 @@ CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI �
 > 内置 7 条 Codex 策略及新增 WorkBuddy 结构策略均只读；不能把测试用 synthetic approval 当生产策略证据。
 > 经典命令、TUI 和共享执行器继续保留。详见 [当前状态](../docs/AGENT_RUNTIME_STATUS.md)。
 
-## Agent 下一阶段
+## Agent 附加接口的缺口（不作为产品固定排期）
 
 | 工作 | 当前状态 | 完成依据 |
 |---|---|---|
@@ -24,7 +24,7 @@ CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI �
 | 真实 Observation 与逐策略 promotion | 未完成 | 用户提供/批准的来源和固定 pack hash；不可补造 |
 | 首条生产策略启用 | 未完成 | 上述条件满足后的单独变更，不由本候选版默认开启 |
 | WorkBuddy 经验结构 | 已实现只读识别及 inspect；正反样本测试 | 见 `docs/EXPERIENCE.md`，不启用删除 |
-| 其余未交付 pack / explore / lab / MCP | 规划 | 分阶段实现，不删除经典能力来凑完成率 |
+| 其余未交付 pack / explore / lab / MCP | 未批准具体实现的候选 | 先确认用户功能与既有 CLI 的真实缺口；不要求全量 pack 化 |
 
 ## P0：发布前必须保持的阻断边界
 
@@ -128,9 +128,9 @@ universal binary thinning 未实现。若未来仅做审计，需要结构化记
 ### 8. Countable 进度与任务控制聚合
 
 当前已实现固定权重百分比、不可变快照、任务成功/失败/取消终态和共享三态协作控制；
-`processed_items` 仍是启发式进度输入，不是已知总量的 Countable 完成数/总数。后续若 UI
-需要完整对齐规格 01，还需为可计数任务建模 total，并提供每任务 Control、引擎级聚合和
-Control 状态 observer；不能把进度 callback 当作 Control observer。
+`processed_items` 仍是启发式进度输入，不是已知总量的 Countable 完成数/总数。
+Countable total、每任务 Control 聚合和 observer 仅是条件增强；需先证明具体 UI/自动化需求，
+不是参考对象出现同名机制就必须实现。若获批，须区分未知 total、进度 callback 与控制事件。
 
 ### 9. 浏览器 origin 与版本化 CLI 缓存
 

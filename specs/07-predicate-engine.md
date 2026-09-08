@@ -1,107 +1,59 @@
-# 07 · 底层判定引擎规格（谓词系统 + 实体模型）
+# 07 · 保护判定与执行资格
 
-> 净室规格：还原 CleanMyMac 的**底层判定引擎**（扫描系统的真正底座）。
-> 来源：参考对象判定层的类型与行为事实。只描述行为契约。
-> 这是"判定一项该不该清"的统一抽象，所有扫描域都构建于其上。
+> 文档 ID：OC-07 · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 来源：SRC-CODE、SRC-CONTRACT；补充 [02](02-scan-points.md)、[05](05-algorithms.md)、[06](06-system-flow.md)。
 
----
+## 1. 判定不是只看目录名
 
-## 1. 核心抽象：谓词（Predicate）
+匹配 locator/文件名只表示值得检查。是否展示、默认选中、当前可执行和用户授权是不同结论。
+“不显示某个保护路径”和“显示一个被运行状态阻断的候选”也不是同一行为；
+不得为了让报告好看而隐藏有用的阻断证据。
 
-**一切"是否忽略"的判定都被抽象为谓词对象**，协议方法：
+已有 Predicate/AllPredicate/AnyPredicate/ProtectionGate 继续复用，
+不要求复制参考软件类层次、URL 对象图或引入新谓词 DSL。
 
-```
-shouldIgnoreObject(obj) -> Bool     // obj 多态: NSString路径 | NSURL | 文件树节点
-```
+## 2. 判定要求
 
-谓词**正交、可组合**——每种判定职责一个谓词类，用组合谓词把它们并联/串联：
-
-| 谓词 | 构造 | 语义（何时判"忽略"） |
+| 需求 | 触发与行为 | 验收 |
 |---|---|---|
-| **组合谓词** | `init(type, subpredicates)` | type=AND：所有子谓词都忽略才忽略；type=OR：任一忽略即忽略。短路求值。 |
-| **KB 忽略谓词** | `init(knowledgeBase)` | 命中知识库忽略/保护规则 → 忽略（核心安全闸） |
-| **文件名谓词** | `init(fileNamePattern)` | 文件名匹配模式(glob/正则) → 忽略 |
-| **大小谓词** | `init(fileSizeLimit)` | 文件大小低于/超过阈值 → 忽略 |
-| **存在谓词** | `init(fileManager)` | 目标文件不存在 → 忽略（判"失效启动项/偏好"用） |
-| **可达谓词** | — | 资源/网络可达性 |
-| **访问谓词** | `init(fileManager)` | 文件是否"可被处理"（基类桩 `_isFileCanBeHandled` 恒真，子类按 supportedTypes 覆写） |
+| REQ-GUARD-001 KB 优先 | protect/ignore 先于普通谓词；命中则短路，不继续读取受保护细节 | VAL-GUARD-001：组合谓词不能重新允许被 KB 拒绝的对象 |
+| REQ-GUARD-002 应用状态 | 已知归属同时覆盖专用扫描点和通用缓存根；运行中/需要但未知的进程或句柄状态阻断动作 | VAL-GUARD-002：候选可见但不可执行，相似 sibling 不误归属 |
+| REQ-GUARD-003 文件身份 | 词法规范化、祖先 no-follow 和 device/inode/owner 等身份复核 | VAL-GUARD-003：扫描后替换路径、symlink、owner/device 变化不能沿用旧目标 |
+| REQ-GUARD-004 云与跨界 | dataless/疑似占位在枚举和最终动作前检查；跨文件系统跳过不授权删除父项 | VAL-GUARD-004：不触发占位枚举，不处理跨界目标 |
+| REQ-GUARD-005 领域重判 | updater、启动项、Darwin 根、Docker binding 在执行前复核各自业务条件 | VAL-GUARD-005：应用/版本/可执行文件/daemon 变化后拒绝旧结论 |
+| REQ-GUARD-006 只读和特权 | diagnostic_kind、filesystem_subset、语言资源、特权项与不支持资源保留模型/执行器限制 | VAL-GUARD-006：`--yes`、tier、Strategy 声明均不能强制解锁 |
 
-### KB 忽略谓词的精确匹配算法（核心安全闸）
+规则的含义是约束结果，不承诺每个 scanner 在同一行代码以相同顺序调用全部 probes。
+先排除不能访问的路径，再做适用的结构、计量、状态判断；执行时复核必要条件。
 
-```
-func shouldIgnoreObject(obj) -> Bool:
-    if obj 是 NSString路径:  url = fileURL(path);  path = obj
-    if obj 是 NSURL:         url = obj;            path = url.path
-    if obj 是 文件树节点:     url = node.url;       path = node.path
-    # 双查：URL 与 path 各查一次知识库
-    if knowledgeBase.shouldIgnoreURL(url):   return true   # URL 命中 → 忽略
-    if knowledgeBase.shouldIgnorePath(path): return true   # path 命中 → 忽略
-    return false
-```
-**契约：任何项先过此谓词；URL ∪ path 任一命中知识库即判忽略（不可清）。**
+## 3. 模型与投影不能丢失保护信息
 
----
+Item 携带 identity、safety、actionable、requires_privilege、is_cloud_file、
+requires_explicit_selection、excluded_paths、cross_device_paths 与诊断字段。
+Finding 投影必须保留这些判定所需证据；不能因字段放到 evidence.payload 就降低含义。
 
-## 2. 实体 / 结果模型（可序列化）
+只读诊断不可 actionable，filesystem_subset 仅是受支持的子集诊断表示。
+具体诊断枚举以 [models.py](../implementation/openclean/models.py) 为准；
+Agent 映射见 [AR-01](agent-runtime/ar-01-object-model.md)。
 
-判定产出的"项"用统一实体模型承载，且**支持 NSSecureCoding 序列化**
-（这正是知识库 `.cmmkb` 的落盘格式 = NSKeyedArchiver 对象图 + 压缩 + 外层编码）：
+## 4. 安全范围与残余风险
 
-```
-Entity { value(标题), size, autoselected }
-├─ FileModel       + isCloudFile(iCloud 占位文件) [, creationDate]
-├─ FileSystemEntity
-├─ FileInfo        { path, size, isDirectory }
-├─ TreeEntity      (树形, 空间透镜用)
-└─ PurgeableSpaceEntity  (可 purge 空间)
+同卷 Trash 用现有目录 fd 与 Darwin no-follow/exclusive rename；
+清空 Trash 保留根，仅处理最后审计快照。
+这些机制降低路径竞态风险，不提供对同 UID 恶意进程的绝对隔离。
 
-ScanResult / CompoundScanResult / MutableScanResult
-CompoundScanTask  { identifier, tasks[] }   // 任务组合,递归执行
-```
+Docker 的 CLI realpath/context/host/endpoint/Engine ID 绑定不等于同一连接上的原子事务，
+也不钉住同路径二进制内容。限制和真实环境验证在 TODO/SECURITY 中维护。
+进程/文件状态可能在测量后变化，因此 preview/can_execute 不是延时有效授权。
 
-**云文件维度**：`isCloudFile` 标记 iCloud 等"占位/数据less"文件——判定大小时不能
-把未下载的云占位当作可释放（删了也不释放本地空间）。**这是独立实现必须对齐的细节。**
+Reachability/FileAccess 等曾出现的内部名称不产生新需求；有具体误判案例时再决定是否新增判定。
 
----
+## 5. 实现与验收锚点
 
-## 3. URL 序列遍历
+- [predicates.py](../implementation/openclean/predicates.py)、[test_predicates.py](../implementation/tests/test_predicates.py)、[test_scan_rules_integration.py](../implementation/tests/test_scan_rules_integration.py)：VAL-GUARD-001。
+- [test_process_protection.py](../implementation/tests/test_process_protection.py)：VAL-GUARD-002。
+- [test_cleanup.py](../implementation/tests/test_cleanup.py)、[test_macos_trash.py](../implementation/tests/test_macos_trash.py)、[test_analyze_cleanup.py](../implementation/tests/test_analyze_cleanup.py)：VAL-GUARD-003/004。
+- [test_startup_items.py](../implementation/tests/test_startup_items.py)、[test_updater.py](../implementation/tests/test_updater.py)、[test_docker.py](../implementation/tests/test_docker.py)：VAL-GUARD-005。
+- [test_agent_projection.py](../implementation/tests/test_agent_projection.py)、[test_agent_review_execution.py](../implementation/tests/test_agent_review_execution.py)：投影及 VAL-GUARD-006。
 
-```
-URLIterator / FileURLSequenceModel / GroupedSequenceModel
-```
-→ 把"待扫路径集合"抽象为可迭代序列，供统一遍历；Grouped 支持按组分桶
-（如按应用分组缓存项）。
-
----
-
-## 4. 一次判定的完整组装（缓存为例）
-
-```
-pathsProvider 产出候选 URL 序列
-   │
-   ▼
-CompoundPredicate(AND)[
-    FileNamePredicate(pattern),        # 类别形态过滤
-    FileIgnorePredicate(knowledgeBase) # KB 安全闸
-]
-   │ 逐项求值(先 FileIgnore 安全闸, 再形态)
-   ▼
-存活项 → FileSizing 计物理大小 → 包装为 FileModel(含 isCloudFile)
-   │
-   ▼
-入 ScanResult, 标安全级
-```
-
----
-
-## 5. 对独立实现的指导
-
-1. **谓词协议**：`should_ignore(item) -> bool`，item 带 path 与 URL。
-2. **组合谓词**：AND / OR，支持短路。
-3. **KB 忽略谓词**：查自建规则；路径规则在最外层优先短路。
-4. **文件名/大小/存在谓词**：用于失效项、按类型过滤、按大小过滤。
-5. **云文件**：实体需能标记占位/dataless，避免把未下载对象计入可释放空间。
-6. **安全闸顺序**：KB 忽略谓词永远最先求值。
-
-Reachability 与 FileAccess 的专项语义、以及本项目实际采用的 Darwin `SF_DATALESS`
-启发式，见 [_index.md](_index.md) 与 [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)。
+验收应覆盖允许和拒绝两侧，不通过扩大禁区、取消可用经典功能来代替正确判定。

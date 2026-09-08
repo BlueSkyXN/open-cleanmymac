@@ -1,110 +1,72 @@
-# 05 · 核心算法规格（算法级还原）
+# 05 · 容量计量与诊断解释
 
-> 净室规格：本文把参考对象的算法事实提炼为行为契约，供独立实现参考。
-> 只描述做什么/怎么算，不复制参考软件的代码表达。
-> 本项目实际算法边界见 [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) 与 [_index.md](_index.md)。
+> 文档 ID：OC-05 · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 来源：SRC-CODE、SRC-CONTRACT、SRC-EXPERIENCE；不规定参考软件的内部算法或私有格式。
 
----
+## 1. 指标定义
 
-## 1. 扫描引擎算法（ScanningCore）
+| 指标 | 含义 | 不表示 |
+|---|---|---|
+| logical bytes | 文件表观长度 | 该文件独占物理空间或删除收益 |
+| allocated bytes | 以 `st_blocks * 512` 为基础的已分配块计量 | APFS 克隆/快照共享块的独占量 |
+| potential bytes | 按具体结果口径发现的占用 | 全部可删或已释放 |
+| reclaimable bytes | 清理域中当前 actionable 候选计量；Analyze/只读诊断为 0 | 保证执行成功后的精确磁盘增量 |
+| requires_privilege / unsupported bytes | 当前不能由支持动作处理的占用分类 | 已完成特权执行 |
+| moved_to_trash bytes | 已移入同卷 Trash 的操作回执 | 已释放磁盘空间 |
+| permanently_deleted bytes | 永久删除动作回执中的计量 | APFS/快照/打开句柄下的实时可用空间净增量 |
 
-### 1.1 进度聚合 = 加权平均
-- 每个子任务是一个 **WeightedProgressable**（携带权重）。
-- 引擎维护每项的实时进度 `Double(0..1)`。
-- **整体进度 = Σ(子进度 × 权重) / Σ权重**；权重通常取该任务的预计项数（`itemsCount`）。
-- 任意时刻可读取不可变**快照**（`CompoundProgressSnapshot`），供 UI 渲染。
+若用户要求实际释放量，应另读取动作前后卷容量并说明并发写入、快照、句柄等干扰，
+不能用 moved/potential 代替。没有做前后测量就明确未测。
 
-### 1.2 依赖解析 = 责任链 + 惰性缓存
-- 多个 `DependenciesResolverType` 组成**责任链**，依次为任务求依赖。
-- 依赖结果存入惰性缓存（首次访问时求值并记忆），避免重复解析。
-- 依赖未满足 → 任务不进入就绪，报"应用依赖未满足"。
+## 2. 计量需求
 
-### 1.3 控制 = 响应式三态流
-- 每个运行任务暴露一个控制通道（异步事件流）。
-- 控制动作枚举：**pause / resume / cancel**。
-- 任务在异步执行中**消费控制事件**：pause→挂起等待，resume→继续，cancel→在安全点退出。
-- 取消是**协作式**：任务自检取消标志，而非强杀。
+| 需求 | 契约 | 验收 |
+|---|---|---|
+| REQ-SIZE-001 文件遍历 | 复用 lstat/scandir 的无跟随读取与 EINTR 处理；先检查保护/云占位 | VAL-SIZE-001：symlink 不走到外部，dataless 目录不枚举，异常形成 issue |
+| REQ-SIZE-002 重复计量 | 硬链接按 device/inode 去重；跨任务和父子重叠按现有归属合并 | VAL-SIZE-002：同文件不重复累加；filesystem_subset 锚点不能吞掉父目录其它内容 |
+| REQ-SIZE-003 文件系统 | Analyze 每个一级候选固定设备与文件系统边界；跨界内容跳过并标记 | VAL-SIZE-003：st_dev 或 f_fsid 变化都不跨入计量/执行 |
+| REQ-SIZE-004 未知状态 | stat/权限/预算失败不当成完整零字节；已测部分可显示但声明不完整 | VAL-SIZE-004：部分计量与 total/measured/complete 一致 |
+| REQ-SIZE-005 报告一致 | JSON、文本、详情读取同次证据；单位格式化不改变原始字节；不重复累计诊断桶 | VAL-SIZE-005：诊断不可回收、Analyze 为 0、Trash 移动不称已释放 |
 
-### 1.4 编排流水线
-- 一次扫描 = 构建扫描器 → 任务入队 → 依赖排序 → 并发执行。
-- 监控器（watcher）+ 日志器（logger）旁路观察；失败任务收集到 `problematicTasks`，**单任务失败不中断整体**。
+云保护采用当前 Darwin `SF_DATALESS` 与 zero-block 启发式。
+这不保证识别所有已下载的同步文件，不能声称已完成所有 File Provider 的真实兼容验收。
 
----
+## 3. 专项数值解释
 
-## 2. 扫描任务构建算法（SystemJunk，统一模式）
+### retention
 
-**所有扫描任务遵循同一构建范式**（自 927 个已还原方法归纳）：
+7/14/30 天值是达到对应年龄的累计桶，可互相包含，不能相加。
+单文件年龄与 Worker 整组最新 mtime 不同；整组计量有跳过/错误时年龄未知。
+容量大、年龄老或名称包含 log/runtime 都不能单独决定删除。
 
-```
-ScanTask =
-  ① identifier（类别标识，如 "UserCaches"）
-+ ② knowledgeBase（忽略/保护规则来源）
-+ ③ scanningPathsProvider（产出待扫路径集合）
-+ ④ predicate = CompoundPredicate([
-                  FileIgnorePredicate(knowledgeBase),   // KB 忽略过滤
-                  <类别专属谓词>                          // 如时效/类型过滤
-                ])
-+ ⑤ FileManagerProvider（遍历）+ FileSizingService（统计大小）
-+ ⑥ [可选] PrivilegedOperationsPerformer（需提权时）
-```
+### SQLite
 
-**判定一项是否可清的通用流程**：
-1. PathsProvider 产出候选路径。
-2. `CompoundPredicate` 逐个过滤：先过 KB 忽略（`isPathIgnored`/`shouldIgnoreURL`），
-   再过类别规则（如诊断报告按扩展名 `.ips/.crash`，缓存按"应用未在运行"）。
-3. 幸存者经 FileSizing 计物理大小，标记安全等级后入结果。
+内部空闲量基于 page_size × freelist_count；它是数据库内部空间，不是磁盘空闲。
+只读 immutable 探测不写 DB 或 sidecar，不读取业务行。WAL 单独报告；
+immutable 视图不是活跃 WAL 数据库的最新事务一致快照，不能据此在线压缩或删 sidecar。
 
----
+### Codex / Crashpad
 
-## 3. 文件大小统计算法（FileManagerService）
+staging 的 measured_count/measurement_complete 必须与有界发现相符。
+Crashpad 的配对数与近期项是排除证据，不把所有 sidecar 或父目录统一当垃圾。
+`filesystem_subset` 的路径只是锚点；计量覆盖匹配子集，不是父目录总量。
 
-### 3.1 遍历 = BSD fts(3)
-- 用 `fts_open/fts_read` 遍历（高效、低内存）。
-- 配置项：**跳过符号链接**（防外链重复计数）、递归、是否含根目录、是否后序回调。
-- 每个节点包装为 `{isDirectory, isHidden, isSymLink, name, path, size}`。
+### deleted-open
 
-### 3.2 大小 = 物理 + 逻辑
-- **物理大小**：APFS 实际占用块（克隆/稀疏文件的真实磁盘量）。
-- **逻辑大小**：文件表观长度。
-- 统计全程支持**取消标志**（与引擎三态对接）。
-- 快照/备份卷大小单独缓存并记录**测量时间**（时效失效重测）。
+同一 device/inode 多个 FD/进程仅计一次。逻辑上限不保证当前真实物理占用或可回收量；
+该诊断的 potential/reclaimable 为 0。路径只作内部保护过滤，输出不公开已删除文件路径，
+不通过删目录、杀进程或重启应用冒充 cleanup。
 
-### 3.3 显示格式化
-- 支持 **base2（1024）/ base10（1000）** 与本地化单位。
+### updater 与签名资源
 
----
+installed/staged 版本状态决定说明与保护；未知、待升级或缺失安装不能当旧缓存。
+语言包审计不授权改签名应用。universal binary thinning 未实现，本篇不保留可照抄的写入步骤。
 
-## 4. universal 二进制瘦身算法（CMLipo）
+## 4. 实现与验收锚点
 
-1. **探测兼容架构**：读 fat 二进制各切片的 `cputype/cpusubtype`，映射为架构枚举，
-   选出"与本机兼容"的目标切片。
-2. **找冗余切片**：遍历 fat 所有切片，**保留兼容切片，其余标记为 unnecessary**。
-3. **剔除**：对标记切片执行 lipo 瘦身，回收空间。
-4. 任一步失败 → 构造错误（如"无兼容架构"），不破坏原文件。
+- 基础：[filesystem.py](../implementation/openclean/filesystem.py)、[models.py](../implementation/openclean/models.py)、[test_file_sizing.py](../implementation/tests/test_file_sizing.py)。
+- 重叠/分析：[engine.py](../implementation/openclean/engine.py)、[test_analyzer.py](../implementation/tests/test_analyzer.py)、[test_slim_regressions.py](../implementation/tests/test_slim_regressions.py)。
+- 专项：[test_storage_diagnostics.py](../implementation/tests/test_storage_diagnostics.py)、[test_workbuddy.py](../implementation/tests/test_workbuddy.py)、[test_updater.py](../implementation/tests/test_updater.py)。
+- 呈现：[test_tui.py](../implementation/tests/test_tui.py)、[test_cleanup_cli.py](../implementation/tests/test_cleanup_cli.py)。
 
----
-
-## 5. 专项判定算法要点
-
-| 域 | 判定逻辑（行为契约） |
-|---|---|
-| **应用语言包** | 枚举应用 `.lproj`；按用户语言白名单保留；`hasNonStringsFilesAt` 排除含非 strings 资源的语言包。 |
-| **诊断日志** | 收集 `DiagnosticReports` 下 `.ips/.crash/.panic/.diag/.hang`，过 KB 忽略后判可删。 |
-| **缓存** | 缓存目录归属某应用时，应用正在运行则跳过或不可执行。 |
-| **失效启动项** | LaunchAgents/Daemons plist 指向的可执行路径**不存在** → 判为 broken。 |
-| **失效偏好** | plist 对应应用已不存在 → 判为残留偏好。 |
-| **Xcode** | DerivedData/DeviceSupport/Archives/ModuleCaches/Simulator runtimes 等，按 KB 忽略 + 是否当前用 SDK 判定。 |
-| **AI 工具** | 按工具固定相对路径（cache/debug/telemetry/tmp）定位，过 AIJunkIgnoreRules 判可删。 |
-
----
-
-## 6. 知识库加载算法（格式思想层）
-
-- 持久化为自定义二进制容器（`.cmmkb`）。
-- 结构 ≈ **序列化对象图（NSKeyedArchiver/PropertyList）+ deflate 压缩 + 外层编码**。
-- 运行时解码→反序列化为内存对象图，供 `readScanners`/`isPathIgnored` 等查询。
-- 用户自定义忽略项单独存放（`userInfo.cmmkb`），支持增删与快照。
-- **净室红线**：具体规则数据不属于本规格；独立实现必须自行建立规则来源和存储格式。
-
-> universal binary/lipo 的步骤是参考算法事实，不代表当前写入需求。独立实现在缺少签名、
-> 原子替换、恢复和兼容性验收前，不应修改应用二进制。
+不为此次文档整理新增计量算法。对“物理收益”等更强承诺，必须有相应实验而不是措辞升级。

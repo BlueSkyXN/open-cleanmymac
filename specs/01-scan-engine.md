@@ -1,63 +1,43 @@
-# 01 · 扫描引擎规格
+# 01 · 扫描、完整性与进度
 
-> 来源：参考对象扫描引擎的类型与行为事实。描述引擎"做什么"，不含代码。
+> 文档 ID：OC-01 · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 来源：SRC-CODE、SRC-CONTRACT；产品入口见 [00](00-architecture.md)。
 
-## 1. 核心抽象
+## 1. 输入与输出
 
-引擎把"一次清理"建模为**任务（Task）组成的有向图**，并为每个任务暴露进度与控制。
+一次扫描按调用方选择的域、项目根、规则和现有预算装配任务。
+`scan` 默认五域；`clean` 默认系统/开发/AI/Trash，项目发现走 `purge` 或 project 域。
+Agent `inspect all` 仅是已加载 pack 的集合，不能替代五域扫描。
 
-### 任务（Task）
-- 一个任务是扫描/清理的原子单元（例如"扫描用户缓存"）。
-- 任务可声明**依赖**（DependentTask）：某任务须在其他任务完成后运行。
-- 引擎负责**依赖解析**（拓扑排序）与**并发调度**（无依赖的任务并行）。
+扫描输出是 Item/ScanIssue/ScanResult 或其 Finding 投影，不是“全部可删清单”。
+权限拒绝、跨界跳过、运行状态未知与预算截断必须有对应证据；不得只留下成功项后声称完整。
 
-### 进度（Progress）
-- 每个任务暴露**进度对象**；存在两种进度：
-  - **可数进度（Countable）**：已知总量，报告 完成数/总数。
-  - **百分比进度（Percentages）**：报告 0–1 的浮点。
-- 引擎把多个任务的进度**聚合（CompoundProgress）**为整体进度，供 UI 渲染。
-- 进度支持**快照（Snapshot）**：可随时读取当前状态的不可变副本。
+## 2. 行为需求
 
-### 控制（Control / Controllable）
-- 每个运行中的任务暴露**控制对象**，支持三种动作：
-  - `pause()` 暂停
-  - `resume()` 恢复
-  - `cancel()` 取消
-- 引擎层把多个任务的控制**聚合**，使"暂停整个扫描"等价于"暂停所有在跑任务"。
-- 控制对象可被**观察（Observer）**：状态变化时通知订阅者（用于 UI 刷新）。
+| 需求 | 契约 | 验收 |
+|---|---|---|
+| REQ-SCAN-001 范围 | 不因菜单或 Agent 调用改变默认域；应用任务按现有静态/动态 scanner 装配 | VAL-SCAN-001：显式域和默认域与 CLI 契约一致，结果不串域 |
+| REQ-SCAN-002 调度 | DAG 拒绝重复 ID、未知依赖、自依赖和环；依赖失败阻断下游而非伪造成功 | VAL-SCAN-002：非法图失败，独立任务仍能完成，输出按既有顺序汇总 |
+| REQ-SCAN-003 遍历 | 保护闸先于细节读取；不跟随候选/祖先 symlink；云占位和文件系统边界按 05/07 处理 | VAL-SCAN-003：保护对象不被递归测量；跳过和错误不转成可执行结果 |
+| REQ-SCAN-004 完整性 | 取消或 blocking issue 导致不完整；保留可解释的部分结果和 issues | VAL-SCAN-004：部分发现不被写成完整空扫描，CLI 返回对应非零状态 |
+| REQ-SCAN-005 进度 | 固定权重百分比与不可变快照保持单调；成功、失败、取消终态分开 | VAL-SCAN-005：失败/取消不显示为成功完成，不将 entry 启发值包装成精确总量 |
+| REQ-SCAN-006 控制 | 使用现有共享 pause/resume/cancel 协作控制，在检查点响应，不强杀文件操作 | VAL-SCAN-006：暂停不继续推进，恢复可继续，取消可收尾且不触发清理 |
 
-## 2. 扫描器协议（Scanner Protocol）
+## 3. 当前进度模型与未批准增强
 
-每个域扫描器实现统一协议，使引擎能同构地驱动它们：
+`task_graph.py` 和 `progress.py` 是现有内部执行器，不是用户必须理解的产品概念。
+`processed_items` 是进度输入，不是所有 scanner 已知总量的证明。
+Countable total、每任务控制聚合、observer 等不因为参考对象曾有同名概念就成为强制缺口。
 
-```
-输入：扫描配置（生效的任务配置 EffectiveTaskConfiguration，
-      含目标根路径、忽略规则、知识库引用、并发/深度限制）
-输出：
-  - 可清理项流（逐项：路径、大小、类别、是否受保护、是否可安全删除）
-  - 进度（Progress）
-  - 控制（Controllable）
-生命周期：
-  build（由 Builder/Type 构造）→ scan/collect → 产出结果 → finalize
-```
+只有具体 UI/自动化任务需要更精确反馈时，才提出：
+哪些任务有可信 total、未知总量如何表示、取消如何传播、性能收益和兼容性如何验证。
+本篇不要求新增进度 API、并发框架或 detector/entry 重构。
 
-## 3. 引擎执行流程（行为契约）
+## 4. 验证与实现锚点
 
-1. **装配**：按命令行选择启用哪些域/任务，构造任务集合。
-2. **依赖解析**：解析任务间依赖，得到可执行的拓扑序。
-3. **执行**：并发运行就绪任务；每任务实时上报进度与控制句柄。
-4. **聚合**：把各任务进度聚合为总进度，向 UI 推送快照。
-5. **收尾（FinalizeDependencies）**：依赖全部满足后运行收尾任务（汇总、去重、写结果）。
-6. **结果**：产出结构化的"可清理项清单 + 分类汇总 + 总可释放空间"。
+- [engine.py](../implementation/openclean/engine.py)、[task_graph.py](../implementation/openclean/task_graph.py)、[progress.py](../implementation/openclean/progress.py)。
+- VAL-SCAN-001/003/004：[test_cli_contract.py](../implementation/tests/test_cli_contract.py)、[test_scan_rules_integration.py](../implementation/tests/test_scan_rules_integration.py)、[test_system_junk_discovery.py](../implementation/tests/test_system_junk_discovery.py)。
+- VAL-SCAN-002：[test_task_graph.py](../implementation/tests/test_task_graph.py)。
+- VAL-SCAN-005/006：[test_progress.py](../implementation/tests/test_progress.py)、[test_task_graph.py](../implementation/tests/test_task_graph.py)。
 
-## 4. 错误与取消语义
-
-- 单任务失败不必然中止整体：引擎记录该任务错误并继续（除非配置为 fail-fast）。
-- `cancel` 应尽快传播到每个在跑任务；任务在下一个安全点停止并标记为已取消。
-- 取消/失败的任务不产出部分结果到最终清单（或明确标注为不完整）。
-
-## 5. 独立实现提示
-
-- 并发模型可用 `async`/`await` + 任务组（task group）或等价的协程/线程池。
-- 进度聚合注意**避免重复计数**（同一文件被多任务覆盖时按路径去重）。
-- 控制用协作式取消（任务内周期性检查取消标志），而非强杀。
+这些是验收入口，不是已通过声明。只修改本文时检查文档即可；引擎改动才运行相应测试。

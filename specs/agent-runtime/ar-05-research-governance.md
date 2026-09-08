@@ -1,121 +1,81 @@
-# AR-05 · 研究治理
+# AR-05 · 参考经验、个人经验与验证
 
-> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
-> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
-> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+> 文档 ID：AR-05 · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 来源：SRC-GOAL、SRC-EXPERIENCE、SRC-CONTRACT；适用于经典 scanner 与 Agent pack，不仅是 Agent 子系统。
 
+## 1. 经验沉淀的产物
 
-[契约索引](_index.md) · [AR-02 策略与生命周期](ar-02-strategy-and-lifecycle.md) ·
-[贡献指南](../../CONTRIBUTING.md) · [知识库规格](../03-knowledge-base.md)
+目标是让 OpenClean 识别得更准确、解释更具体、处理更可靠，而不是要求搭建研究平台。
+已有经验放在 [EXPERIENCE](../../docs/EXPERIENCE.md)，已执行逻辑放在 scanner/pack，
+对应行为由 tests 验证。没有 Observation JSON 文件不等于已有功能不存在。
 
-> OpenClean 自有前瞻契约，非 CleanMyMac 参考事实。状态：📐 契约已定，未实现。
-> 本文件定义 Observation 的公开提交边界（决策 6）、`research/` 目录治理，以及研究流程如何
-> 与 [CONTRIBUTING.md](../../CONTRIBUTING.md) 的净室红线保持一致。
+观察记录回答“看到了什么”，规则回答“在什么条件下怎么判断”，
+Finding/Item 回答“这次机器上发现了什么”，执行回执回答“实际做了什么”。
+四者不能互相替代。
 
-## 1. 为什么需要研究治理
+## 2. 来源可信度与记录要求
 
-目标方案在现有净室边界之外新增了三种经验来源：
+| 来源 | 最少应保存的依据 | 不能推出 |
+|---|---|---|
+| 参考 CLI 公开能力 | 可定位公开来源、参考版本、功能/参数范围 | Desktop 能力必属 CLI、命令同名就等效 |
+| 获授权独立实验 | 版本、环境标签、时间、输入状态、观察方式和限制 | 命中即垃圾、单次容量即长期收益 |
+| 个人经验 | 观察者线索、目录形态、正反情况、已确认处理方法 | 怀疑即规则、历史环境即当前事实 |
+| AI 研究 | 实际查阅来源与本地证据、推论和待验证点 | 模型文字本身构成可信证据 |
+| 历史代码/测试 | 提交或文件、行为与覆盖边界 | 最初来源已查明、当前产品等效已验证 |
 
-- 自己 Mac 上的 CleanMyMac 黑盒实验；
-- 个人经验与怀疑点；
-- AI 自主研究。
+REQ-EXP-001：不把来源未确认的历史结论包装成参考软件官方规则，
+不伪造 observation_id 的对应实验。pack 中已有来源字符串只证明声明存在。
+VAL-EXP-001：提交审阅可找到实际来源或明确“待核实”，没有虚构版本、容量或实验记录。
 
-方向与净室实现兼容，但**必须新增明确规则**，否则未来 `research/` 会与当前净室边界冲突。
-本文件把这些规则定死，作为 [AR-02](ar-02-strategy-and-lifecycle.md) 策略生产的前置约束。
+本轮不复制旧反编译表达、私有规则字典或内部符号归纳。
+不得读取 analysis/ 补证据；以公开信息和独立验证重新确认具体问题。
 
-## 2. Observation 公开提交边界（决策 6）
-
-沿用 [CONTRIBUTING.md](../../CONTRIBUTING.md)「净室边界」与
-[specs/03-knowledge-base.md](../03-knowledge-base.md) §5「净室实现边界」，并针对 Observation 明确：
-
-| 允许提交 | 禁止提交 |
-|---|---|
-| 去标识化的**行为事实**（结构形状、分类、观察方式、限制） | 真实用户路径、真实容量数字、文件内容 |
-| 通用命名依据或公开来源引用 | 机器标识、主机名、用户名、绝对真实路径 |
-| 负案例的**结构描述** | 参考软件代码、反编译表达、私有规则库、商业扫描指纹 |
-| 版本/环境标签（不含机器唯一标识） | `raw/` 原始扫描输出、截图、日志中的真实数据 |
-
-硬性规则：
-
-- **`research/raw/` 不提交**（`.gitignore` 排除），只在本机保留原始材料。
-- 提交的 Observation 只能是**去标识化行为事实**：路径用形状模板（如
-  `~/.codex/.tmp/marketplaces/.staging/marketplace-upgrade-*`）而非真实条目名；容量用
-  量级或合成值而非真实机器读数。
-- **CleanMyMac 命中不自动生成 action**：观察只提高研究价值，转化为 Strategy 后仍须独立
-  判断结构、误判条件、是否仍被使用、能否重建、只报告还是可清理、Trash 还是专用动作
-  （见 [AR-02](ar-02-strategy-and-lifecycle.md) §4.2）。
-- **禁止引入原厂私有规则**：不得把 CleanMyMac 的 `.cmmkb`、私有规则明细或商业指纹复制进
-  Observation 或 Strategy；这与 [implementation/TODO.md](../../implementation/TODO.md) 的
-  知识库发布源约束一致。
-
-## 3. 从 Observation 到 trusted 的证据要求
-
-策略晋级必须补齐证据链，`trusted` 门槛最高（与 [AR-02](ar-02-strategy-and-lifecycle.md) §3 一致）：
+## 3. 从线索到实现
 
 ```text
-Observation（去标识化事实）
-   → lab draft（AI/人提出假设，status=draft）
-   → lab validate（正例 + 负例）→ status=active
-   → 动作前后验证（before/after snapshot，可重建测试数据）→ status=trusted
+具体用户线索 / 已有功能缺口
+    → 查当前代码与经验，排除重复建设
+    → 确认目标结构、边界与运行状态
+    → 确定只读识别或经批准的动作范围
+    → 正例 / 负例 / 错误和变化场景
+    → scanner 或已有 pack 的局部修改
+    → 解释与验证记录
 ```
 
-| 晋级 | 必备证据 |
-|---|---|
-| `draft`→`active` | 至少一个正例（应命中）+ 至少一个负例（**不应**命中，如仍在使用的会话/未完成任务/当前版本） |
-| `active`→`trusted` | 正例、负例，**以及动作前后验证**：在人工构造的可重建测试数据上跑通 `move_to_trash`，记录 before/after 与回执 |
+REQ-EXP-002：识别新增至少证明应命中与不应命中；只读升级为清理另需精确对象、
+可重建性/恢复方式、执行前状态、动作前后证据和用户批准。
+VAL-EXP-002：不能只靠名字含 tmp/cache、年龄、零字节 marker、当前功能关闭或没有安装记录就删除。
 
-不变量：
+不强制通过不存在的 explore/lab/promote 命令；可使用现有 analyze、scan、inspect 和获授权的只读检查。
+不因框架形式要求重做已有 Codex、Qoder、WorkBuddy、SQLite、retention 等经验验证。
 
-- **AI draft 不能自动晋级**：`lab promote`/`demote` 是显式人工动作（见
-  [AR-03](ar-03-cli-and-io-contract.md) §6）。
-- **CleanMyMac 识别过 ≠ 可 trusted**：参考产品命中只是 `provenance` 之一，不替代动作验证。
-- 负案例设计必须覆盖：目录名含 `tmp`/`cache` 但仍在使用的结构、当前版本 runtime、
-  未完成任务/会话状态、零字节更新 marker、云占位/dataless。
+## 4. 对比实验
 
-## 4. 对比实验治理
+扫描比较应尽量保持相近状态，记录顺序/时间差和应用运行状态，
+比较发现范围、类别、计量、默认选择和排除条件。顺序扫描不是严格同时快照。
+独立运行参考二进制需单独授权，不因“对标”默认执行第三方代码。
 
-真实 Mac 是重要研究环境，但必须区分扫描实验与清理实验（与
-[implementation/TODO.md](../../implementation/TODO.md) 的测试约束一致）：
+清理实验不能先让一个工具清理，再以改变后的环境评价另一个工具。
+用可重建状态分别取得 before/after，记录重建方法和不能消除的差异。
+代码写入测试使用 TemporaryDirectory；真实 HOME、Docker prune 或特权实验另有环境与逐项授权。
 
-- **扫描实验**：同一时点依次运行参考产品只读扫描与 `openclean inspect`（只读），记录
-  是否发现、分类、报告容量、默认选择、运行时变化、遗漏或扩大范围。只读，不改环境。
-- **清理实验**：**不能**「参考产品先清理，OpenClean 再清理」——第一步已改变环境。应在
-  **可重建实验目录或测试账号**上：before snapshot → 运行一个工具 → after snapshot →
-  恢复 → 运行另一个工具 → 比较。
-- 真实用户目录适合**发现线索**；动作行为尽量用**人工构造的测试数据**验证。
-- 测试写操作只能使用 `TemporaryDirectory`；不得在真实 `HOME` 或真实 Docker daemon 上跑
-  `--yes`（沿用 [CONTRIBUTING.md](../../CONTRIBUTING.md)「变更原则」第 6 条）。
+REQ-EXP-003：比较结论区分来源观察、OpenClean 判断、实际动作与净磁盘变化。
+VAL-EXP-003：每个等效/收益结论有对应输入状态和测量限制，不能从菜单或输出分类推出效果一致。
 
-## 5. `research/` 目录治理
+## 5. 公开材料与存储
 
-目标结构（P0 只要求 Codex 相关的最小子集，其余留待 P1+）：
+REQ-EXP-004：公开只放去标识化结构、通用路径模板、版本标签、合成数据和测试；
+不提交真实用户路径、容量、文件正文、机器标识、日志、凭据或参考产品私有数据。
+VAL-EXP-004：提交前检查新增文本和夹具，原始记录不进入 Git/wheel/sdist。
 
-```text
-research/
-├── README.md                 # 治理规则与去标识化清单
-├── scenarios/                # 可重建实验场景定义（合成数据）
-├── observations/
-│   ├── cleanmymac/           # 去标识化参考产品观察
-│   └── personal/             # 去标识化个人经验线索
-└── raw/                      # 原始材料，.gitignore 排除，不提交
-```
+不新建强制 research/ 目录或 Observation schema。必要的私人材料按现有 local/ 约定保存，
+先确认忽略状态；公开只提炼有依据摘要，不直接带入原始交接包。
+现有 JSON 脱敏不清除本机 Store，也不能代替全部隐私审阅，版本限制见 CHANGELOG。
 
-治理规则：
+## 6. 验证入口与下一步
 
-- `research/raw/` 必须被 `.gitignore` 排除；提交前用 `git diff --check` 与人工审阅确认无真实
-  路径/容量/内容/机器标识泄漏。
-- `observations/` 下的每个文件对应一个 `observation_id`，符合
-  [AR-01](ar-01-object-model.md) §2 的 Observation 结构与本文件 §2 的去标识化要求。
-- `scenarios/` 只放合成夹具定义；真实机器扫描结果不入仓库。
-- 研究材料**不进入** wheel/sdist 运行时包；是否随 sdist 分发由发行审阅单独决定，且不得包含
-  `raw/`（与 [CONTRIBUTING.md](../../CONTRIBUTING.md)「检查门」的归档约束一致）。
-
-## 6. 与净室边界的一致性声明
-
-本治理不放宽任何现有红线：
-
-- 仍只依据 `specs/`、公开文档和可独立验证的通用 macOS 行为实现；个人经验与 AI 研究作为
-  **研究线索**进入 Observation，最终仍须落回可独立验证的通用行为与保守安全级。
-- 不读取、提交、引用或复制 `analysis/`；不把 `local/` 过程材料带入代码或文档。
-- 新扫描点/新 Strategy 必须说明公开来源或通用命名依据，并采用保守安全级。
-- Observation 与 Strategy 的公开提交内容接受与代码同等的净室审阅。
+[EXPERIENCE](../../docs/EXPERIENCE.md)、[CONTRIBUTING](../../CONTRIBUTING.md)、
+[02 识别范围](../02-scan-points.md)、[test_workbuddy.py](../../implementation/tests/test_workbuddy.py)、
+[test_storage_diagnostics.py](../../implementation/tests/test_storage_diagnostics.py)。
+来源审阅需要人判断，测试只能验证编码后的行为。
+未来动作审批还需 [AR-02](ar-02-strategy-and-lifecycle.md) 的 hash/版本和执行条件。

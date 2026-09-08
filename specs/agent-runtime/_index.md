@@ -1,96 +1,50 @@
-# Agent Runtime v1 · 契约索引
+# Agent 附加接口规格索引
 
-[规格索引](../_index.md) · [仓库 README](../../README.md) ·
-[架构](../../docs/ARCHITECTURE.md) · [AI 只读调用](../../docs/AI_USAGE.md) ·
-[贡献指南](../../CONTRIBUTING.md) · [实现说明](../../implementation/README.md)
+> 文档 ID：AR-SPEC · 修订：2 · 更新：2026-09-08 · 状态：baseline（提案另标）
+> 来源与效力继承 [OpenClean 规格索引](../_index.md)，产品目标以 [00](../00-architecture.md) 为准。
 
-> **这是 OpenClean 自有的前瞻架构契约，不是 CleanMyMac 参考事实。**
-> `specs/00-07` 描述参考对象（CleanMyMac 5 CLI）的净室功能事实；本目录描述
-> OpenClean 下一代「面向 AI Agent 的 macOS 存储策略运行时」的 v1 契约。
->
-> 当前：P0a 只读与计划预览已落地，P0b 生产策略未启用。经典命令与 TUI 保留。
-> CLI envelope schema v2，持久化 Run bundle schema v2（两个独立版本）。
-> 当前行为见 [AR-09 实现补充](ar-09-current-implementation.md)，其余章节保留长期设计。
+## 1. 本目录只负责接口扩展
 
-## 1. 目标与范围
+Agent Runtime 是现有代码中的子系统名称，不是 OpenClean 的产品定义。
+它增加跨命令 Run/Finding 证据引用、策略查询与清理计划，复用经典探测/执行内核。
+人、脚本、Agent 均可调用经典命令；不将五域功能收窄为 AI 软件，不要求先完成 P0b 才能迭代产品。
 
-当前仓库已经是实现成熟度较高、默认保守的通用 macOS 清理 CLI，附带 AI 只读调用指南和
-若干针对 AI 工具的专项诊断。P0 的目标不是重写扫描器，而是把这些成熟内核**重组为一条
-可追踪的策略生产与 Agent 调用闭环**：
+用户指挥、Agent 实际使用的流程见 [AI_USAGE](../../docs/AI_USAGE.md)。
+生产 pack 的写动作关闭，不代表所有经典清理动作关闭；支持的经典动作可在明确授权内执行。
 
-```text
-Observation → 版本化 Strategy → Builtin Detector → Run + Finding
-           → show / explain → 基于 Finding ID 的 CleanupPlan → cleanup 执行
-```
+## 2. 阅读导航
 
-本目录定义**完整目标架构契约**（对象模型、命令与 I/O、Run Store、执行不变量、策略包全景、
-研究治理、实施路线图），而不只是 P0。**Codex 是第一个纵向实现切片**，其余 pack 与阶段按
-[AR-07](ar-07-implementation-roadmap.md) 路线图、[AR-08](ar-08-strategy-pack-catalog.md) 全景展开。
-
-Agent 命令面是经典能力的附加入口，不通过删除旧命令替代迁移。
-仍**有意排除**：远程策略发布服务的具体实现、`implementation/`→`src/` 搬迁（纯 churn、无功能收益）。
-
-## 2. 阅读顺序
-
-| # | 契约 | 内容 |
+| 文档 | 内容 | 效力 |
 |---|---|---|
-| AR-00 | [架构与边界](ar-00-architecture.md) | 定位、三平面、AI 角色边界、命令面设计、目标逻辑结构 |
-| AR-01 | [对象模型](ar-01-object-model.md) | Observation/Strategy/Run/Finding/CleanupPlan + `Item`→`Finding` 迁移 |
-| AR-02 | [策略与生命周期](ar-02-strategy-and-lifecycle.md) | Strategy/Pack 结构、status 矩阵、版本与冲突、KB 安全闸 |
-| AR-03 | [命令与 I/O 契约](ar-03-cli-and-io-contract.md) | inspect/explore/show/clean/strategy/config/lab、JSON、退出码 |
-| AR-04 | [Run Store 与执行](ar-04-run-store-and-execution.md) | Run Store、标识稳定性、状态机、`can_execute`、live guard 复用 |
-| AR-05 | [研究治理](ar-05-research-governance.md) | Observation 公开边界、净室一致性、`research/` 治理 |
-| AR-06 | [Codex 首切片验收](ar-06-codex-p0-acceptance.md) | 必须/暂不要求清单、Agent Contract 正负测试矩阵 |
-| AR-07 | [实施路线图与代码转化](ar-07-implementation-roadmap.md) | 阶段序列、逐模块转化表、实体产物目标结构 |
-| AR-09 | [当前实现补充](ar-09-current-implementation.md) | 本候选版本的实际范围与后续工作 |
-| AR-08 | [策略包全景](ar-08-strategy-pack-catalog.md) | 全量 pack 目录、detector/action 白名单、P0-P4 展开 |
+| [AR-00](ar-00-architecture.md) | 附加层职责、经典共存、调用方边界 | baseline |
+| [AR-01](ar-01-object-model.md) | 已有对象、投影、版本和字段 | baseline |
+| [AR-02](ar-02-strategy-and-lifecycle.md) | pack 加载、状态、审批与来源声明 | baseline；启用动作需独立决定 |
+| [AR-03](ar-03-cli-and-io-contract.md) | 可用命令、JSON、错误与脱敏 | baseline |
+| [AR-04](ar-04-run-store-and-execution.md) | 本机存储、副作用、预检和实时执行 | baseline |
+| [AR-05](ar-05-research-governance.md) | 个人经验与参考经验的证据治理 | baseline；不要求新建研究平台 |
+| [AR-06](ar-06-codex-p0-acceptance.md) | 现有 Codex/WorkBuddy 接口验收 | baseline；保留旧路径便于引用 |
+| [AR-07](ar-07-implementation-roadmap.md) | 被撤销路线与后续需求进入条件 | 旧路线 superseded；候选 change-pending |
+| [AR-08](ar-08-strategy-pack-catalog.md) | 实际包/接线清单与声明边界 | baseline；不是全量迁移目录 |
+| [AR-09](ar-09-current-implementation.md) | 当前状态入口、已发布与源码区别 | 状态导航，不覆盖其它有效契约 |
 
-## 3. 状态图例
+## 3. 不再有效的旧决定
 
-- P0a：探测、Run/Finding、展示、预览与 API 执行逻辑已实现；生产包仍只读。
-- P0b：真实结构匹配、Observation、promotion、macOS 原生验证待完成。
-- P1+：其余 pack、explore、lab、MCP 仍为规划。
-- 不把全部 AR-00..AR-06 一律标为完成；详见 [AR-09](ar-09-current-implementation.md)。
+原先的“面向 Agent 的策略引擎替代产品定义”、Item 全量退役、经典命令或 TUI 退役、
+所有领域迁入 pack、无兼容负担自由重设 JSON，以及固定 Codex→其他 pack→lab→MCP 路线均已撤销。
+不是仅延期，也不是待功能等价后自动启动。历史文字可从 Git 查阅，不能作为当前任务指令。
 
-## 4. 阶段 0 八项决策
+已有安全契约、源码接口和测试保留。本次不修改包数据、审批 hash、模型、schema 或运行时逻辑。
+新增工作按用户功能需求说明收益和兼容性，不能以扩充框架模块为交付目标。
 
-契约必须先定下这些边界，实现阶段不再逐个重开讨论。
+## 4. 当前能力摘要与验证
 
-| # | 决策 | 结论 | 落点 |
-|---|---|---|---|
-| 1 | 旧命令是否兼容保留 | 经典命令与 TUI 保留；Agent 附加；当前 envelope 使用 schema v2 | [AR-00](ar-00-architecture.md) / [AR-03](ar-03-cli-and-io-contract.md) |
-| 2 | Run Store 位置/权限/TTL/容量/清理 | 本机私有状态目录，`0700`/`0600`，默认 TTL 24h，容量上限 + 原子写 + 过期拒绝 | [AR-04](ar-04-run-store-and-execution.md) |
-| 3 | `run_id`/`finding_id` 稳定性、是否编码路径 | 稳定、跨命令可读、**不编码路径** | [AR-01](ar-01-object-model.md) / [AR-04](ar-04-run-store-and-execution.md) |
-| 4 | `active`/`trusted` 执行边界 | `active` 只识别/报告；`trusted` 才可生成计划，执行仍需用户授权 + live guard | [AR-02](ar-02-strategy-and-lifecycle.md) / [AR-04](ar-04-run-store-and-execution.md) |
-| 5 | `--redact-paths` 是否可 replay | 不可 replay；脱敏同时替换 actionable ID | [AR-03](ar-03-cli-and-io-contract.md) |
-| 6 | Observation 公开提交边界 | 只提交去标识化行为事实；`raw/` 不提交 | [AR-05](ar-05-research-governance.md) |
-| 7 | Strategy Pack 冲突与同 ID 版本 | 版本单调 + hash 绑定 + 保守优先；越具体越优先 | [AR-02](ar-02-strategy-and-lifecycle.md) |
-| 8 | Codex vertical slice 验收 | 必须/暂不要求清单 + Agent Contract 正负测试矩阵 | [AR-06](ar-06-codex-p0-acceptance.md) |
+内置 Codex 与 WorkBuddy pack 提供只读发现、Run/Finding 持久化、show 与计划预览。
+`inspect all` 指全部加载的 pack，不是全机五域扫描。
+`explore`、`lab`、MCP、正式 promotion 不是现有 CLI 命令。
 
-## 5. 契约 ↔ 现有代码复用锚点
+当前状态、限制和发布边界在 [AGENT_RUNTIME_STATUS](../../docs/AGENT_RUNTIME_STATUS.md)、
+[CAPABILITIES](../../docs/CAPABILITIES.md)、[CHANGELOG](../../CHANGELOG.md) 维护。
+P0a/P0b 仅保留为历史切片标签，不作为本规格的产品完成度或排期。
 
-新契约**复用**而非重写现有内核。下表是各契约必须引用的现状锚点（实现阶段以此为接缝）。
-
-| 现有能力 | 位置 | 在 v1 契约中的角色 |
-|---|---|---|
-| `Item` / `FileIdentity` / `FileFacts` | `implementation/openclean/models.py` | Finding 投影来源；identity 与云占位判定沿用 |
-| `_item_payload`（当前扁平 JSON 面） | `implementation/openclean/cli.py` | 说明 Finding 需要重组的字段面；无兼容负担，JSON 围绕 Run/Finding 重新设计 |
-| `ProtectionGate` / `KnowledgeBaseIgnorePredicate` | `implementation/openclean/predicates.py` | Strategy 之上**最高优先级安全闸**，KB 先于普通谓词 |
-| `KnowledgeBase` / `RulesStore._write_payload` | `implementation/openclean/knowledge_base.py` | 保护/忽略规则；`0700`+`0600`+`fsync`+`os.replace` 原子写作为 Run Store 先例 |
-| `select_cleanup_items` / `execute_cleanup` / `_audit_item` / `_validate_cleanup_scope` / `trash_directory_for` | `implementation/openclean/cleanup.py` | CleanupPlan 执行层；批量 all-or-nothing 预检 + 逐项 live 复核 + 同卷 Trash |
-| `CleanupReport.moved_bytes` vs `deleted_bytes` | `implementation/openclean/cleanup.py` | CleanupOutcome 回执区分「暂存未释放」与「永久删除」 |
-| Codex 探测器：`scan_codex_marketplace_staging`、`scan_codex_git_skeletons`、`scan_crashpad_orphan_sidecars`、`scan_sqlite_diagnostics`、`scan_retention_diagnostics`、`scan_darwin_temp_updater_diagnostics`、`scan_open_unlinked_diagnostics`、`discover_codex_log_partition_rules` | `implementation/openclean/storage_diagnostics.py` | codex pack 的 builtin detector 事实来源 |
-| `assess_updater_staging_root` / `UpdaterAssessment` | `implementation/openclean/updater.py` | updater 状态机证据 |
-| 写操作状态机 §5、路径与竞态防护 §6 | `docs/ARCHITECTURE.md` | 执行不变量基线，CleanupPlan 状态机与之对齐 |
-
-## 6. 净室边界
-
-本目录遵循 [CONTRIBUTING.md](../../CONTRIBUTING.md) 的净室红线，并因其前瞻性质额外声明：
-
-- 这里是 **OpenClean 自有设计**，不是从参考软件提取的事实；不得把参考软件代码、反编译
-  表达、私有规则库或商业指纹写入本目录或据此实现。
-- CleanMyMac 的黑盒实验结果只能作为**去标识化 Observation** 进入研究流程（见
-  [AR-05](ar-05-research-governance.md)），命中本身不自动生成清理动作。
-- 契约中的路径示例（如 `~/.codex/...`）用于说明结构，不代表已提交的真实机器扫描结果。
-- 本目录不修改 `specs/00-07` 的参考事实，也不改动 README/CHANGELOG/CAPABILITIES/AI_USAGE
-  对**已发布行为**的描述；能力落地时再按 CONTRIBUTING「文档分层」同步。
+本地使用相关 `test_agent_*.py` 与 WorkBuddy/JSON 回归；验证矩阵见 AR-06。
+文档修订本身不证明运行时已实现，旧发行包的缺陷不因改规格消失。

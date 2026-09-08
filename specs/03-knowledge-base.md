@@ -1,51 +1,65 @@
-# 03 · 知识库规格
+# 03 · 自建规则、忽略与配置
 
-> 来源：参考对象知识库服务与 SystemJunk 的协议事实。
-> ⚠️ 净室红线：知识库的**数据**（MacPaw 多年积累的应用指纹/规则明细）是商业秘密。
-> 本规格只描述**结构与行为思想**，供独立实现**自建数据**，不得提取/复用其数据。
+> 文档 ID：OC-03 · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 来源：SRC-CODE、SRC-CONTRACT、SRC-EXPERIENCE；见 [索引](_index.md)。
 
-## 1. 知识库的角色
+## 1. 职责边界
 
-扫描引擎的"硬编码扫描点"（见 02）只覆盖通用路径；
-**应用级、动态的精细规则**由知识库提供，且知识库**可在线更新**（存在"知识库更新服务"）。
-即：扫描点字典 ≈ 硬编码骨架 + 知识库数据填充。
+KnowledgeBase 负责规则匹配，RulesStore 负责用户规则持久化；
+Strategy Registry 负责 Agent pack。两者不是同一个格式，也不相互改名替代。
+参考软件的私有数据库、应用指纹、容器编码或内部查询签名不是本项目协议。
 
-## 2. 数据类别（事实：知识库覆盖的域）
+规则内容来自可追溯的公开资料、独立实现和已验证经验。
+新增 detector 的来源要求见 [02](02-scan-points.md)，个人研究流程见 [AR-05](agent-runtime/ar-05-research-governance.md)。
 
-知识库按域分桶，包含以下键（从接口事实提取）：
+## 2. 文件与规则字段
 
-```
-systemCaches  userCaches  systemLogs  userLogs   (系统/用户 缓存与日志规则)
-xcodeCaches   iTunesCaches  photosCaches           (专项应用)
-sandboxContainers  groupContainers                 (容器路径映射)
-守护进程日志:  cmmXMASLogs  healthMonitorXLogs  menuXLogs
-```
+默认用户规则为 `~/.config/openclean/rules.json`；托管规则为同目录 `knowledge.json`。
+`--rules FILE` 使用显式单文件，`--ignore` 是本次调用的附加忽略。
+Agent 自定义 HOME 的默认规则/Store 解析见 [AR-03](agent-runtime/ar-03-cli-and-io-contract.md)。
 
-## 3. 能力接口（行为契约）
+| 字段 | 作用 | 契约与限制 |
+|---|---|---|
+| `schema_version` | 本地规则格式版本，当前 1 | 与 CLI/Run/pack 版本独立 |
+| `ignore.paths/globs/regexes` | 忽略路径或模式 | 路径必须绝对或 HOME-relative；路径匹配自身和后代 |
+| `protect` | 系统/明确保护路径或规则 | 与 ignore 一样阻止处理，不能由普通扫描规则覆盖 |
+| `applications` | 应用名、保护、附加文件、deep_search 等声明 | 可解析字段不等于全部已接到生产 scanner；不从声明直接删除附加文件 |
+| `_managed` | 托管来源状态 | 更新器管理，不是用户自授权限入口 |
 
-知识库对引擎暴露如下**查询能力**（从 demangled 方法签名还原的功能事实）：
+完整字段、示例与格式验证以 [实现契约](../implementation/README.md)、
+[knowledge_base.py](../implementation/openclean/knowledge_base.py) 为准，不新增 DSL。
 
-| 能力 | 语义 |
-|---|---|
-| 路径是否被忽略 `isPathIgnored(path)` | 命中忽略规则 → 该项不可删 |
-| 是否系统关键项 `isSystemItem(atPath:)` | 系统关键 → 保护，不删 |
-| 应用是否受保护 `isAppProtected(bundleId:)` | 受保护应用 → 跳过 |
-| 应用附加文件 `additionalFiles(forApplicationName:bundleId:)` | 给出某应用"该连带清理"的额外路径 |
-| 是否需要深搜 `isDeepSearchNeeded(for:)` | 某应用是否需递归深挖 |
-| 应用名解析 `applicationName(for:)` | 由 bundle 反解应用名 |
-| 自定义忽略项 `addCustomIgnoreItem(...)` | 用户级忽略列表（增/删/快照） |
-| 规则读/写 `readScanners / writeScanners` | 扫描器规则的持久化 |
+## 3. 行为需求
 
-## 4. 存储与格式
+| 需求 | 契约 | 验收 |
+|---|---|---|
+| REQ-RULE-001 保护优先 | KB protect/ignore 在普通谓词之前求值，执行前重新使用当前规则 | VAL-RULE-001：被保护路径及后代不被普通匹配规则重新放行 |
+| REQ-RULE-002 用户 ignore | list 读取；add/remove 显式修改用户 JSON，幂等并返回 changed | VAL-RULE-002：重复增删不破坏规则，回读一致，不混写托管文件 |
+| REQ-RULE-003 规则分层 | 默认托管与用户规则合并，远程更新不覆盖用户 ignore | VAL-RULE-003：用户规则在更新前后保留，非法格式返回错误 |
+| REQ-RULE-004 配置副作用 | analytics 仅是持久偏好；目前无遥测上传；读配置不伪造网络操作 | VAL-RULE-004：显示值与显式写入一致，错误非零 |
+| REQ-RULE-005 原子写 | 沿用私有权限、临时写入/fsync/原子安装与错误回执 | VAL-RULE-005：失败不报告成功，配置文件权限与提交边界符合实现 |
 
-- 知识库以**自定义二进制容器**持久化（`.cmmkb`），内容为**加密或压缩的 blob**（非明文 plist/SQLite）。
-- 运行时由知识库服务**解码/解析**后供查询；用户自定义部分（如忽略项）单独存放于
-  `~/Library/Application Support/KnowledgeBase/userInfo.cmmkb`。
-- 规则匹配采用**正则/模式**（存在 RegexCache 以加速）。
+`ignore add/remove`、`config --analytics`、显式规则更新是现有配置写入口，不另要求清理用
+`--yes`；它们仍需要用户对配置变更的指令。不要将“清理默认预览”误写成“所有命令不带 --yes 完全不写盘”。
 
-## 5. 净室实现边界
+## 4. 托管规则更新
 
-- 具体规则数据不属于本规格；独立实现必须自行建立和维护规则来源。
-- 应用附加文件只能依据公开信息和通用 macOS 命名约定推导，不得复制私有规则明细。
-- 存储格式、更新机制和当前实现状态属于项目差异，见 [_index.md](_index.md) 与
-  [implementation/README.md](../implementation/README.md)。
+现有客户端通过显式 `config --update-knowledge HTTPS_URL --knowledge-public-key PEM`
+触发网络与写入：HTTPS、大小上限、签名校验、公钥钉扎、sequence 防回滚和原子安装。
+采用自己的 JSON/envelope，不加载厂商私有数据库。
+
+REQ-RULE-006：验证失败不得安装新规则或覆盖用户 ignore；必须报告失败。
+VAL-RULE-006：签名/sequence/URL/超限/并发更新反例与成功回读通过隔离测试。
+
+正式 HTTPS channel、正式公钥和发布运维仍是外部前提，不设置假默认地址或生成凭据冒充交付。
+上述命令是已存在客户端，不代表正式规则服务已经运行；本规格不授权网络更新。
+
+## 5. 验收锚点
+
+[test_knowledge_base.py](../implementation/tests/test_knowledge_base.py)、
+[test_rules_store.py](../implementation/tests/test_rules_store.py)、
+[test_scan_rules_integration.py](../implementation/tests/test_scan_rules_integration.py)、
+[test_knowledge_update.py](../implementation/tests/test_knowledge_update.py)、
+[test_config_cli.py](../implementation/tests/test_config_cli.py)。
+
+签名环境和正式服务的真实验证与单元测试分开记录。

@@ -4,7 +4,8 @@
 [功能预览](PREVIEW.md) · [安全](../SECURITY.md) ·
 [规格索引](../specs/_index.md) · [实现说明](../implementation/README.md)
 
-本文描述 `openclean` 的模块、数据流和信任边界。参考软件的功能事实位于 `specs/`。
+本文描述 `openclean` 的模块、数据流和信任边界。OpenClean 行为与验收契约位于 `specs/`，
+参考依据与未批准提案分别标注，不要求复刻参考软件内部架构。
 用户入口见 [README.md](../README.md)；能力状态见 [CAPABILITIES.md](CAPABILITIES.md)；
 选择语义与 JSON 字段见 [implementation/README.md](../implementation/README.md)；
 报告渠道与威胁模型见 [SECURITY.md](../SECURITY.md)。

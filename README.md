@@ -154,10 +154,10 @@ schema v2 以 `openclean <command> --help` 和
 `safe`、`confirm`、`critical` 是候选风险级别，不是数据价值保证。路径竞态、Trash
 身份、Docker binding 和知识库安装细节见 [SECURITY.md](SECURITY.md)。
 
-## 开发
 已发布 `0.24.0a1` 的 Agent `clean --redact-paths` 存在嵌套计划脱敏遗漏，不应直接公开其输出。
 源码修复状态见 [CHANGELOG 的 Unreleased](CHANGELOG.md#unreleased)，不代表旧安装包已更新。
 
+## 开发
 
 ```bash
 make check
@@ -175,7 +175,7 @@ CLI 启动；全量测试、Ruff、构建、归档和独立安装验证由 GitHu
 | 路径 | 作用 |
 |---|---|
 | `implementation/` | Python 包、测试、隔离预览与发行检查 |
-| `specs/` | 净室功能规格 |
+| `specs/` | OpenClean 行为与验收规格；参考依据、条件设计和未批准提案分别标注 |
 | `docs/` | 架构、能力地图与功能预览 |
 | `analysis/` | 受隔离的原始分析材料；禁止提交/读取 |
 | `local/` | 本机过程材料；被 `.gitignore` 排除 |

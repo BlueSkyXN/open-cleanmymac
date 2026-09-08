@@ -1,105 +1,74 @@
-# AR-08 · 策略包全景
+# AR-08 · 实际策略包与接线边界
 
-> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
-> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
-> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+> 文档 ID：AR-08 · 修订：2 · 更新：2026-09-08 · 状态：baseline（当前清单）
+> 来源：SRC-CODE。本篇不是所有领域最终必须迁入 pack 的蓝图。
 
+## 1. 组织与维护
 
-[契约索引](_index.md) · [AR-02 策略与生命周期](ar-02-strategy-and-lifecycle.md) ·
-[AR-07 实施路线图](ar-07-implementation-roadmap.md)
+按被识别目标组织，来源保留 provenance。当前生产审批集合为空，
+下列包均 active/report_only，所有命中不具备生产清理动作。
+清单变化应同时核对 pack JSON、registry、inspect 分派和相关测试，不能只编辑此表。
 
-> OpenClean 自有前瞻契约，非 CleanMyMac 参考事实。状态：📐 契约已定，未实现。
-> 本文件定义完整的多 pack 目标：策略包目录、detector/action 白名单全集，以及 P0-P4 展开顺序。
-> Codex 是首个切片（[AR-06](ar-06-codex-p0-acceptance.md)）；其余 pack 复用同类现有能力。
+## 2. 随包策略
 
-## 1. 组织原则
-
-策略按**被研究的工具或领域**组织，不按来源组织；来源保留在每条 strategy 的 `provenance`
-（[AR-02](ar-02-strategy-and-lifecycle.md) §5）。一个 pack 内可同时含来自 CleanMyMac 观察、
-个人经验与 AI 研究、且经两边证据支持的策略。
-
-## 2. 策略包目录（全集）
-
-| pack | 目标领域 | 主要 detector | 现有代码基础 | 展开阶段 |
-|---|---|---|---|---|
-| `codex` | OpenAI Codex / ChatGPT | `codex_transient`、`retention`、`sqlite_freelist`、`crashpad`、`updater`、`open_unlinked` | `storage_diagnostics.py`（marketplace staging / git skeleton / crashpad / sqlite / retention）、`updater.py`；marker `ChatGPT.app/Codex.app/codex` | **P0** |
-| `qoder` | Qoder CLI/runtime | `retention`、`updater`、`filesystem_tree` | `storage_diagnostics.py`（Qoder runtime/解压目录/ShipIt）、`updater.py` | P1 |
-| `workbuddy` | WorkBuddy | `retention`、`updater`、`filesystem_tree` | `storage_diagnostics.py`（日志/traces/audit-log 保留期）、`updater.py`、process ownership | P1 |
-| `claude` / `cursor` / 其他 AI | Claude、Cursor、Gemini、OpenCode、Chrome DevTools MCP 等 | `updater`（版本目录）、`retention`、`filesystem_tree` | ai 域扫描点；版本目录只报告非当前完整旧版本，保留零字节 marker/当前 binary/会话状态 | P1 |
-| `macos-system` | 用户缓存、日志、Xcode、失效启动项 | `filesystem_tree`、`retention`、`updater`、`startup_items` | system 域扫描点、`startup_items.py`、`macos.py`（Darwin cache/tmutil）；系统特权区保持 `requires_privilege`→fail-closed | P2 |
-| `developer-tools` | pip/uv/npm/Go/Cargo/Homebrew 缓存 | `filesystem_tree`、`retention` | developer 域扫描点 | P2 |
-| `browsers` | Chrome/Brave/Edge/Comet `Service Worker/CacheStorage` | `browser_cache` | profile 级只读汇总已实现；origin 级需稳定可脱敏数据源，未做；不删 Cookies/Login Data/IndexedDB/整个 profile | P2 |
-| `docker` | Docker daemon 容量 | `docker`（probe） | `docker.py`：三类 prune 白名单、Local Volumes 永不可执行；真实 daemon 验收待做（TODO #4） | P2 |
-| `project-artifacts` | `node_modules`/`.venv`/`target`/DerivedData 等可重建产物 | `filesystem_tree` + 项目发现 | 现有 `purge`/project 域；可重建产物 `move_to_trash` | P2 |
-
-高风险能力（系统特权区、浏览器 origin、Docker 真实 prune、SQLite 压缩）保持只读或
-`action.supported=false`，直到有充分正负案例与动作验证（[AR-05](ar-05-research-governance.md) §3）。
-
-## 3. detector 白名单（全集）
-
-`strategy.detector.name` 必须来自此白名单（[AR-02](ar-02-strategy-and-lifecycle.md) §2.1）；
-每个 detector 是经受测试的 Python 代码，JSON 只传参数，不含逻辑。
-
-| detector | 职责 | 迁移自 |
+| pack / strategy ID | 实际 detector 与子类型 | 作用与边界 |
 |---|---|---|
-| `filesystem_tree` | 目录枚举 + 物理/逻辑计量（硬链接去重、不跟随 symlink、dataless 阻断） | `filesystem.py`、`scanpoints.py` |
-| `retention` | 文件数、句柄、7/14/30 天保留期容量 | `storage_diagnostics.py` retention |
-| `sqlite_freelist` | 内部空闲页/比例、WAL/SHM/journal（只读） | `storage_diagnostics.py` sqlite |
-| `codex_transient` | marketplace staging、git 空壳等 Codex 临时结构 | `storage_diagnostics.py` codex |
-| `crashpad` | 孤立 sidecar 与配对/近期 artifact 计数（不删 `.dmp`） | `storage_diagnostics.py` crashpad |
-| `updater` | updater 根、bundle 版本比较、暂存状态 | `updater.py` |
-| `open_unlinked` | 已删除仍占用句柄的文件（`potential_bytes=0`，只报告上限） | `storage_diagnostics.py` open-unlinked |
-| `browser_cache` | 浏览器 CacheStorage profile 级只读汇总 | 浏览器扫描点 |
-| `docker` | Docker daemon 只读容量 + target binding | `docker.py` |
-| `startup_items` | 失效启动项识别与 live 复核 | `startup_items.py` |
+| codex.marketplace.old-staging | codex_transient / codex_marketplace_staging_targets | 逐目标发现；require_structure_match 动作门未实现 |
+| codex.marketplace.staging-summary | codex_transient / codex_marketplace_staging | 聚合摘要；父根不可执行 |
+| codex.git.temp-skeleton | codex_transient / codex_git_skeleton | 临时 Git 骨架诊断 |
+| codex.crashpad.orphan-sidecar | crashpad / crashpad_pairing | 孤立 sidecar，保留配对 dump |
+| codex.logs.sqlite-freelist | sqlite_freelist | logs_2.sqlite 内部空闲页诊断 |
+| codex.logs.retention | retention / include_partitions | macOS 日志与日期分区保留期 |
+| codex.runtime.cache-retention | retention | runtime cache 保留期 |
+| workbuddy.storage.observed-structures | workbuddy | expired/Worker/Electron 已观察结构 |
 
-detector 是**模块级**白名单名；细分变体通过 `detector.params.subkind` 表达并体现在
-`evidence.kind`（如 `codex_transient` 的 `codex_marketplace_staging`/`codex_git_skeleton`、
-`updater` 的 `updater_staging`/`darwin_temp_updater`、`crashpad` 的 `crashpad_pairing`）。
-[AR-02](ar-02-strategy-and-lifecycle.md) §2.1 与 [AR-06](ar-06-codex-p0-acceptance.md) §2
-出现的细粒度名即这些 subkind / evidence.kind。
+来源文件：[codex.json](../../implementation/openclean/packs/codex.json)、
+[workbuddy.json](../../implementation/openclean/packs/workbuddy.json)。
+Codex 表中 provenance 包含历史引用字符串，不代表全部 Observation 实验已完成；
+WorkBuddy 来源摘要见 [EXPERIENCE](../../docs/EXPERIENCE.md)。
 
-probes（被 detector 复用的只读原语，非独立 detector）：`filesystem`、`mounts`、`processes`、
-`open_files`、`docker`（`probes/`，见 [AR-00](ar-00-architecture.md) §6）。
+当前没有 qoder、docker、browsers 等独立 pack，不表示相关经典能力不存在。
+也没有旧示例中的 codex.updater.staging 或 codex.process.open-unlinked 策略；
+这些主题的经典诊断与 pack 覆盖必须分开说明。
 
-## 4. action 白名单（全集）
+## 3. Detector：允许声明不等于已接线
 
-`strategy.action.name` 必须来自此白名单；执行全部经 [AR-04](ar-04-run-store-and-execution.md)
-的 `can_execute` 与 live guard。
+[registry.py](../../implementation/openclean/strategies/registry.py) 的允许名字与
+[inspect_service.py](../../implementation/openclean/runtime/inspect_service.py) 的分派分别核对：
 
-| action | 语义 | 复用 | 约束 |
+| 名称 | 当前 Agent 分派 |
+|---|---|
+| codex_transient | staging 聚合、staging 逐目标、Git 骨架；未知 subkind 返回 unavailable |
+| crashpad | 精确单根 sidecar 配对 scanner |
+| sqlite_freelist | 当前 roots 的 SQLite 只读规则 |
+| retention | 当前 roots 的 retention，可添加 Codex 日期分区 |
+| workbuddy | 仅当前 HOME/.workbuddy 精确根 |
+| filesystem_tree、updater、open_unlinked、browser_cache、docker、startup_items | registry 允许声明，但当前 inspect 未接线；返回 scanner_unavailable |
+
+REQ-AR-CATALOG-001：不把白名单名当可用能力；未知/未接线分派不能返回完整空结果掩盖缺失。
+VAL-AR-CATALOG-001：[test_agent_review_scan.py](../../implementation/tests/test_agent_review_scan.py)、
+[test_agent_review_cli.py](../../implementation/tests/test_agent_review_cli.py) 检查不可用分派；
+[test_workbuddy.py](../../implementation/tests/test_workbuddy.py) 检查已接线边界。
+
+## 4. Action：三个层次
+
+| 名称 | 包声明 | 当前 Agent 执行器 | 经典功能 |
 |---|---|---|---|
-| `move_to_trash` | 移到同卷 Trash（可恢复） | `cleanup.py` `trash_directory_for`/`_move_to_trash`（no-follow + `renameatx_np`） | 目标属当前用户、非云占位、identity 复核 |
-| `empty_trash` | 清空 Trash 内容（永久） | `cleanup.py` `_empty_trash` | `critical` + 精确选择；保留 Trash 根 |
-| `docker_prune` | 固定三类 prune（永久） | `cleanup.py` `_prune_docker_item`/`docker.py` | identifier 精确选择；Volumes 永远拒绝；binding 复核 |
-| `specialized` | 领域专用（如 SQLite 压缩） | 待建 | 默认 `supported=false`；需独立原子输出/恢复/前后验证方案 |
-| `report_only` | 只报告，不产生动作 | — | 只读诊断（retention/sqlite/open_unlinked/crashpad/updater_temp）固定此项 |
+| report_only | 允许，supported 必须 false | 只读拒绝 | 对应诊断同样只读 |
+| move_to_trash | 允许 | 仅通过全部审批/授权/实时条件的精确 filesystem；生产尚无获批包 | 普通清理已使用 |
+| empty_trash | 允许声明 | 当前不支持 | clean trash 独立受限支持 |
+| docker_prune | 允许声明 | 当前不支持 | 固定 prune 实现，真实 daemon UAT 未完成 |
+| specialized | 允许声明 | 当前不支持 | 不由这个名字推断存在通用专用执行器 |
 
-**禁止**：通用 `{delete, absolute_path}`、任意 shell、任意表达式（[AR-02](ar-02-strategy-and-lifecycle.md) §2.1）。
+REQ-AR-CATALOG-002：schema/白名单/生产审批三个条件不得混淆；
+不得将经典 executor 存在等同某个 Agent action 已启用。
+VAL-AR-CATALOG-002：[test_agent_strategy_registry.py](../../implementation/tests/test_agent_strategy_registry.py)、
+[test_agent_planner.py](../../implementation/tests/test_agent_planner.py)、
+[test_agent_review_execution.py](../../implementation/tests/test_agent_review_execution.py)。
 
-## 5. P0-P4 展开顺序
+## 5. 扩展原则
 
-按"已有代码基础最强、风险最低"优先，逐 pack 纵向闭环（每个 pack 走 inspect→show→clean→
-Agent Contract 一条链，再进下一个）：
-
-```text
-P0  codex                                     ← 首个切片，含一个经动作验证的 trusted 策略
-P1  qoder → workbuddy → claude/cursor/其他 AI  ← 已有 retention/updater/process ownership 基础
-P2  macos-system → developer-tools → browsers → docker → project-artifacts
-P3  研究工具完善（lab capture/compare/draft/validate/promote 自动化）
-P4  Agent 接入稳定（稳定 JSON CLI）→ MCP 薄适配（按需）
-```
-
-Qoder 与 WorkBuddy 已有 retention、updater、process ownership 代码，是 Codex 后最适合迁移的
-两个 pack。系统/浏览器/Docker 的高风险动作在对应阶段仍保持只读或 `supported=false`，直到
-证据充分。远程策略发布不在 P0-P4，属外部前提（[AR-07](ar-07-implementation-roadmap.md) §4）。
-
-## 6. 每 pack 的验收基线
-
-任一 pack 落地都复用 [AR-06](ar-06-codex-p0-acceptance.md) §3 的 Agent Contract 测试矩阵，
-外加 pack 专属正负案例：
-
-- 正例：该工具的典型可识别结构被 `inspect <pack>` 命中且只归该 pack；
-- 负例：当前版本 runtime、活动会话/未完成任务、零字节更新 marker、云占位/dataless、
-  受保护配对（如 Crashpad `.dmp`）**不被**标为 actionable；
-- 若含 `trusted` 动作：`TemporaryDirectory` 上跑通动作前后验证与执行回执。
+有具体用户需求时，优先复用已存在的 scanner/diagnostic；
+只有跨命令引用确有价值才新增 pack。复杂规则不塞入 JSON，不生成任意代码。
+新增包的正反样本、保护、投影与 CLI 验收复用 [AR-06](ar-06-codex-p0-acceptance.md)。
+全产品能力状态统一见 [CAPABILITIES](../../docs/CAPABILITIES.md)，不按 pack 数量算完成率。

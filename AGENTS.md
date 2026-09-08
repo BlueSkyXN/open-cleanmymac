@@ -68,7 +68,7 @@ PYTHONPATH=. python3 -m openclean.cli inspect codex --json  # Agent Runtime（�
 | 路径 | 关系 | 说明 |
 |---|---|---|
 | **`AGENTS.md`** | 你在这里 | 开工顺序与硬性约束 |
-| **`specs/`** | 必读 | 净室规格；实现状态见 `_index.md` |
+| **`specs/`** | 按任务必读 | OpenClean 行为契约、来源边界与条件提案；先读 `_index.md` |
 | **`implementation/`** | 战场 | Python 代码 + `TODO.md` |
 | `README.md` | 用户门面 | 公开行为变化必须同步 |
 | `implementation/README.md` | CLI 契约 | 选择语义、JSON、规则格式 |
@@ -80,24 +80,20 @@ PYTHONPATH=. python3 -m openclean.cli inspect codex --json  # Agent Runtime（�
 
 ## 开发前读规格
 
-按 [specs/_index.md](specs/_index.md) 的顺序：
+先读 [specs/_index.md](specs/_index.md)、`00-architecture.md` 和 `06-system-flow.md`，
+再按本次功能读取相关篇目，不要求普通开发通读整个 Agent 目录：
 
-1. `_index.md` — 规格索引与实现状态
-2. `00-architecture.md` — 命令树、模块职责
-3. `02-scan-points.md` — 扫哪里（路径、模式、安全等级）
-4. `01-scan-engine.md` — 任务图、加权进度、三态控制
-5. `07-predicate-engine.md` — 忽略/保护谓词
-6. `05-algorithms.md` — 大小统计、硬链接、云占位
-7. `03-knowledge-base.md` — 规则存储；本项目用明文 JSON
-8. `06-system-flow.md` — 端到端流程
-9. `04-ipc-protocol.md` — 仅当做特权帮助器时读
+- 扫描对象/特色：`02-scan-points.md`；扫描调度：`01-scan-engine.md`。
+- 计量/诊断：`05-algorithms.md`；保护判定：`07-predicate-engine.md`。
+- 规则/配置：`03-knowledge-base.md`；特权专项：`04-ipc-protocol.md`（条件设计，当前拒绝）。
+- Agent 附加接口：先读 [该目录索引](specs/agent-runtime/_index.md)，再读对象、CLI、Store 或策略相关契约。
 
-OpenClean **自有**的 Agent 接口扩展规格（Agent Runtime v1：对象模型、命令与 I/O、Run Store、
-执行不变量、策略包、研究治理、实施路线）在
-[specs/agent-runtime/](specs/agent-runtime/_index.md)；它是自有设计，与 00-07 的参考事实分开。
-
-规格记录参考对象的功能事实。本项目实际交付范围以 `_index.md`、根 README 和
-`implementation/TODO.md` 为准；高风险能力可以只读或不实现。
+`specs/` 现在定义 OpenClean 的有效行为与验收，不是参考软件内部机制的复制清单。
+参考来源、待核实结论、条件提案与有效契约分开；规格里出现的提案不自动成为实现授权。
+旧 Agent 平台定义、全域 Item→Finding 迁移、经典/TUI 退役和固定 P0-P4 路线已撤销，不是延期。
+来源只有名称/符号/字符串时不能推导完整行为；不读取 `analysis/` 补证据。
+能力状态见 `docs/CAPABILITIES.md`，任务与外部前提见 `implementation/TODO.md`，
+已发布/未发布差异见 CHANGELOG 和发行物，不在规格中复制一套完成度。
 
 ## 代码入口
 
@@ -127,8 +123,8 @@ OpenClean **自有**的 Agent 接口扩展规格（Agent Runtime v1：对象模�
 
 1. 写操作默认必须有 `--yes`；`critical` 级需双重确认。
 2. 不读、不引用、不复制 `analysis/` 到 `implementation/`。
-3. `specs/` 是参考事实来源；与实现冲突时改实现或更新规格（并注明）。公开行为以
-   README 为准。
+3. `specs/` 的有效契约约束行为；与实现冲突时先复现，缺陷修实现，不能改规格掩盖。
+   契约/兼容性变更须说明并按用户授权推进；条件提案与参考线索不直接变成开发任务。
 4. 运行时保持零第三方依赖；新增依赖必须在 TODO 说明理由。
 5. 只考虑 macOS 路径和 API。
 6. 不把缺少公开 API、签名或真实环境验收的能力伪装为完成。

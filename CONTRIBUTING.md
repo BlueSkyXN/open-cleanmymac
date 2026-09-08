@@ -82,14 +82,16 @@ Pull request 应列出行为变化、安全影响、验证命令与结果、未�
 | [implementation/README.md](implementation/README.md) | 实现者 / 自动化 | 选择语义、JSON schema、规则格式 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 开发者 | 模块、数据流、路径/外部边界 |
 | [SECURITY.md](SECURITY.md) | 安全审阅 | 报告渠道、威胁模型、支持范围 |
-| [specs/_index.md](specs/_index.md) | 实现者 | 净室规格与实现缺口 |
+| [specs/_index.md](specs/_index.md) | 实现者 | OpenClean 行为、验收、来源边界与条件提案 |
 | [AGENTS.md](AGENTS.md) | 接手的 AI | 开工顺序与硬性约束 |
 | [HANDOFF.md](HANDOFF.md) | 旧入口 | 已并入 AGENTS.md 的短跳转 |
 | [implementation/TODO.md](implementation/TODO.md) | 开发者 | 未完成或需外部验收的工作 |
 | [CHANGELOG.md](CHANGELOG.md) | 用户、审阅者 | 用户可见变更 |
 
-不要把同一段实现细节同时写进 README、规格和能力地图。规格记录参考对象；本项目差异
-写在 `_index.md` / CAPABILITIES；CLI 契约写在 `implementation/README.md`。检查结果以
+不要把同一段实现细节同时写进 README、规格和能力地图。规格定义 OpenClean 应有行为和验收，
+参考观察不能仅凭内部名称或旧材料自称事实。当前实现与有效契约冲突时先核查，不能改规格掩盖缺陷。
+能力状态与对照差异写在 CAPABILITIES，具体缺口与外部前提写在 `implementation/TODO.md`；
+CLI 使用契约写在 `implementation/README.md`。检查结果以
 当前本地轻量结果与 exact-head CI 分别报告，不要把测试计数写进常驻文档。
 
 修改公开 CLI、JSON schema 或安全级时，至少同步 README、相关 `docs/` 页和 CHANGELOG。

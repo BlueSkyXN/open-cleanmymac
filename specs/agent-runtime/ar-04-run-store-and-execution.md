@@ -1,136 +1,101 @@
-# AR-04 · Run Store 与执行
+# AR-04 · Run Store、计划与实时执行
 
-> **0.24.0a1 当前实施约束**：P0a 只读与计划预览；7 条 Codex 策略均 active/report_only。
-> 经典命令和 TUI 保留。P0b 结构匹配与正式策略审批尚未完成。本文的长期扩展不等于当前已实现。
-> 本次落地语义以 [当前实现补充](ar-09-current-implementation.md) 为准。
+> 文档 ID：AR-04 · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 来源：SRC-CODE、SRC-CONTRACT。生产包动作关闭；本篇约束已有执行 API，不代表启用生产策略。
 
+## 1. 保存证据，而非授权
 
-[契约索引](_index.md) · [AR-01 对象模型](ar-01-object-model.md) ·
-[AR-03 命令与 I/O](ar-03-cli-and-io-contract.md) · [架构](../../docs/ARCHITECTURE.md)
+Store 服务跨命令 inspect→show→clean。保存 Run manifest 和完整 Findings，
+不保存用户对未来任意状态的授权，不缓存可直接执行的 CleanupPlan。
+经典命令不依赖 Store；Finding ID 不是任意路径删除器的替代性安全补丁。
 
-> OpenClean 自有前瞻契约，非 CleanMyMac 参考事实。状态：📐 契约已定，未实现。
-> 本文件定义 Run Store 的存储与标识契约（决策 2、3）、Finding → Action 状态机、`can_execute`
-> 合取条件，以及对现有 `cleanup.py` live guard 的复用（决策 4 的运行时侧）。
+## 2. 本机存储契约
 
-## 1. 为什么需要 Run Store
-
-当前 JSON item 没有 `run_id`/`finding_id`/`strategy_id`（见 `_item_payload`，
-`implementation/openclean/cli.py`），选择只在**同一次命令内**按 path/identifier 有效。
-要支持「先 `inspect`，稍后 `show`/`clean`」的跨命令 Agent 工作流，必须把一次识别的环境、
-策略版本与 Finding 集合固化到本机私有存储，并绑定稳定标识。
-
-改成 Finding ID 的价值不是修复一个「任意路径删除器」（当前并不存在），而是：
-
-- 支持跨命令 Agent 工作流；
-- 提供稳定审计标识；
-- 绑定 Strategy 版本与扫描证据；
-- 避免 Agent 重放或重新拼接路径；
-- 让清理计划可被单独预览和审阅。
-
-## 2. Run Store 存储契约（决策 2）
-
-| 维度 | 契约 |
+| 维度 | 当前契约 |
 |---|---|
-| 位置 | 本机**私有状态目录**，默认 `~/.local/state/openclean/runs/`（`$XDG_STATE_HOME` 优先），与现有 `~/.config/openclean/` 同属 per-user 私有配置族 |
-| 权限 | 目录 `0700`，文件 `0600`；启动时校验，权限过宽则拒绝读写并 fail-closed |
-| TTL | 默认 **24 小时**；每个 Run 记录 `created_at`/`expires_at` |
-| 容量 | 有总容量与条目上限；超限按最旧优先淘汰（最早写入优先，不是 LRU），淘汰即失效 |
-| 写入 | **原子写**：临时文件 + `fsync` + `os.replace`，与 `RulesStore._write_payload` 同一模式（`implementation/openclean/knowledge_base.py`） |
-| 过期 | 过期后**拒绝执行**（退出码 `1`，`run_expired`），不自动重新扫描并假装是同一个 Finding |
-| 内容 | Run manifest + 其 Finding 集合；不缓存可执行授权，只缓存识别证据 |
+| 默认路径 | 绝对 XDG_STATE_HOME/openclean/runs；否则 ~/.local/state/openclean/runs |
+| 隔离 HOME | --home 下默认 PATH/.local/state/openclean/runs；后续用 --run-store 读取 |
+| 权限 | 目录 0700、文件 0600，校验所有者与链接状态；Run 文件必须只有一个硬链接 |
+| 文件 | 一个 bundle 原子包含 Run 与全部 Findings；schema 2 |
+| 容量 | 最多 64 Run，每个 8 MiB，总计 64 MiB |
+| 淘汰 | 最早写入优先；读取不刷新顺序，不是 LRU |
+| TTL | 正值且不超过 24h；不等于目标安全有效期 |
+| 原子性 | 临时写入、fsync、原子安装；不覆盖同 ID Run |
+| 过期 | 读取时删除过期条目并报错；不自动重扫或续期 |
+| 格式 | 拒绝错误 schema/未知字段/重复 JSON 键/非法类型/非有限值/归属不一致 |
 
-Run manifest 字段见 [AR-01](ar-01-object-model.md) §4。TTL 24 小时**不是安全有效期**：
-即使 Run 未过期，执行前仍必须重新校验全部 live guard（§4–§5）。
+REQ-AR-STORE-001：读写不接受错误所有者、过宽权限、链接、篡改或不完整 bundle；
+解析时 Run ID、文件名、Finding 清单及身份/证据/版本一致。
+VAL-AR-STORE-001：构造各类损坏 bundle 明确失败，不补字段或信任旧 payload。
 
-## 3. 标识稳定性（决策 3）
+`inspect` 会创建/淘汰 Store 数据，show/clean 读取也可能清除过期 bundle。
+“候选不写入”不是“文件系统完全只读”。旧 schema 或不同 runtime version 没有执行降级通道；
+要求重新 inspect，而不是在文档中宣布自动迁移。
 
-- `run_id`、`finding_id` 稳定、唯一、跨命令可读；格式如 `run:<token>`、`finding:<token>`。
-- **ID 不编码路径**：从 ID 本身不能反推目标路径；目标只在 Run Store 内按 ID 解析。
-- ID 不可跨会话重放：脱敏输出替换 actionable ID 且 `selection_replayable=false`
-  （见 [AR-03](ar-03-cli-and-io-contract.md) §7）。
-- `finding_id` 绑定 `run_id`、`strategy_id`、`strategy_version`、目标 identity、`observed_at`
-  与 `expires_at`；`show`/`clean` 校验 `--finding` 属于 `--run`。
-- **`finding_id` 本身不构成授权**（见 §4）。
+## 3. 标识与当前条件
 
-## 4. `can_execute` 合取条件
+REQ-AR-STORE-002：run_id/finding_id 不直接编码路径，finding 与指定 run 绑定；
+原始 ID 可在有效期内跨命令使用，脱敏占位符不可用。
+VAL-AR-STORE-002：错归属、伪造/遍历 ID、过期和缺失返回既有错误。
 
-Finding ID 不等于动作授权。某个 Finding 可执行，当且仅当以下**全部**成立：
+保存的 hash、identity、计量或版本不是用户不可篡改的外部签名凭证；
+同 UID 威胁限制见 SECURITY。执行仍必须重新获取当前证据。
+
+## 4. 计划检查和实时检查是两层
+
+REQ-AR-EXEC-001：resolve_plan 校验 Run 完整性/期限/版本、选择归属、当前策略
+status/action/审批/hash/version、Finding 可动作性、目标类型、重复目标与确认门。
+VAL-AR-EXEC-001：任一不满足产生明确 block_reasons；preview 固定 executed=false。
+
+can_execute 仅反映计划阶段结果，不保证稍后身份和进程状态。
+不得把计划阶段的布尔值写成已经完成实时复核。
+
+REQ-AR-EXEC-002：execute_plan 必须重新传入并核对 Run/registry/选择/授权，
+再生成并比较计划；重新在 Run HOME 探测目标，用新 Item 执行。
+不信任旧 evidence 中的路由字段、旧安全判定或调用方修改过的 plan。
+VAL-AR-EXEC-002：伪造目标、旧 domain、改变 identity/规则/年龄/进程/句柄时不执行。
+
+本路径只支持精确 filesystem→move_to_trash，拒绝 filesystem_subset 聚合根。
+empty_trash/docker_prune 等声明白名单不等于此 API 支持；经典能力独立保留。
+
+## 5. 批次与实际动作
 
 ```text
-can_execute =
-    user_confirmed                    # 用户对当前 Finding 明确授权（--yes + 风险 flag）
-    AND strategy.status == trusted    # 只有 trusted 策略具备动作能力（AR-02 §3）
-    AND action.supported              # 动作已验证可执行
-    AND run_not_expired               # Run 未过期且存在
-    AND strategy_hash_matches         # 当前 pack hash 与 Run 记录一致（AR-02 §4.1）
-    AND target_identity_matches       # 目标 device/inode/owner 与识别时一致
-    AND current_protect_rules_allow   # 当前 KB protect/ignore 未命中
-    AND live_guards_pass              # 执行前实时复核全部通过（§5）
+解析 Store / 当前 registry
+    → 生成选择计划
+    → 请求执行且条件满足
+    → 整批重新探测与预检
+    → 逐目标实时检查、同卷 Trash 操作
+    → 逐项 outcome 与批次 complete
 ```
 
-任一条件不成立 → `can_execute=false`，在 `block_reasons` 给出结构化原因，退出码 `1`
-（执行请求）或预览标注（预览请求）。即使 Strategy 是 `trusted`，只要应用运行中、句柄状态
-未知、identity 改变或命中 protect，当前 Finding 仍是 `actionable=false`。
+REQ-AR-EXEC-003：执行前任一目标受阻则整批不启动；真正开始后不承诺多个 OS 操作事务回滚。
+VAL-AR-EXEC-003：混合阻断为 blocked/not_run；中途失败保留已移动/partial 的真实回执。
 
-## 5. Finding → Action 状态机
+## 6. 复用而非重写执行保护
 
-对齐现有写操作状态机（[docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) §5），并前置
-Run/Finding 解析：
+复用 cleanup 的用户身份、祖先 no-follow、device/inode/owner、当前 protect/ignore、
+云占位、挂载边界与领域重判。普通移动使用现有 Darwin 安全 rename 路径。
+不把当前暂无生产 action 当作删除这些检查的理由，也不新增通用 executor。
+具体共享约束见 [07](../07-predicate-engine.md)，计量含义见 [05](../05-algorithms.md)。
 
-```text
-[*] --> Inspected: inspect → Run + Finding（写 Run Store）
-Inspected --> Shown: show --run --finding（只读）
-Shown --> Resolved: clean 预览 → CleanupPlan（mode=preview, executed=false）
-Resolved --> Rejected: can_execute 任一条件不成立
-Resolved --> Confirmed: --yes + confirm/critical 风险授权
-Confirmed --> Audited: 批量预检 all-or-nothing（_audit_item）
-Audited --> Rejected: live inode/owner/symlink/dataless/进程/updater/protect 变化
-Audited --> Trashed: move_to_trash（普通文件系统项）
-Trashed --> Reported: CleanupOutcome 回执
-Rejected --> [*]
-Reported --> [*]
-```
+## 7. 授权范围
 
-批量语义（复用 `execute_cleanup`，`implementation/openclean/cleanup.py`）：
+用户明确授权对象与动作后，Agent 可以在此范围调用可用命令，无需逐工具重复确认。
+期限/策略/目标变化导致旧计划失效时重新发现并复核授权是否仍覆盖新事实；
+不能自动把新对象/新风险纳入原授权。风险不确定则询问，不把“Agent 自主”理解成自行批准新动作。
 
-- **all-or-nothing 预检**：任一选中 Finding 在执行前预检失败，整批不开始，全部标
-  `blocked`/`not_run`。
-- **逐项 live 复核**：每项操作前再次复核 identity 与 guard。
-- **identity 变化整批 fail-closed**：识别与执行之间目标 device/inode/owner 改变即拒绝。
+当前内置审批为空、生产包只读。测试中的 synthetic approval 只验证临时执行机制，
+不能作为真实 Observation 或生产授权。
 
-## 6. 复用现有 live guard（不重写）
+## 8. 验收锚点
 
-`live_guards_pass` 与 `target_identity_matches` **完整保留**现有 `cleanup.py` 的复核，
-v1 不新造执行器：
-
-| 现有复核 | 位置 | v1 契约中的角色 |
-|---|---|---|
-| 保护闸优先（KB protect/ignore 先于普通谓词） | `predicates.py` `ProtectionGate` | `current_protect_rules_allow` |
-| 选择唯一性 + actionable + confirm/critical 授权 | `cleanup.py` `select_cleanup_items` | 授权语义基线；selector 来源改为 Finding ID |
-| 非特权动作阻断、symlink ancestor 拒绝 | `cleanup.py` `_validate_cleanup_scope` | `live_guards_pass` |
-| Darwin cache 根重新发现 + inode/owner 复核 | `cleanup.py` `_validate_cleanup_scope` | `target_identity_matches` |
-| 失效启动项 live re-stat + 云占位 + inode 复核 | `cleanup.py` `_validate_startup_item` | `live_guards_pass` |
-| 进程快照 + 运行状态保护 | `cleanup.py` `execute_cleanup` / `processes.py` | 运行中 → `actionable=false` |
-| 同卷 Trash no-follow + `renameatx_np(RENAME_EXCL\|RENAME_NOFOLLOW_ANY)` | `cleanup.py` `trash_directory_for` / `_move_to_trash` | `move_to_trash` 动作实现 |
-| Docker binding 复核（CLI realpath/context/host/Engine ID） | `cleanup.py` `_prune_docker_item` / `docker.py` | 未来 docker pack 的 specialized 动作 |
-
-`SF_DATALESS`/疑似云占位在枚举与最终移动前都检查（现有 `FileFacts.is_probable_cloud_placeholder`）。
-这些措施降低 TOCTOU，但不是对同 UID 恶意进程的绝对隔离——沿用
-[docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) §6 的既有边界声明。
-
-## 7. 授权语义（决策 4 的运行时侧）
-
-- **Finding ID ≠ 授权**：解析出 Finding 只是定位目标，执行仍需 `user_confirmed`。
-- **什么构成授权**：用户对**当前 Finding**明确表达执行意图，Agent 才加 `--yes`；`confirm`/
-  `critical` 仍需对应风险 flag。授权语义的正负测试见 [AR-06](ar-06-codex-p0-acceptance.md) §3。
-- **过期或策略变化必须重新确认**：`run_expired` 或 `strategy_hash_mismatch` 时不得沿用旧授权。
-- **批量授权**：`--finding` 可重复，但批量执行 all-or-nothing；不允许「授权一个、顺带执行同
-  等级其他项」。
-- **Agent 可自动生成预览，但不能自动执行**：不带 `--yes` 的 `clean` 永远只读。
-
-## 8. CleanupOutcome 回执
-
-执行结果复用现有 `CleanupReport` 语义（见 [AR-01](ar-01-object-model.md) §8）：区分
-`moved_to_trash_bytes`（暂存、尚未释放）与 `permanently_deleted_bytes`（Trash 清空或
-Docker prune）。`partial`（如 Docker 不可逆副作用未知）与 `failed`/`blocked`/`not_run`
-状态沿用现有定义；不得把「发现可回收容量」汇报为「已释放空间」。
+[run_store.py](../../implementation/openclean/runtime/run_store.py)、
+[planner.py](../../implementation/openclean/actions/planner.py)；
+[test_agent_run_store.py](../../implementation/tests/test_agent_run_store.py)、
+[test_agent_review_store.py](../../implementation/tests/test_agent_review_store.py)、
+[test_agent_identifiers.py](../../implementation/tests/test_agent_identifiers.py)、
+[test_agent_planner.py](../../implementation/tests/test_agent_planner.py)、
+[test_agent_review_execution.py](../../implementation/tests/test_agent_review_execution.py)、
+[test_agent_clean_exec.py](../../implementation/tests/test_agent_clean_exec.py)。
+真实用户清理和 native 环境验收不能由临时夹具通过来代替。
