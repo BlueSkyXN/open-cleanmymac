@@ -294,6 +294,21 @@ PROJECT_ARTIFACT_GLOBS: tuple[str, ...] = (
     "cmake-build-*",
 )
 
+
+def project_artifact_note(name: str) -> str:
+    """解释已识别产物的清理后果；不参与候选发现、分级或选择。"""
+    if name in {"node_modules", "Pods", "vendor"}:
+        return "依赖目录；清理后可能需要重新安装或下载，取决于项目配置、网络和依赖源"
+    if name in {".venv", "venv", ".tox", ".nox"}:
+        return "环境目录；清理后需要重建，未记录在项目配置中的手工安装内容不保证恢复"
+    if name in {".terraform", ".swiftpm", ".gradle"}:
+        return "工具工作目录；可能需要重新初始化或下载依赖，清理前确认其中没有需要保留的配置或状态"
+    if name in {".ccls-cache", ".metals", ".mypy_cache", ".pyre", ".pytype"}:
+        return "索引或分析缓存；下次索引、类型检查可能变慢，需重新生成"
+    if name in {".pytest_cache", ".ruff_cache", "__pycache__", "pycache"}:
+        return "检查或运行缓存；可能丢失上次检查记录，下次运行需要重新生成"
+    return "构建或工具产物；下次构建可能变慢，重新生成取决于源码、工具链及依赖是否齐备"
+
 PROJECT_MARKER_NAMES: tuple[str, ...] = (
     ".git",
     "package.json",
@@ -387,6 +402,11 @@ AI_TOOL_JUNK: list[ScanPoint] = [
                 "component_crx_cache",
                 "extensions_crx_cache",
             )),
+            # 已支持的独立 Chrome 数据根；公开 Chromium 契约中的 Default profile。
+            *(f"~/.gemini/antigravity-browser-profile/Default/{path}" for path in (
+                "Cache", "Code Cache", "GPUCache", "DawnGraphiteCache",
+                "DawnWebGPUCache", "Service Worker/CacheStorage",
+            )),
         ),
         default_selected=False,
         running_process_markers=("gemini", "antigravity"),
@@ -415,6 +435,11 @@ AI_TOOL_JUNK: list[ScanPoint] = [
                 "GraphiteDawnCache", "component_crx_cache",
                 "extensions_crx_cache",
             )
+        ) + (
+            # Chromium 120 公开定义的旧 WebGPU 磁盘缓存名。
+            "~/.cache/chrome-devtools-mcp/chrome-profile/Default/DawnCache",
+            # Gr shader 缓存属于用户数据根，不是 Default profile。
+            "~/.cache/chrome-devtools-mcp/chrome-profile/GrShaderCache",
         ),
         default_selected=False,
         running_process_markers=("chrome-devtools-mcp",),

@@ -146,6 +146,11 @@ Countable total、每任务 Control 聚合和 observer 仅是条件增强；需�
 - Codex 相邻原子写 temp 与 disabled feature cache 仍未做通用判定；目标缺失、JSON 截断或
   当前配置关闭都不能单独证明可删除，后续必须先定义 primary/backup/feature ownership。
 
+## 后续识别增强（不属于本轮交付范围）
+
+- 通用 Electron 发现、额外项目标记与产物类型绑定、Xcode downloaded runtimes 和
+  CoreSymbolication 专项仍是待核实对象，不作为本轮必做功能或可执行清理承诺。
+
 ## 已完成能力
 
 已落地功能不要在本清单重复展开。以 [docs/CAPABILITIES.md](../docs/CAPABILITIES.md)

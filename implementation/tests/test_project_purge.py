@@ -49,6 +49,39 @@ def _write_artifact(path: Path, mtime: float) -> None:
 
 
 class ProjectPurgeTests(unittest.TestCase):
+    def test_consequence_notes_preserve_selection_and_explain_artifact_age(self) -> None:
+        from openclean.cli import _item_payload
+        from openclean.scanpoints import project_artifact_note
+        from openclean.tui import item_detail_lines
+
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            marker = project / "package.json"
+            marker.write_text("{}", encoding="utf-8")
+            os.utime(marker, (now, now))
+            for name in ("node_modules", ".venv", "DerivedData", ".mypy_cache"):
+                _write_artifact(project / name, now - 8 * SECONDS_PER_DAY)
+            result = scan_project_artifacts([project], now=now)
+            self.assertEqual(len(result.items), 4)
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                _print_purge_report(result, False)
+            for item in result.items:
+                self.assertTrue(item.actionable)
+                self.assertTrue(item.preselected)
+                self.assertEqual(item.age_days, 8)
+                self.assertIn("不代表整个项目的活跃度", item.note)
+                self.assertIn(project_artifact_note(item.artifact_name), item.note)
+                self.assertEqual(_item_payload(item)["note"], item.note)
+                self.assertIn(item.note, "\n".join(item_detail_lines(item)))
+                self.assertIn(item.note, stdout.getvalue())
+            self.assertIn("依赖源", project_artifact_note("node_modules"))
+            self.assertIn("不保证恢复", project_artifact_note(".venv"))
+            self.assertIn("工具链", project_artifact_note("DerivedData"))
+            self.assertIn("索引", project_artifact_note(".mypy_cache"))
+
     def test_text_result_describes_exact_selection_without_default_claims(
         self,
     ) -> None:

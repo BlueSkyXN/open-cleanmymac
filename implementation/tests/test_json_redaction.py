@@ -16,6 +16,18 @@ from openclean.scanpoints import DOMAINS, ScanPoint
 
 
 class JsonPathRedactionTests(unittest.TestCase):
+    def test_dynamic_application_markers_are_redacted_without_changing_input(self) -> None:
+        from openclean.redaction import redact_json_payload
+
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = str(Path(tmp) / "External Apps/Private Editor.app/Contents") + "/"
+            payload = {"running_process_markers": [marker, "Code Helper"]}
+            result = redact_json_payload(payload)
+            self.assertTrue(result["running_process_markers"][0].startswith("path:"))
+            self.assertEqual(result["running_process_markers"][1], "Code Helper")
+            self.assertNotIn("Private Editor", json.dumps(result))
+            self.assertEqual(payload["running_process_markers"][0], marker)
+
     def test_scan_redacts_structured_and_embedded_paths_with_stable_refs(
         self,
     ) -> None:

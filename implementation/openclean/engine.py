@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .application_languages import scan_application_languages
-from .application_ownership import process_markers_for_path
+from .application_ownership import ApplicationResolver, process_markers_for_path
 from .docker import scan_docker_resources
 from .filesystem import filesystem_id_retry, lstat_retry, scandir_entries
 from .knowledge_base import KnowledgeBase
@@ -54,6 +54,7 @@ from .scanpoints import (
     PROJECT_MARKER_GLOBS,
     PROJECT_MARKER_NAMES,
     ScanPoint,
+    project_artifact_note,
 )
 from .startup_items import scan_broken_startup_items
 from .storage_diagnostics import (
@@ -711,6 +712,7 @@ def _scan_point(
     protection: Predicate,
     progress: TaskProgress | None = None,
     process_snapshot: ProcessSnapshot | None = None,
+    application_resolver: ApplicationResolver | None = None,
 ) -> ScanResult:
     result = ScanResult()
     reported_resource_in_use = False
@@ -731,6 +733,16 @@ def _scan_point(
             if sp.process_owner_protection
             else ()
         )
+        ownership_note = ""
+        if sp.process_owner_protection and not owner_markers and application_resolver is not None:
+            resolution = application_resolver.resolve(
+                facts.path,
+                darwin_cache_root=(
+                    candidate.root.path if sp.path_provider == "darwin-user-cache" else None
+                ),
+            )
+            owner_markers = resolution.process_markers
+            ownership_note = resolution.note
         process_markers = tuple(
             dict.fromkeys((*sp.running_process_markers, *owner_markers))
         )
@@ -796,6 +808,8 @@ def _scan_point(
             cross_device_paths = 0
         if size > 0 or cloud_file_count > 0:
             note = sp.note
+            if ownership_note:
+                note = f"{note}；{ownership_note}" if note else ownership_note
             if excluded_paths:
                 suffix = f"包含 {excluded_paths} 个忽略/保护路径，默认不选"
                 note = f"{note}；{suffix}" if note else suffix
@@ -1053,6 +1067,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
     process_snapshot, process_issue = _process_snapshot_for_points(points)
     if process_issue is not None:
         setup_issues.append(process_issue)
+    application_resolver = ApplicationResolver()
 
     filesystem_ids = [f"filesystem:{index}" for index in range(len(points))]
     dynamic_ids = [
@@ -1085,6 +1100,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
                 ignore,
                 progress.task(task_id),
                 process_snapshot,
+                application_resolver,
             ),
         )
         for task_id, point in zip(filesystem_ids, points, strict=True)
@@ -1168,10 +1184,11 @@ def _scan_point_with_progress(
     ignore: Predicate,
     progress: TaskProgress,
     process_snapshot: ProcessSnapshot | None,
+    application_resolver: ApplicationResolver,
 ) -> ScanResult:
     try:
         result = _scan_point(
-            point, ctl, ignore, progress, process_snapshot
+            point, ctl, ignore, progress, process_snapshot, application_resolver
         )
     except Cancelled:
         progress.cancel()
@@ -1195,6 +1212,7 @@ def _scan_points_with_progress(
     process_snapshot: ProcessSnapshot | None,
 ) -> ScanResult:
     result = ScanResult()
+    application_resolver = ApplicationResolver()
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {
             ex.submit(
@@ -1204,6 +1222,7 @@ def _scan_points_with_progress(
                 ignore,
                 progress.task(task_id),
                 process_snapshot,
+                application_resolver,
             ): point
             for point, task_id in zip(points, task_ids, strict=True)
         }
@@ -1729,9 +1748,9 @@ def scan_project_artifacts(
                         "不计入可回收容量且默认不选"
                     )
                 elif preselected:
-                    selection_note = f"超过 {preselect_age_days} 天，默认预选"
+                    selection_note = f"产物及其内容至少 {preselect_age_days} 天未修改，默认预选"
                 else:
-                    selection_note = f"最近 {preselect_age_days} 天内，默认不选"
+                    selection_note = f"产物或其内容最近 {preselect_age_days} 天内修改，默认不选"
                 result.items.append(
                     Item(
                         child_facts.path,
@@ -1742,7 +1761,7 @@ def scan_project_artifacts(
                             if measurement.cloud_file_count
                             else "safe"
                         ),
-                        f"可重新生成；{selection_note}",
+                        f"{project_artifact_note(entry.name)}；{selection_note}；不代表整个项目的活跃度",
                         logical_size=measurement.logical_size,
                         allocated_size=measurement.allocated_size,
                         cloud_file_count=measurement.cloud_file_count,

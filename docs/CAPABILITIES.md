@@ -129,7 +129,31 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | Desktop GUI、菜单栏、后台 agent | `desktop-background` | 无 | 不适用 |
 | 应用卸载、恶意软件扫描等 Desktop 功能 | `desktop-background` | 无 | 不适用 |
 
+## 浏览器缓存补齐的公开依据
+
+以下资料于 2026-09-09 只读核对；只借助公开目录契约独立实现，不复用参考软件代码或私人规则。
+
+| 依据 | 可以支持的结论 |
+|---|---|
+| [Antigravity Separate Chrome Profile](https://antigravity.google/docs/ide/separate-chrome-profile) | 使用独立 Chrome profile，登录态跨运行保留；不能把整个 profile 当缓存 |
+| [Chromium user data directory](https://github.com/chromium/chromium/blob/main/docs/user_data_dir.md) | profile 通常位于 Default；macOS 下不在 Library/Application Support 内的自定义 profile，其缓存目录与 profile 目录相同，适用于这里的两个已有根 |
+| [Chrome DevTools MCP advanced usage](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/advanced-usage.md#user-data-directory) | macOS 默认 chrome-profile 根及跨运行持久化语义；不据此遍历自定义或其它 channel 根 |
+| [Chromium GPU cache types](https://github.com/chromium/chromium/blob/main/gpu/ipc/common/gpu_disk_cache_type.cc) / [120.0.6099.109](https://github.com/chromium/chromium/blob/120.0.6099.109/gpu/ipc/common/gpu_disk_cache_type.cc) | GPUCache、DawnWebGPUCache、DawnGraphiteCache 及旧名称 DawnCache 的公开用途 |
+| [Chromium 120 browser client](https://github.com/chromium/chromium/blob/120.0.6099.109/chrome/browser/chrome_content_browser_client.cc) | GetGrShaderDiskCacheDirectory 将 GrShaderCache 放在用户数据根，而非 Default 下 |
+
+当前源码补充 Antigravity Default 的六个已有类型缓存子目录，以及 chrome-devtools-mcp 的
+Default/DawnCache、根级 GrShaderCache。未采纳来源线索中的 Default/GrShaderCache 层级，
+也不新增 Cookies、Login Data、IndexedDB、会话、任意 Profile 或整个数据根扫描。
+这些是既有根的精确兼容规则，不保证每个应用版本均生成这些目录；不存在时自然无候选。
+`test_ai_browser_caches.py` 覆盖正反目录、进程/失败阻断、忽略、symlink、计量去重、
+JSON 预览和临时 Trash 精确执行后保留未选数据；不将隔离测试包装成真实浏览器验收。
+
 ## 验证边界
+
+后续源码（未发布）为通用用户缓存/Darwin 缓存补充精确 bundle ID 的动态归属，保留静态规则，
+验证后的应用路径复用现有运行状态和执行前复核链。未知归属不等于无应用；完整卸载残留判断、
+通用 helper 关系解析、安装迁移追踪均未实现。见 `test_application_ownership.py`。
+Purge 已细化清理后果说明，年龄仍为产物年龄，不是项目活跃度；未改变候选与选择。
 
 本地 `make check` 仅做语法和 CLI 启动检查，修改相关逻辑时补充定向测试。
 GitHub Actions 的 `make ci-check` 运行 lint、完整 unittest 和 `TemporaryDirectory` 隔离

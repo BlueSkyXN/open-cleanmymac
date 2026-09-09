@@ -866,6 +866,8 @@ def _print_purge_report(
                 f"{human(item.size):>10}  {age:>8}  "
                 f"{item.safety:<8} {item.path}{cloud}{_item_annotations(item)}"
             )
+            if cleanup is None and item.note:
+                print(f"      {item.note}")
     print("\n" + "─" * 88)
     print(
         f"发现 {human(result.total)}；当前选择 "

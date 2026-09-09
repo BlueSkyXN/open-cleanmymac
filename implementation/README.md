@@ -63,6 +63,36 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 前四条会修改文件；清空 Trash 和 Docker prune 是永久操作。验证写路径应运行
 `make preview`。
 
+## 后续源码的缓存保护与 Purge 说明（未发布）
+
+通用用户缓存与 Darwin 用户缓存先使用静态进程归属；未命中的一级 bundle-ID 型子目录
+通过系统 `mdfind -0` 查询，再核对实际 `.app/Contents/Info.plist` 的 `CFBundleIdentifier`，
+并在 `/Applications`、`/System/Applications`、`~/Applications` 的一级应用中补查。
+不推断 helper 后缀，不依赖更新器版本字段，不将查不到应用解释为卸载残留。
+依据为 macOS `mdfind(1)` 的公开元数据查询接口及公开的 CFBundleIdentifier / bundle 结构。
+
+同次扫描共享查询缓存：最多 8 个 ID，每次 Spotlight 超时不超过 0.5 秒，累计处理预算 4 秒；
+标准安装目录最多检查 512 个一级条目，单次 Spotlight 最多处理 32 个结果。
+预算在查询和条目之间检查，不是所有文件系统 I/O 的硬超时。拒绝符号链接和云占位元数据；
+同 ID 多个已验证安装位置合并保护，不任意选一个。查询失败、未找到和预算不足在 note 中区分，
+保留未知候选原有可执行性及不默认预选的行为，不表示已证明安全。
+应用路径标记沿用 `running_process_markers`，执行前按当前进程复核；应用移动或重装后应重新扫描。
+`--redact-paths` 隐藏路径型标记，普通进程名不变。
+
+Purge 的 `note` 区分依赖重装、环境重建、索引和构建后果；恢复取决于项目配置、源码、工具链
+和依赖源。`age_days` / 默认预选依据产物及其内容的最新 mtime，不评估整个项目是否活跃。
+本次仅改善解释，不改变发现、选择或安全等级，也不新增 rebuild_cost / 缓存标签评分。
+
+### AI 浏览器缓存路径补齐
+
+已有 Antigravity 数据根增加 Default 下的 Cache、Code Cache、GPUCache、DawnGraphiteCache、
+DawnWebGPUCache、Service Worker/CacheStorage；已有 chrome-devtools-mcp 数据根增加
+Default/DawnCache（旧版名称）和根级 GrShaderCache。仅匹配精确路径，不新增 Profile *、
+自定义根、Cookies、Login Data、IndexedDB、会话或整个 profile 扫描；根级旧规则保留。
+进程快照同时能识别包含数据根名称的 Chrome 启动参数，因此 Agent 退出而 Chrome 仍运行时
+继续阻断；进程探测失败也阻断。AI 候选仍不默认选，清理需要既有显式授权和执行前复核。
+依据与版本见 [能力地图](../docs/CAPABILITIES.md#浏览器缓存补齐的公开依据)。
+
 ## Agent Runtime 命令面（附加）
 
 当前 `0.24.0a2` 内置 Codex 的 7 条策略及 WorkBuddy 的 1 条结构策略，均为 active/report_only，支持探测、

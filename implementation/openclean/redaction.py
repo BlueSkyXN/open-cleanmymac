@@ -22,6 +22,7 @@ PATH_VALUE_KEYS = frozenset({
     "home",
     "run_store",
     "roots",
+    "running_process_markers",
 })
 FREE_TEXT_KEYS = frozenset(
     {"message", "note", "action_block_reason", "summary", "do_not_do", "block_reasons"}

@@ -46,6 +46,11 @@ fail-closed，不会伪报成功。
 > 当前版本 `0.24.0a2`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
 > 完整范围与 JSON/Run 版本见 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
 
+后续源码（未发布）补充了通用缓存的动态应用归属保护，细化 Purge 的清理后果说明，
+并补齐已有 Antigravity/chrome-devtools-mcp 数据根中的精确浏览器缓存路径。
+未知归属不等于可安全删除；Purge 的年龄表示产物及其内容的修改时间，不代表项目闲置。
+命令、JSON schema v2、默认选择和既有静态规则保持兼容，详见 [CHANGELOG](CHANGELOG.md)。
+
 ## 快速开始
 
 要求：macOS、Python 3.11+。CI 配置为 macOS 15 / 26 双版本，Python 保持 3.11；
