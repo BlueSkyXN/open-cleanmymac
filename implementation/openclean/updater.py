@@ -1,15 +1,19 @@
 """公开 updater 缓存的只读版本状态判定。"""
 from __future__ import annotations
 
+import fnmatch
 import os
 import plistlib
 import re
 import stat
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .models import UPDATER_STATUSES, normalize_path
+from .models import UPDATER_STATUSES, FileFacts, normalize_path
+
+PathProbe = Callable[[Path], FileFacts | None]
 
 _MAX_INFO_PLIST_BYTES = 2 * 1024 * 1024
 _NUMERIC_VERSION = re.compile(r"^\d+(?:\.\d+)*$")
@@ -147,8 +151,10 @@ def _bundle_metadata(payload: object, path: Path | None = None) -> _BundleMetada
     return _BundleMetadata(bundle_id.strip(), version, path)
 
 
-def _read_app_metadata(path: Path) -> _BundleMetadata | None:
+def _read_app_metadata(path: Path, path_probe: PathProbe | None = None) -> _BundleMetadata | None:
     try:
+        if path_probe is not None and path_probe(path / "Contents" / "Info.plist") is None:
+            return None
         if path.is_symlink() or not stat.S_ISDIR(path.lstat().st_mode):
             return None
         info = path / "Contents" / "Info.plist"
@@ -166,6 +172,7 @@ def _read_app_metadata(path: Path) -> _BundleMetadata | None:
         OSError,
         ValueError,
         TypeError,
+        RecursionError,
         plistlib.InvalidFileException,
     ):
         return None
@@ -175,8 +182,11 @@ def _read_app_metadata(path: Path) -> _BundleMetadata | None:
 def _read_archive_metadata(
     path: Path,
     expected_bundle_id: str,
+    path_probe: PathProbe | None = None,
 ) -> _BundleMetadata | None:
     try:
+        if path_probe is not None and path_probe(path) is None:
+            return None
         if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
             return None
         with zipfile.ZipFile(path) as archive:
@@ -227,22 +237,46 @@ def _application_roots(home: Path) -> tuple[Path, ...]:
 def _installed_metadata(
     bundle_id: str,
     roots: tuple[Path, ...],
+    path_probe: PathProbe | None = None,
 ) -> tuple[_BundleMetadata, ...]:
     found: list[_BundleMetadata] = []
     for root in roots:
         try:
+            if path_probe is not None and path_probe(root) is None:
+                continue
             applications = tuple(root.glob("*.app"))
         except OSError:
             continue
         for application in applications:
-            metadata = _read_app_metadata(application)
+            metadata = _read_app_metadata(application, path_probe)
             if metadata is not None and metadata.bundle_id == bundle_id:
                 found.append(metadata)
     return tuple(found)
 
 
-def _glob_matches(root: Path, pattern: str) -> tuple[tuple[Path, ...], bool]:
+def _glob_matches(root: Path, pattern: str, path_probe: PathProbe | None = None) -> tuple[tuple[Path, ...], bool]:
     try:
+        if path_probe is not None:
+            paths = [root]
+            for part in Path(pattern).parts:
+                matches = []
+                for path in paths:
+                    facts = path_probe(path)
+                    if facts is None or not stat.S_ISDIR(facts.stat.st_mode):
+                        continue
+                    if not any(char in part for char in "*?["):
+                        child = path / part
+                        if path_probe(child) is not None:
+                            matches.append(child)
+                    else:
+                        with os.scandir(path) as entries:
+                            for entry in entries:
+                                if fnmatch.fnmatchcase(entry.name, part):
+                                    child = Path(entry.path)
+                                    if path_probe(child) is not None:
+                                        matches.append(child)
+                paths = matches
+            return tuple(paths), False
         return tuple(root.glob(pattern)), False
     except OSError:
         return (), True
@@ -274,23 +308,24 @@ def _assess_rule(
     *,
     home: Path,
     application_roots: tuple[Path, ...] | None,
+    path_probe: PathProbe | None = None,
 ) -> UpdaterAssessment | None:
     staged: list[_BundleMetadata] = []
     unknown_artifact = False
     for pattern in rule.staged_app_globs:
-        matches, failed = _glob_matches(candidate, pattern)
+        matches, failed = _glob_matches(candidate, pattern, path_probe)
         unknown_artifact = unknown_artifact or failed
         for match in matches:
-            metadata = _read_app_metadata(match)
+            metadata = _read_app_metadata(match, path_probe)
             if metadata is None or metadata.bundle_id != rule.bundle_id:
                 unknown_artifact = True
             else:
                 staged.append(metadata)
     for pattern in rule.staged_archive_globs:
-        matches, failed = _glob_matches(candidate, pattern)
+        matches, failed = _glob_matches(candidate, pattern, path_probe)
         unknown_artifact = unknown_artifact or failed
         for match in matches:
-            metadata = _read_archive_metadata(match, rule.bundle_id)
+            metadata = _read_archive_metadata(match, rule.bundle_id, path_probe)
             if metadata is None:
                 unknown_artifact = True
             else:
@@ -310,7 +345,7 @@ def _assess_rule(
         if application_roots is None
         else application_roots
     )
-    installed = _installed_metadata(rule.bundle_id, roots)
+    installed = _installed_metadata(rule.bundle_id, roots, path_probe)
     if not installed:
         return UpdaterAssessment(
             "installed_app_missing",
@@ -354,6 +389,7 @@ def assess_updater_candidate(
     *,
     home: Path | None = None,
     application_roots: tuple[Path, ...] | None = None,
+    path_probe: PathProbe | None = None,
 ) -> UpdaterAssessment | None:
     """判定已知 updater 根；没有暂存 bundle 时返回 ``None``。"""
     base = normalize_path(home or Path.home())
@@ -373,6 +409,7 @@ def assess_updater_candidate(
         rule,
         home=base,
         application_roots=application_roots,
+        path_probe=path_probe,
     )
 
 

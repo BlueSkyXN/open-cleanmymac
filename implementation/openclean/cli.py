@@ -1855,9 +1855,7 @@ def main(argv: list[str] | None = None) -> int:
                 finally:
                     if renderer is not None:
                         renderer.finish()
-                items_result.items.extend(regular_result.items)
-                items_result.issues.extend(regular_result.issues)
-                items_result.cancelled = regular_result.cancelled
+                items_result.extend(regular_result)
             if "project" in domains:
                 roots = explicit_project_roots or default_project_search_roots()
                 if roots:
@@ -1873,9 +1871,7 @@ def main(argv: list[str] | None = None) -> int:
                     finally:
                         if renderer is not None:
                             renderer.finish()
-                    items_result.items.extend(pr.items)
-                    items_result.issues.extend(pr.issues)
-                    items_result.cancelled = items_result.cancelled or pr.cancelled
+                    items_result.extend(pr)
         except KeyboardInterrupt:
             ctl.cancel()
             return _fail(

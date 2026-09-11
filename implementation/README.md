@@ -142,6 +142,9 @@ CLI envelope 为 schema 2，计划数组仅为 `plan.plan_items[]`。混合阻�
   分别扩展对应批量层级。
 - 一旦指定 `--select`，选择集从空开始，不继承默认预选；confirm/critical 精确目标仍需
   对应 `--include-confirm`/`--include-critical` 作为风险授权，但不会顺带选择同等级其他项。
+- Purge 对 `.vitepress` 只识别其一级 `cache`、`dist`，不把整个目录、配置或主题源码视为产物。
+- 硬链接按 device/inode 跨扫描点合并计量；共享容量归属不改变其它路径的选择资格。
+  被扣除共享容量的候选可能显示 0 字节，note 会解释原因；这不是其内容为空或无需审阅。
 - `--select` 与 `--all` 语义冲突，CLI 在扫描前返回 exit 2。
 - `requires_explicit_selection=true` 的环境来源项和 Docker prune 不会被默认选择、`--all`
   或 tier 批量参数选中，必须使用完整路径或 identifier 精确选择。
@@ -288,6 +291,21 @@ ignore。
 fd 和 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`。Docker prune 绑定
 扫描时 CLI realpath、context/host、endpoint 和 Engine ID，执行前复核。细节见
 [架构说明](../docs/ARCHITECTURE.md) 和 [安全政策](../SECURITY.md)。
+
+Clean、Purge、Analyze 与执行器共用应用/updater 范围判定。环境变量目标同样复用静态
+归属、已注册扫描点（含 `.cache` 内工具）和有界 bundle ID 查询；精确根、后代及包含
+实际已知子项的父容器都保留运行保护，相似名称不匹配。含 updater 暂存区的父目录/子目录
+不支持整体或部分清理，须重新扫描并精确审阅受支持的 updater 根。
+同路径的具体分类不能覆盖另一入口的运行保护或不可执行判定；updater 元数据、`critical`
+及精确选择要求保留到执行前复核，版本证据不一致时要求重新扫描。普通缓存的通用分级仍
+由具体分类细化，不因合并统一升级风险等级。
+批量预检、创建 Trash 前及移动前分别重新识别适用保护；旧扫描没有进程标记或 updater
+状态，也不会跳过实时检查。扫描后新增暂存包（包括同版包）、版本变化或运行中的保护对象
+会使旧选择失效。探测先检查逐级路径，不穿过符号链接、云占位或忽略/保护目录。
+
+规则读取错误（包括非 UTF-8、JSON 嵌套过深）统一返回 `rules_error`/exit 2；
+`config` 的对应错误为 `config_error`/exit 2。JSON、脱敏 JSON 和文本错误通道保持原有格式，
+不改写损坏的规则或配置文件。
 
 ## 退出码
 

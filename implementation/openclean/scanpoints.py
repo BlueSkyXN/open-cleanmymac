@@ -273,7 +273,7 @@ SYSTEM_JUNK: list[ScanPoint] = [
 PROJECT_ARTIFACT_NAMES: tuple[str, ...] = (
     # JS/前端
     "node_modules", ".next", ".nuxt", ".output", ".turbo", ".vite",
-    ".vitepress", ".angular", ".astro", ".svelte-kit", ".parcel-cache",
+    ".angular", ".astro", ".svelte-kit", ".parcel-cache",
     ".rollup.cache", ".swc", ".wireit", ".expo", ".docusaurus",
     # Python
     ".venv", "venv", ".eggs", ".mypy_cache", ".pytest_cache", ".pyre",
@@ -293,6 +293,11 @@ PROJECT_ARTIFACT_NAMES: tuple[str, ...] = (
 PROJECT_ARTIFACT_GLOBS: tuple[str, ...] = (
     "cmake-build-*",
 )
+
+# 容器同时保存源码/配置，只识别其明确的一级生成目录。
+PROJECT_ARTIFACT_SUBDIRECTORIES: dict[str, tuple[str, ...]] = {
+    ".vitepress": ("cache", "dist"),
+}
 
 
 def project_artifact_note(name: str) -> str:

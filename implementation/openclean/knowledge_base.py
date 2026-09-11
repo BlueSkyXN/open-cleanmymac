@@ -128,6 +128,8 @@ class KnowledgeBase:
             raise KnowledgeBaseError(
                 f"规则文件不是有效 JSON：{source}:{exc.lineno}:{exc.colno}: {exc.msg}"
             ) from exc
+        except RecursionError as exc:
+            raise KnowledgeBaseError(f"规则文件 JSON 嵌套过深：{source}") from exc
         return cls.from_mapping(payload, source=source)
 
     @classmethod
@@ -307,6 +309,8 @@ class RulesStore:
             raise RulesFileNotFoundError(f"规则文件不存在：{self.path}")
         try:
             raw = self.path.read_text(encoding="utf-8")
+        except UnicodeError as exc:
+            raise KnowledgeBaseError(f"规则文件不是有效 UTF-8：{self.path}") from exc
         except OSError as exc:
             raise KnowledgeBaseError(f"无法读取规则文件 {self.path}：{exc}") from exc
         try:
@@ -315,6 +319,8 @@ class RulesStore:
             raise KnowledgeBaseError(
                 f"规则文件不是有效 JSON：{self.path}:{exc.lineno}:{exc.colno}: {exc.msg}"
             ) from exc
+        except RecursionError as exc:
+            raise KnowledgeBaseError(f"规则文件 JSON 嵌套过深：{self.path}") from exc
         mapping = _require_mapping(payload, "根对象")
         KnowledgeBase.from_mapping(mapping, source=self.path)
         return mapping

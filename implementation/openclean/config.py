@@ -67,6 +67,8 @@ class ConfigStore:
                 f"配置不是有效 JSON：{self.path}:{exc.lineno}:{exc.colno}: "
                 f"{exc.msg}"
             ) from exc
+        except RecursionError as exc:
+            raise ConfigError(f"配置 JSON 嵌套过深：{self.path}") from exc
         return CliConfig.from_mapping(payload)
 
     def set_analytics(self, enabled: bool) -> CliConfig:

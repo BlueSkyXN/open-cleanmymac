@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from .cleanup_guards import CleanupGuardContext
 from .docker import (
     DockerPruneError,
     DockerTargetError,
@@ -30,13 +31,8 @@ from .macos import (
 )
 from .models import FileFacts, FileIdentity, Item, ScanResult, normalize_path
 from .predicates import Predicate, ProtectionGate
-from .processes import (
-    ProcessDetectionError,
-    ProcessSnapshot,
-    capture_process_snapshot,
-)
+from .processes import capture_process_snapshot
 from .startup_items import StartupItemError, startup_item_still_broken
-from .updater import assess_updater_candidate
 
 
 class SelectionError(ValueError):
@@ -445,8 +441,7 @@ def _audit_item(
     protection: Predicate,
     home: Path,
     uid: int,
-    process_snapshot: ProcessSnapshot | None,
-    process_error: str,
+    guards: CleanupGuardContext,
 ) -> os.stat_result | None:
     if not item.actionable:
         raise CleanupSafetyError(
@@ -462,15 +457,6 @@ def _audit_item(
         except DockerTargetError as exc:
             raise CleanupSafetyError(str(exc)) from exc
         return None
-    if item.running_process_markers:
-        if process_error:
-            raise CleanupSafetyError(process_error)
-        if process_snapshot is None:
-            raise CleanupSafetyError("缺少运行中进程快照")
-        if process_snapshot.any_running(item.running_process_markers):
-            raise CleanupSafetyError(
-                "相关工具已启动或正在运行，拒绝清理其缓存"
-            )
     if item.resource_kind != "filesystem" or item.path is None:
         raise CleanupSafetyError("当前执行器不支持该资源类型")
     if item.identity is None:
@@ -483,22 +469,6 @@ def _audit_item(
         raise CleanupSafetyError("候选包含 macOS dataless/疑似云占位文件")
 
     path = normalize_path(item.path)
-    if item.updater_status:
-        current_updater = assess_updater_candidate(path, home=home)
-        if current_updater is None:
-            raise CleanupSafetyError(
-                "updater 暂存状态已变化，需重新扫描后再决定"
-            )
-        if (
-            current_updater.status != item.updater_status
-            or current_updater.installed_version != item.installed_version
-            or current_updater.staged_version != item.staged_version
-        ):
-            raise CleanupSafetyError(
-                "updater 版本状态已变化，需重新扫描后再决定"
-            )
-        if current_updater.blocks_cleanup:
-            raise CleanupSafetyError(current_updater.block_reason)
     _validate_cleanup_scope(item, path, uid, home)
     if item.domain == "trash" and not _is_trash_root(path, uid):
         raise CleanupSafetyError(f"拒绝清空非 Trash 根目录：{path}")
@@ -522,7 +492,32 @@ def _audit_item(
     _validate_startup_item(item, path)
     if stat.S_ISDIR(stat_result.st_mode):
         _audit_descendants(path, stat_result.st_dev, protection, uid)
+    assessment = guards.assess(
+        path,
+        process_markers=item.running_process_markers,
+        darwin_cache_root=item.cleanup_root if item.cleanup_scope == "darwin-user-cache" else None,
+    )
+    if assessment.process_error:
+        raise CleanupSafetyError(f"进程检测失败，拒绝清理受运行状态保护的候选：{assessment.process_error}")
+    if assessment.resource_in_use:
+        raise CleanupSafetyError("相关工具已启动或正在运行，拒绝清理其缓存")
+    current = assessment.updater
+    current_state = ((current.status, current.installed_version, current.staged_version, current.external_install)
+                     if current else ("", "", "", False))
+    if current_state != (item.updater_status, item.installed_version,
+                         item.staged_version, item.updater_external_install):
+        raise CleanupSafetyError("updater 版本状态已变化，需重新扫描后再决定")
+    if assessment.block_reason:
+        raise CleanupSafetyError(assessment.block_reason)
     return stat_result
+
+
+def _live_guard_context(
+    protection: Predicate,
+    home: Path,
+    process_runner: Callable[..., subprocess.CompletedProcess[str]] | None,
+) -> CleanupGuardContext:
+    return CleanupGuardContext(protection, lambda: capture_process_snapshot(runner=process_runner), home=home)
 
 
 def trash_directory_for(
@@ -813,36 +808,14 @@ def _move_to_trash(
 ) -> CleanupOutcome:
     assert item.path is not None
     path = normalize_path(item.path)
-    _validate_cleanup_scope(item, path, uid, home)
-    _validate_startup_item(item, path)
-    if item.running_process_markers:
-        try:
-            process_snapshot = capture_process_snapshot(runner=process_runner)
-        except ProcessDetectionError as exc:
-            raise CleanupSafetyError(f"执行前进程检测失败：{exc}") from exc
-        if process_snapshot.any_running(item.running_process_markers):
-            raise CleanupSafetyError(
-                "执行前检测到相关工具已启动，拒绝清理"
-            )
-    if not _identity_matches(path, item):
-        raise CleanupSafetyError(f"执行前 inode 已变化：{path}")
+    _audit_item(item, protection, home, uid, _live_guard_context(protection, home, process_runner))
     trash = normalize_path(trash_resolver(path))
-    live_process_snapshot: ProcessSnapshot | None = None
-    live_process_error = ""
-    if item.running_process_markers:
-        try:
-            live_process_snapshot = capture_process_snapshot(
-                runner=process_runner
-            )
-        except ProcessDetectionError as exc:
-            live_process_error = f"执行前进程检测失败：{exc}"
     _audit_item(
         item,
         protection,
         home,
         uid,
-        live_process_snapshot,
-        live_process_error,
+        _live_guard_context(protection, home, process_runner),
     )
     if not _identity_matches(path, item):
         raise CleanupSafetyError(f"准备 Trash 后 inode 已变化：{path}")
@@ -998,10 +971,11 @@ def _empty_trash(
     protection: Predicate,
     home: Path,
     uid: int,
+    process_runner: Callable[..., subprocess.CompletedProcess[str]] | None,
 ) -> CleanupOutcome:
     assert item.path is not None
     root = normalize_path(item.path)
-    _audit_item(item, protection, home, uid, None, "")
+    _audit_item(item, protection, home, uid, _live_guard_context(protection, home, process_runner))
     _validate_cleanup_scope(item, root, uid, home)
     if not _identity_matches(root, item):
         raise CleanupSafetyError(f"执行前 inode 已变化：{root}")
@@ -1173,13 +1147,7 @@ def execute_cleanup(
         return CleanupReport()
     home = normalize_path(home or Path.home())
     uid = os.getuid() if uid is None else uid
-    process_snapshot: ProcessSnapshot | None = None
-    process_error = ""
-    if any(item.running_process_markers for item in selected):
-        try:
-            process_snapshot = capture_process_snapshot(runner=process_runner)
-        except ProcessDetectionError as exc:
-            process_error = f"进程检测失败，拒绝清理受运行状态保护的候选：{exc}"
+    guards = _live_guard_context(protection, home, process_runner)
     preflight_errors: dict[tuple[str, str, str, str], str] = {}
     for item in selected:
         try:
@@ -1188,8 +1156,7 @@ def execute_cleanup(
                 protection,
                 home,
                 uid,
-                process_snapshot,
-                process_error,
+                guards,
             )
         except CleanupSafetyError as exc:
             preflight_errors[_item_key(item)] = str(exc)
@@ -1231,6 +1198,7 @@ def execute_cleanup(
                     protection=protection,
                     home=home,
                     uid=uid,
+                    process_runner=process_runner,
                 )
             else:
                 outcome = _move_to_trash(
