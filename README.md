@@ -51,6 +51,13 @@ fail-closed，不会伪报成功。
 未知归属不等于可安全删除；Purge 的年龄表示产物及其内容的修改时间，不代表项目闲置。
 命令、JSON schema v2、默认选择和既有静态规则保持兼容，详见 [CHANGELOG](CHANGELOG.md)。
 
+未发布源码另修复清理保护与计量问题：Purge 只识别 `.vitepress/cache`、`.vitepress/dist`，
+不再移动整个配置/源码目录；Clean/Purge/Analyze 与执行器共用应用和 updater 范围保护，
+包含保护对象的父目录、子目录及环境变量入口不能绕过，执行前重新检查扫描后新增的状态。
+updater 根及同路径合并保留版本复核和 `critical` 确认；硬链接共享容量只计一次，
+保留各路径的独立选择。规则编码错误和规则/配置 JSON 嵌套过深均返回结构化错误回执。
+旧发行包不包含这些修复。
+
 ## 快速开始
 
 要求：macOS、Python 3.11+。CI 配置为 macOS 15 / 26 双版本，Python 保持 3.11；

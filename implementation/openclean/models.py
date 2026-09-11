@@ -372,6 +372,20 @@ class ScanResult:
     items: list[Item] = field(default_factory=list)
     issues: list[ScanIssue] = field(default_factory=list)
     cancelled: bool = False
+    # 仅本次扫描的计量旁路数据，不进入 Item、JSON 或 Run Store。
+    _hardlinks: dict[Item, dict[tuple[int, int], tuple[int, int]]] = field(
+        default_factory=dict, repr=False, compare=False,
+    )
+    _hardlink_originals: dict[Item, Item] = field(
+        default_factory=dict, repr=False, compare=False,
+    )
+
+    def extend(self, other: ScanResult) -> None:
+        self.items.extend(other.items)
+        self.issues.extend(other.issues)
+        self.cancelled = self.cancelled or other.cancelled
+        self._hardlinks.update(other._hardlinks)
+        self._hardlink_originals.update(other._hardlink_originals)
 
     @property
     def total(self) -> int:

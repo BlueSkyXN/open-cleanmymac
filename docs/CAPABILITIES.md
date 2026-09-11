@@ -74,8 +74,8 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | ApplicationLanguages | `scan/clean junk` | `read-only` | 固定 `critical + actionable=false`；不修改签名 app |
 | Time Machine 本地快照提示 | `analyze` | `read-only` | 只显示名称/数量；不宣称精确大小，不删除 |
 | dataless/疑似占位保护 | 所有文件扫描/执行 | `available` | 不保证识别全部已 materialized cloud-synced 文件；真实 provider fixture 待验收 |
-| 运行中应用缓存保护 | `scan/clean junk/ai` | `available` | 专用扫描点及已知 `~/Library/Caches` 归属候选继续显示，但不可执行；进程状态未知时 fail-closed |
-| updater 版本状态保护 | `scan/clean junk` | `available` | 新版/应用缺失/未知状态不可执行；同版/旧版 critical 精确选择并在执行前重判 |
+| 运行中应用缓存保护 | `scan/clean/purge/analyze` | `available` | 共享范围判定覆盖已知根、后代及包含对象的父项；运行中或所需进程状态未知时不可执行，执行前重新识别 |
+| updater 版本状态保护 | `scan/clean/purge/analyze` | `available` | 新版/应用缺失/未知状态不可执行；同版/旧版仅限受支持根 critical 精确选择；扫描后新增暂存或版本变化也使旧选择失效 |
 | 按卷容量汇总 | JSON 扫描/预览 | `available` | 按运行时 device 分组系统盘与外置盘；非文件系统资源不归卷 |
 | 日志/runtime/download 保留期 | `scan/clean junk` | `read-only` | WorkBuddy、Codex、Lark、Shadowrocket、TRAE、UURemote 的公开根；Codex 另按 `YYYY/MM/DD` 分区；不读取正文/包内容或批量删除 |
 | WorkBuddy 个人经验结构 | `scan --domain ai` / `clean ai` / `inspect workbuddy` | `read-only` | expired 后缀、numeric Worker 整组年龄和精确 Electron 缓存；不触碰 binaries、插件、技能、会话历史；见 [经验依据](EXPERIENCE.md) |
@@ -113,8 +113,8 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | ApplicationLanguages | `internal` | `application_languages.py` | metadata/语言/签名风险测试 |
 | Time Machine 本地快照提示 | `internal` | `macos.py`、`analyzer.py` | `tmutil` parser 与根卷分支测试 |
 | dataless/疑似占位保护 | `project-extension` | `models.py`、扫描器、`cleanup.py` | `SF_DATALESS`、zero-block、禁止枚举/最终复核测试 |
-| 运行中应用缓存保护 | `project-extension` | `application_ownership.py`、`engine.py`、`cleanup.py` | 专用/通用入口、进程探测失败、相似 sibling、执行前复核测试 |
-| updater 版本状态保护 | `project-extension` | `updater.py`、`engine.py`、`cleanup.py` | app/ZIP metadata、版本比较、缺失/损坏、执行前变化测试 |
+| 运行中应用缓存保护 | `project-extension` | `application_ownership.py`、`cleanup_guards.py`、`engine.py`、`cleanup.py` | 跨入口/父子范围、进程探测失败、相似 sibling、新增保护对象和执行前复核测试 |
+| updater 版本状态保护 | `project-extension` | `updater.py`、`cleanup_guards.py`、`engine.py`、`cleanup.py` | app/ZIP metadata、父子范围、缺失/损坏、新增暂存及执行前版本变化测试 |
 | 按卷容量汇总 | `project-extension` | `cli.py`、`macos.py` | system/external device JSON 分组测试 + 实机 Trash readback |
 | 日志/runtime/download 保留期诊断 | `project-extension` | `storage_diagnostics.py`、`processes.py` | 固定/动态根、mtime 桶、物理块、ignore、进程/句柄和不可执行测试 |
 | 浏览器 CacheStorage 保留期 | `project-extension` | `storage_diagnostics.py` | 已知浏览器与 Default/Profile 发现、symlink 拒绝、运行态和不可执行测试 |
@@ -149,6 +149,15 @@ Default/DawnCache、根级 GrShaderCache。未采纳来源线索中的 Default/G
 JSON 预览和临时 Trash 精确执行后保留未选数据；不将隔离测试包装成真实浏览器验收。
 
 ## 验证边界
+
+未发布源码修复 Purge 将 `.vitepress` 整根误列为产物的问题，仅识别一级 `cache`、`dist`；
+所有文件系统清理入口共享应用/updater 范围保护，父目录/子目录、Analyze 和环境变量入口
+不能绕过；批量预检及逐项执行重新识别扫描后新增的保护对象和暂存状态。同路径合并保留
+阻断、版本证据及确认要求；修复跨扫描点/顶层文件硬链接重复计量，保留各路径候选。
+非 UTF-8 规则及深层 JSON 规则/配置返回可解析的 `rules_error`/`config_error` 与 exit 2。
+回归见 `test_project_purge.py`、`test_process_protection.py`、`test_updater.py`、
+`test_file_sizing.py`、`test_rules_store.py`、`test_cleanup_guards.py`、`test_json_errors.py`，
+均使用临时夹具；不表示真实用户清理或新发行版已验收。
 
 后续源码（未发布）为通用用户缓存/Darwin 缓存补充精确 bundle ID 的动态归属，保留静态规则，
 验证后的应用路径复用现有运行状态和执行前复核链。未知归属不等于无应用；完整卸载残留判断、

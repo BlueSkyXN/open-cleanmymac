@@ -49,6 +49,52 @@ def _write_artifact(path: Path, mtime: float) -> None:
 
 
 class ProjectPurgeTests(unittest.TestCase):
+    def test_vitepress_cleanup_preserves_configuration_and_theme_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            project = home / "project"
+            vitepress = project / ".vitepress"
+            theme = vitepress / "theme"
+            theme.mkdir(parents=True)
+            (project / "package.json").write_text("{}", encoding="utf-8")
+            sources = [vitepress / "config.ts", theme / "index.ts"]
+            for source in sources:
+                source.write_text("export default {}\n", encoding="utf-8")
+            old = time.time() - 9 * SECONDS_PER_DAY
+            for name in ("cache", "dist", "dist-backup"):
+                _write_artifact(vitepress / name, old)
+            _write_artifact(theme / "dist", old)
+            for path in [*sources, theme, vitepress]:
+                os.utime(path, (old, old))
+            rules = home / "rules.json"
+            rules.write_text('{"schema_version": 1}', encoding="utf-8")
+            (home / ".Trash").mkdir(mode=0o700)
+            with mock.patch.dict(os.environ, {"HOME": str(home)}):
+                result = scan_project_artifacts([project])
+                self.assertEqual(
+                    {item.path for item in result.items},
+                    {vitepress / "cache", vitepress / "dist"},
+                )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = main(["purge", str(project), "--yes", "--json",
+                                 "--rules", str(rules)])
+            self.assertEqual(code, 0)
+            self.assertTrue(all(source.exists() for source in sources))
+            self.assertTrue((vitepress / "dist-backup/payload.bin").exists())
+            self.assertTrue((theme / "dist/payload.bin").exists())
+            self.assertFalse((vitepress / "cache").exists())
+            self.assertFalse((vitepress / "dist").exists())
+            self.assertTrue((home / ".Trash/cache/payload.bin").exists())
+            self.assertTrue((home / ".Trash/dist/payload.bin").exists())
+
+    def test_vitepress_explicit_unmarked_root_keeps_scoped_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp).resolve()
+            _write_artifact(project / ".vitepress/cache", time.time())
+            result = scan_project_artifacts([project], include_unmarked_roots=True)
+            self.assertEqual([item.artifact_name for item in result.items],
+                             [".vitepress/cache"])
+
     def test_consequence_notes_preserve_selection_and_explain_artifact_age(self) -> None:
         from openclean.cli import _item_payload
         from openclean.scanpoints import project_artifact_note

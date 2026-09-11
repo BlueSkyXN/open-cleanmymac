@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
+import os
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
 from openclean.application_ownership import process_markers_for_path
-from openclean.cleanup import execute_cleanup
-from openclean.engine import IgnoreRules, scan_points
+from openclean.cleanup import SelectionError, execute_cleanup, select_cleanup_items
+from openclean.cli import main
+from openclean.engine import IgnoreRules, finalize_overlapping_result, scan_points
+from openclean import engine
+from openclean.models import Item, ScanResult
 from openclean.macos import DarwinUserCacheDiscovery
 from openclean.processes import (
     DeletedOpenFileSnapshot,
@@ -24,6 +32,7 @@ from openclean.processes import (
 from openclean.scanpoints import (
     AI_TOOL_JUNK,
     DEVELOPER_JUNK,
+    DOMAINS,
     SYSTEM_JUNK,
     ScanPoint,
 )
@@ -186,6 +195,165 @@ class ProcessSnapshotTests(unittest.TestCase):
 
 
 class ProcessProtectedScanTests(unittest.TestCase):
+    def test_clean_dev_reuses_other_domains_process_protection(self) -> None:
+        cases = (
+            (".cache/opencode", "opencode serve"),
+            (".cache/chrome-devtools-mcp/chrome-profile/Default/Cache", "chrome-devtools-mcp"),
+        )
+        for relative, command in cases:
+            for failed in (False, True):
+                with self.subTest(relative=relative, failed=failed), tempfile.TemporaryDirectory() as tmp:
+                    home = Path(tmp).resolve()
+                    cache = home / relative
+                    cache.mkdir(parents=True)
+                    (cache / "live.bin").write_bytes(b"cache")
+                    (home / ".Trash").mkdir(mode=0o700)
+                    rules = home / "rules.json"
+                    rules.write_text('{"schema_version": 1}', encoding="utf-8")
+                    uv = next(p for p in DEVELOPER_JUNK if p.category == "uv 缓存")
+                    stdout = io.StringIO()
+                    with mock.patch.dict(os.environ, {"HOME": str(home), "UV_CACHE_DIR": str(cache)}), mock.patch.dict(
+                        DOMAINS, {"developer": [uv]},
+                    ), mock.patch(
+                        "openclean.engine.capture_process_snapshot",
+                        return_value=ProcessSnapshot((command,)),
+                        side_effect=ProcessDetectionError("unavailable") if failed else None,
+                    ), contextlib.redirect_stdout(stdout):
+                        status = main(["clean", "dev", "--select", str(cache), "--include-confirm",
+                                       "--yes", "--json", "--rules", str(rules)])
+                    self.assertEqual(status, 2)
+                    self.assertEqual(json.loads(stdout.getvalue())["error"]["code"], "selection_error")
+                    self.assertTrue((cache / "live.bin").exists())
+                    self.assertEqual(list((home / ".Trash").iterdir()), [])
+
+    def test_registered_owner_matches_descendants_and_present_children_not_siblings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            owner = home / ".cache/opencode"
+            child = owner / "nested"
+            sibling = home / ".cache/opencode-backup"
+            for directory in (child, sibling):
+                directory.mkdir(parents=True)
+                (directory / "entry").write_bytes(b"cache")
+            uv = next(p for p in DEVELOPER_JUNK if p.category == "uv 缓存")
+            for target, blocked in ((child, True), (owner.parent, True), (sibling, False)):
+                with self.subTest(target=target.name), mock.patch.dict(
+                    os.environ, {"HOME": str(home), "UV_CACHE_DIR": str(target)},
+                ), mock.patch("openclean.engine.capture_process_snapshot", return_value=ProcessSnapshot(("opencode",))):
+                    item = next(i for i in scan_points([uv], workers=1).items if i.path == target)
+                    self.assertEqual(item.actionable, not blocked)
+
+    def test_registered_owner_is_rechecked_at_execution(self) -> None:
+        for running in (False, True):
+            with self.subTest(running=running), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp).resolve()
+                cache = home / ".cache/opencode"
+                cache.mkdir(parents=True)
+                (cache / "entry").write_bytes(b"cache")
+                trash = home / ".Trash"
+                trash.mkdir(mode=0o700)
+                uv = next(p for p in DEVELOPER_JUNK if p.category == "uv 缓存")
+                with mock.patch.dict(os.environ, {"HOME": str(home), "UV_CACHE_DIR": str(cache)}), mock.patch(
+                    "openclean.engine.capture_process_snapshot", return_value=ProcessSnapshot(()),
+                ):
+                    result = scan_points([uv], workers=1)
+                    selected = select_cleanup_items(result.items, selectors=[str(cache)], include_confirm=True)
+                    report = execute_cleanup(
+                        selected, IgnoreRules(), home=home, trash_resolver=lambda _: trash,
+                        process_runner=lambda command, **_: subprocess.CompletedProcess(
+                            command, 0, "opencode\n" if running else "", "",
+                        ),
+                    )
+                self.assertEqual(report.complete, not running)
+                self.assertEqual(cache.exists(), running)
+
+    def test_registered_parent_does_not_probe_below_dataless(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            cloud = home / ".cache"
+            (cloud / "opencode").mkdir(parents=True)
+            point = ScanPoint("container", (str(cloud),), process_owner_protection=True)
+            with mock.patch.dict(os.environ, {"HOME": str(home)}), mock.patch(
+                "openclean.models.FileFacts.is_dataless", new=property(lambda facts: facts.path == cloud),
+            ), mock.patch("openclean.engine._inspect_path", wraps=engine._inspect_path) as inspect, mock.patch(
+                "openclean.engine.capture_process_snapshot", return_value=ProcessSnapshot(()),
+            ):
+                result = scan_points([point], workers=1)
+            self.assertTrue(result.complete)
+            self.assertEqual(len(result.items), 1)
+            self.assertFalse(result.items[0].actionable)
+            self.assertFalse(any(Path(call.args[0]).is_relative_to(cloud) and Path(call.args[0]) != cloud
+                                 for call in inspect.call_args_list))
+
+    def test_environment_cache_cannot_bypass_running_owner_or_failed_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            cache = home / "Library/Caches/com.openai.codex"
+            cache.mkdir(parents=True)
+            (cache / "entry.bin").write_bytes(b"cache")
+            uv = replace(next(p for p in DEVELOPER_JUNK if p.category == "uv 缓存"),
+                         domain="developer")
+            generic = replace(next(p for p in SYSTEM_JUNK if p.category == "用户缓存"),
+                              domain="system")
+            for points in ([uv], [generic, uv]):
+                for failure in (False, True):
+                    with self.subTest(generic=len(points) == 2, failure=failure):
+                        with mock.patch.dict(os.environ, {"HOME": str(home), "UV_CACHE_DIR": str(cache)}), mock.patch(
+                            "openclean.engine.capture_process_snapshot",
+                            return_value=ProcessSnapshot(("/Applications/Codex.app/Contents/MacOS/Codex",)),
+                            side_effect=ProcessDetectionError("unavailable") if failure else None,
+                        ):
+                            result = finalize_overlapping_result(scan_points(points, workers=1))
+                        self.assertEqual(len(result.items), 1)
+                        self.assertFalse(result.items[0].actionable)
+                        with self.assertRaises(SelectionError):
+                            select_cleanup_items(result.items, selectors=[str(cache)], include_confirm=True)
+            self.assertTrue((cache / "entry.bin").exists())
+
+    def test_same_path_merge_preserves_block_and_late_start_protection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp).resolve() / "cache"
+            generic = Item(path, 4096, "generic", domain="system",
+                           running_process_markers=("Example.app",))
+            specific = Item(path, 4096, "specific", domain="developer", preselected=True)
+            for blocked in (False, True):
+                guarded = replace(generic, actionable=not blocked,
+                                  action_block_reason="正在运行" if blocked else "")
+                for items in ([guarded, specific], [specific, guarded]):
+                    with self.subTest(blocked=blocked, order=items[0].category):
+                        merged = finalize_overlapping_result(ScanResult(items=items)).items[0]
+                        self.assertEqual(merged.category, "specific")
+                        self.assertEqual(merged.running_process_markers, ("Example.app",))
+                        self.assertEqual(merged.actionable, not blocked)
+                        if blocked:
+                            self.assertFalse(merged.preselected)
+                            self.assertIn("正在运行", merged.action_block_reason)
+
+    def test_environment_owner_is_rechecked_before_execution(self) -> None:
+        for running in (False, True):
+            with self.subTest(running=running), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp).resolve()
+                cache = home / "Library/Caches/com.openai.codex"
+                cache.mkdir(parents=True)
+                (cache / "entry.bin").write_bytes(b"cache")
+                trash = home / ".Trash"
+                trash.mkdir(mode=0o700)
+                uv = next(p for p in DEVELOPER_JUNK if p.category == "uv 缓存")
+                with mock.patch.dict(os.environ, {"HOME": str(home), "UV_CACHE_DIR": str(cache)}), mock.patch(
+                    "openclean.engine.capture_process_snapshot", return_value=ProcessSnapshot(()),
+                ):
+                    result = scan_points([uv], workers=1)
+                    selected = select_cleanup_items(result.items, selectors=[str(cache)], include_confirm=True)
+                    report = execute_cleanup(
+                        selected, IgnoreRules(), home=home, trash_resolver=lambda _: trash,
+                        process_runner=lambda command, **_: subprocess.CompletedProcess(
+                            command, 0, "Codex\n" if running else "", "",
+                        ),
+                    )
+                self.assertEqual(report.complete, not running)
+                self.assertEqual(cache.exists(), running)
+                self.assertEqual((trash / "com.openai.codex/entry.bin").exists(), not running)
+
     def test_running_tool_is_visible_but_non_actionable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "cache"

@@ -16,7 +16,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .application_languages import scan_application_languages
-from .application_ownership import ApplicationResolver, process_markers_for_path
+from .application_ownership import ApplicationResolver
+from .cleanup_guards import CleanupGuardContext
 from .docker import scan_docker_resources
 from .filesystem import filesystem_id_retry, lstat_retry, scandir_entries
 from .knowledge_base import KnowledgeBase
@@ -35,11 +36,7 @@ from .models import (
     normalize_path,
 )
 from .predicates import Predicate, ProtectionGate, SubstringPathPredicate
-from .processes import (
-    ProcessDetectionError,
-    ProcessSnapshot,
-    capture_process_snapshot,
-)
+from .processes import capture_process_snapshot
 from .progress import (
     ProgressSnapshot,
     ProgressTaskSpec,
@@ -51,8 +48,10 @@ from .scanpoints import (
     DOMAINS,
     PROJECT_ARTIFACT_GLOBS,
     PROJECT_ARTIFACT_NAMES,
+    PROJECT_ARTIFACT_SUBDIRECTORIES,
     PROJECT_MARKER_GLOBS,
     PROJECT_MARKER_NAMES,
+    SAFETY_ORDER,
     ScanPoint,
     project_artifact_note,
 )
@@ -66,7 +65,6 @@ from .storage_diagnostics import (
 )
 from .task_graph import TaskSpec as GraphTaskSpec
 from .task_graph import execute_task_graph
-from .updater import assess_updater_candidate
 from .workbuddy import scan_workbuddy_storage
 
 
@@ -153,6 +151,7 @@ def _measure_dir(
     task: str,
     progress: TaskProgress | None = None,
     device_boundary: int | None = None,
+    hardlinks: dict[tuple[int, int], tuple[int, int]] | None = None,
 ) -> _DirectoryMeasurement:
     measurement = _DirectoryMeasurement()
     root_facts = _inspect_path(
@@ -287,6 +286,8 @@ def _measure_dir(
                 else:
                     key = (facts.stat.st_dev, facts.stat.st_ino)
                     if facts.stat.st_nlink > 1:
+                        if hardlinks is not None:
+                            hardlinks[key] = (facts.logical_size, facts.allocated_size)
                         if key in seen_inodes:
                             continue
                         seen_inodes.add(key)
@@ -706,67 +707,61 @@ def _scan_point_candidates(
             )
 
 
+def _apply_scan_guards(item: Item, guards: CleanupGuardContext, result: ScanResult) -> Item:
+    if not item.actionable or item.resource_kind != "filesystem" or item.path is None:
+        return item
+    assessment = guards.assess(
+        item.path,
+        process_markers=item.running_process_markers,
+        darwin_cache_root=item.cleanup_root if item.cleanup_scope == "darwin-user-cache" else None,
+    )
+    if assessment.process_error and not any(i.code == "process_detection_failed" for i in result.issues):
+        result.issues.insert(0, ScanIssue(
+            code="process_detection_failed", message=assessment.process_error,
+            task="running-process-protection",
+        ))
+    if assessment.resource_in_use and not any(i.code == "resource_in_use" for i in result.issues):
+        result.issues.append(ScanIssue(
+            code="resource_in_use", message="检测到相关工具正在运行，候选仅报告且不可执行",
+            task=item.category, blocking=False,
+        ))
+    updater = assessment.updater
+    actionable = not assessment.block_reason
+    return replace(
+        item,
+        note="；".join(part for part in (item.note, assessment.note, assessment.block_reason) if part),
+        actionable=actionable,
+        action_block_reason=assessment.block_reason,
+        running_process_markers=assessment.process_markers,
+        safety="critical" if updater else item.safety,
+        requires_explicit_selection=item.requires_explicit_selection or updater is not None,
+        preselected=bool(item.preselected and actionable and updater is None),
+        updater_status=updater.status if updater else "",
+        installed_version=updater.installed_version if updater else "",
+        staged_version=updater.staged_version if updater else "",
+        updater_external_install=updater.external_install if updater else False,
+    )
+
+
+def _scan_guard_context(protection: Predicate) -> CleanupGuardContext:
+    return CleanupGuardContext(protection, capture_process_snapshot,
+                               application_resolver=ApplicationResolver())
+
+
 def _scan_point(
     sp: ScanPoint,
     ctl: Control,
     protection: Predicate,
     progress: TaskProgress | None = None,
-    process_snapshot: ProcessSnapshot | None = None,
-    application_resolver: ApplicationResolver | None = None,
+    guards: CleanupGuardContext | None = None,
 ) -> ScanResult:
     result = ScanResult()
-    reported_resource_in_use = False
-    seen: set[tuple[int, int]] = set()
+    guards = guards or _scan_guard_context(protection)
     for candidate in _scan_point_candidates(
         sp, ctl, protection, result.issues, progress
     ):
         facts = candidate.facts
-        owner_markers = (
-            process_markers_for_path(
-                facts.path,
-                darwin_cache_root=(
-                    candidate.root.path
-                    if sp.path_provider == "darwin-user-cache"
-                    else None
-                ),
-            )
-            if sp.process_owner_protection
-            else ()
-        )
-        ownership_note = ""
-        if sp.process_owner_protection and not owner_markers and application_resolver is not None:
-            resolution = application_resolver.resolve(
-                facts.path,
-                darwin_cache_root=(
-                    candidate.root.path if sp.path_provider == "darwin-user-cache" else None
-                ),
-            )
-            owner_markers = resolution.process_markers
-            ownership_note = resolution.note
-        process_markers = tuple(
-            dict.fromkeys((*sp.running_process_markers, *owner_markers))
-        )
-        process_state_unknown = bool(process_markers) and process_snapshot is None
-        resource_in_use = bool(
-            process_markers
-            and process_snapshot is not None
-            and process_snapshot.any_running(process_markers)
-        )
-        if resource_in_use and not reported_resource_in_use:
-            result.issues.append(
-                ScanIssue(
-                    code="resource_in_use",
-                    message="检测到相关工具正在运行，候选仅报告且不可执行",
-                    task=sp.category,
-                    blocking=False,
-                )
-            )
-            reported_resource_in_use = True
-        updater = (
-            assess_updater_candidate(facts.path)
-            if sp.updater_protection
-            else None
-        )
+        hardlinks: dict[tuple[int, int], tuple[int, int]] = {}
         is_cloud_file = facts.is_probable_cloud_placeholder
         if is_cloud_file:
             logical_size = (
@@ -782,12 +777,13 @@ def _scan_point(
             measurement = _measure_dir(
                 facts.path,
                 ctl,
-                seen,
+                set(),
                 protection,
                 result.issues,
                 sp.category,
                 progress,
                 facts.stat.st_dev if sp.stay_on_device else None,
+                hardlinks,
             )
             size = measurement.size
             logical_size = measurement.logical_size
@@ -806,10 +802,10 @@ def _scan_point(
             cloud_logical_size = logical_size if is_cloud_file else 0
             excluded_paths = 0
             cross_device_paths = 0
+            if facts.stat.st_nlink > 1:
+                hardlinks[(facts.stat.st_dev, facts.stat.st_ino)] = (logical_size, allocated_size)
         if size > 0 or cloud_file_count > 0:
             note = sp.note
-            if ownership_note:
-                note = f"{note}；{ownership_note}" if note else ownership_note
             if excluded_paths:
                 suffix = f"包含 {excluded_paths} 个忽略/保护路径，默认不选"
                 note = f"{note}；{suffix}" if note else suffix
@@ -828,7 +824,7 @@ def _scan_point(
             environment_override = candidate.path_source == "environment"
             safety = (
                 "critical"
-                if cloud_file_count or updater is not None
+                if cloud_file_count
                 else "confirm"
                 if environment_override and sp.safety == "safe"
                 else sp.safety
@@ -841,23 +837,11 @@ def _scan_point(
             if sp.requires_privilege and "特权帮助器" not in note:
                 suffix = "需要尚未实现的特权帮助器，当前仅只读报告"
                 note = f"{note}；{suffix}" if note else suffix
-            if resource_in_use:
-                suffix = "相关应用正在运行；当前仅报告，退出后需重新扫描"
-                note = f"{note}；{suffix}" if note else suffix
-            elif process_state_unknown:
-                suffix = "无法确认相关应用是否正在运行；当前仅报告"
-                note = f"{note}；{suffix}" if note else suffix
-            if updater is not None:
-                note = f"{note}；{updater.note}" if note else updater.note
-            updater_blocked = updater is not None and updater.blocks_cleanup
             actionable = (
                 excluded_paths == 0
                 and cross_device_paths == 0
                 and cloud_file_count == 0
                 and not sp.requires_privilege
-                and not resource_in_use
-                and not process_state_unknown
-                and not updater_blocked
             )
             if excluded_paths:
                 action_block_reason = "包含忽略或保护路径"
@@ -867,13 +851,6 @@ def _scan_point(
                 action_block_reason = "包含云占位文件"
             elif sp.requires_privilege:
                 action_block_reason = "需要尚未实现的特权帮助器"
-            elif updater_blocked:
-                assert updater is not None
-                action_block_reason = updater.block_reason
-            elif resource_in_use:
-                action_block_reason = "相关应用正在运行"
-            elif process_state_unknown:
-                action_block_reason = "无法确认相关应用是否正在运行"
             else:
                 action_block_reason = ""
             default_selected = (
@@ -906,10 +883,8 @@ def _scan_point(
                     cross_device_paths=cross_device_paths,
                     domain=sp.domain,
                     path_source=candidate.path_source,
-                    requires_explicit_selection=(
-                        environment_override or updater is not None
-                    ),
-                    running_process_markers=process_markers,
+                    requires_explicit_selection=environment_override,
+                    running_process_markers=sp.running_process_markers,
                     cleanup_scope=(
                         "darwin-user-cache"
                         if sp.path_provider == "darwin-user-cache"
@@ -925,37 +900,55 @@ def _scan_point(
                         if sp.path_provider == "darwin-user-cache"
                         else None
                     ),
-                    updater_status=updater.status if updater else "",
-                    installed_version=(
-                        updater.installed_version if updater else ""
-                    ),
-                    staged_version=(
-                        updater.staged_version if updater else ""
-                    ),
-                    updater_external_install=(
-                        updater.external_install if updater else False
-                    ),
                 )
             )
+            result.items[-1] = _apply_scan_guards(result.items[-1], guards, result)
+            if hardlinks:
+                result._hardlinks[result.items[-1]] = hardlinks
     return result
 
 
-def _process_snapshot_for_points(
-    points: list[ScanPoint],
-) -> tuple[ProcessSnapshot | None, ScanIssue | None]:
-    if not any(
-        point.running_process_markers or point.process_owner_protection
-        for point in points
-    ):
-        return None, None
-    try:
-        return capture_process_snapshot(), None
-    except ProcessDetectionError as exc:
-        return None, ScanIssue(
-            code="process_detection_failed",
-            message=str(exc),
-            task="running-process-protection",
-        )
+def _deduplicate_hardlinks(result: ScanResult) -> ScanResult:
+    if not result._hardlinks:
+        return result
+    # 先还原子任务的容量归属，再在合并后的候选中确定唯一归属。
+    originals = [result._hardlink_originals.get(item, item) for item in result.items]
+    measurements = {
+        original: result._hardlinks[item]
+        for item, original in zip(result.items, originals, strict=True)
+        if item in result._hardlinks
+    }
+    owners: dict[tuple[int, int], Path] = {}
+    for item in sorted(measurements, key=lambda item: (-len(item.path.parts), str(item.path))):
+        for identity in measurements[item]:
+            owners.setdefault(identity, item.path)
+
+    deduplicated = ScanResult(issues=list(result.issues), cancelled=result.cancelled)
+    for original in originals:
+        hardlinks = measurements.get(original, {})
+        logical = allocated = 0
+        for identity, sizes in hardlinks.items():
+            owner = owners[identity]
+            # 父项先保留其归属子项的字节，后续路径重叠处理才扣除子树。
+            if owner != original.path and not _is_descendant(owner, original.path):
+                logical += sizes[0]
+                allocated += sizes[1]
+        item = original
+        if logical or allocated:
+            item = replace(
+                original,
+                size=max(0, original.size - allocated),
+                logical_size=(max(0, original.logical_size - logical)
+                              if original.logical_size is not None else None),
+                allocated_size=(max(0, original.allocated_size - allocated)
+                                if original.allocated_size is not None else None),
+                note=f"{original.note}；共享硬链接容量已计入其它候选，本路径仍可独立审阅".lstrip("；"),
+            )
+            deduplicated._hardlink_originals[item] = original
+        deduplicated.items.append(item)
+        if hardlinks:
+            deduplicated._hardlinks[item] = hardlinks
+    return deduplicated
 
 
 def _scan_dynamic_point_with_progress(
@@ -963,6 +956,7 @@ def _scan_dynamic_point_with_progress(
     ctl: Control,
     protection: Predicate,
     progress: TaskProgress,
+    guards: CleanupGuardContext,
 ) -> ScanResult:
     try:
         ctl.checkpoint()
@@ -1009,6 +1003,7 @@ def _scan_dynamic_point_with_progress(
                     )
                 ]
             )
+        result.items = [_apply_scan_guards(item, guards, result) for item in result.items]
         ctl.checkpoint()
     except Cancelled:
         progress.cancel()
@@ -1064,10 +1059,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
             seen_scanners.add(scanner_key)
             unique_dynamic.append(point)
 
-    process_snapshot, process_issue = _process_snapshot_for_points(points)
-    if process_issue is not None:
-        setup_issues.append(process_issue)
-    application_resolver = ApplicationResolver()
+    guards = _scan_guard_context(ignore)
 
     filesystem_ids = [f"filesystem:{index}" for index in range(len(points))]
     dynamic_ids = [
@@ -1099,8 +1091,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
                 ctl,
                 ignore,
                 progress.task(task_id),
-                process_snapshot,
-                application_resolver,
+                guards,
             ),
         )
         for task_id, point in zip(filesystem_ids, points, strict=True)
@@ -1114,6 +1105,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
                     ctl,
                     ignore,
                     progress.task(task_id),
+                    guards,
                 )
             ),
         )
@@ -1170,12 +1162,14 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
             )
         else:
             result.items.extend(task_result.items)
+            result._hardlinks.update(task_result._hardlinks)
+            result._hardlink_originals.update(task_result._hardlink_originals)
         result.issues.extend(task_result.issues)
         result.cancelled = result.cancelled or task_result.cancelled
     if result.cancelled:
         ctl.cancel()
         progress.cancel()
-    return result
+    return _deduplicate_hardlinks(result)
 
 
 def _scan_point_with_progress(
@@ -1183,12 +1177,11 @@ def _scan_point_with_progress(
     ctl: Control,
     ignore: Predicate,
     progress: TaskProgress,
-    process_snapshot: ProcessSnapshot | None,
-    application_resolver: ApplicationResolver,
+    guards: CleanupGuardContext,
 ) -> ScanResult:
     try:
         result = _scan_point(
-            point, ctl, ignore, progress, process_snapshot, application_resolver
+            point, ctl, ignore, progress, guards
         )
     except Cancelled:
         progress.cancel()
@@ -1209,10 +1202,9 @@ def _scan_points_with_progress(
     workers: int,
     progress: WeightedProgress,
     task_ids: list[str],
-    process_snapshot: ProcessSnapshot | None,
+    guards: CleanupGuardContext,
 ) -> ScanResult:
     result = ScanResult()
-    application_resolver = ApplicationResolver()
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {
             ex.submit(
@@ -1221,16 +1213,14 @@ def _scan_points_with_progress(
                 ctl,
                 ignore,
                 progress.task(task_id),
-                process_snapshot,
-                application_resolver,
+                guards,
             ): point
             for point, task_id in zip(points, task_ids, strict=True)
         }
         for future, scan_point in futures.items():
             try:
                 task_result = future.result()
-                result.items.extend(task_result.items)
-                result.issues.extend(task_result.issues)
+                result.extend(task_result)
             except Cancelled:
                 result.cancelled = True
                 ctl.cancel()
@@ -1244,7 +1234,7 @@ def _scan_points_with_progress(
                         task=scan_point.category,
                     )
                 )
-    return result
+    return _deduplicate_hardlinks(result)
 
 
 def scan_points(
@@ -1270,7 +1260,6 @@ def scan_points(
         callback=on_progress,
     )
     progress.start()
-    process_snapshot, process_issue = _process_snapshot_for_points(points)
     result = _scan_points_with_progress(
         points,
         ctl,
@@ -1278,10 +1267,8 @@ def scan_points(
         workers,
         progress,
         task_ids,
-        process_snapshot,
+        _scan_guard_context(ignore),
     )
-    if process_issue is not None:
-        result.issues.insert(0, process_issue)
     return result
 
 
@@ -1299,6 +1286,45 @@ def _overlap_ownership_priority(item: Item) -> tuple[int, bool]:
     return (
         _DOMAIN_SPECIFICITY.get(item.domain, 0),
         bool(item.diagnostic_kind),
+    )
+
+
+def _merge_same_path_guards(preferred: Item, other: Item) -> Item:
+    """分类归属可以替换，运行保护与已知阻断不能因入口不同丢失。"""
+    actionable = preferred.actionable and other.actionable
+    reasons = tuple(dict.fromkeys(
+        item.action_block_reason for item in (preferred, other)
+        if not item.actionable and item.action_block_reason
+    ))
+    updaters = [item for item in (preferred, other) if item.updater_status]
+    updater_fields = ("updater_status", "installed_version", "staged_version", "updater_external_install")
+    updater_values = {tuple(getattr(item, field) for field in updater_fields) for item in updaters}
+    if len(updater_values) > 1:
+        actionable = False
+        reasons += ("同路径 updater 版本证据不一致，需重新扫描",)
+    updater_metadata = (
+        {field: getattr(updaters[0], field) for field in updater_fields}
+        if updaters and preferred.resource_kind == "filesystem" else {}
+    )
+    # 具体分类可细化通用分级，但精确选择及 updater 的领域风险门必须保留。
+    safety = max(
+        [preferred.safety] + [item.safety for item in (preferred, other) if item.requires_explicit_selection],
+        key=SAFETY_ORDER.__getitem__,
+    )
+    return replace(
+        preferred,
+        safety="critical" if updaters else safety,
+        actionable=actionable,
+        action_block_reason="；".join(reasons) if reasons else preferred.action_block_reason,
+        preselected=False if updaters or (preferred.actionable and not actionable) else preferred.preselected,
+        running_process_markers=tuple(dict.fromkeys(
+            (*preferred.running_process_markers, *other.running_process_markers)
+        )),
+        requires_privilege=preferred.requires_privilege or other.requires_privilege,
+        requires_explicit_selection=(
+            preferred.requires_explicit_selection or other.requires_explicit_selection or bool(updaters)
+        ),
+        **updater_metadata,
     )
 
 
@@ -1358,6 +1384,7 @@ def _retention_residual_updates(
 
 def finalize_overlapping_result(result: ScanResult) -> ScanResult:
     """把重叠扫描点分配给最具体项，避免 clean 汇总重复计数。"""
+    result = _deduplicate_hardlinks(result)
     by_path: dict[Path, Item] = {}
     non_overlapping_items: list[Item] = []
     for item in result.items:
@@ -1368,10 +1395,12 @@ def finalize_overlapping_result(result: ScanResult) -> ScanResult:
             non_overlapping_items.append(item)
             continue
         current = by_path.get(item.path)
-        if current is None or _overlap_ownership_priority(
-            item
-        ) > _overlap_ownership_priority(current):
+        if current is None:
             by_path[item.path] = item
+        elif _overlap_ownership_priority(item) > _overlap_ownership_priority(current):
+            by_path[item.path] = _merge_same_path_guards(item, current)
+        else:
+            by_path[item.path] = _merge_same_path_guards(current, item)
 
     items = [
         item
@@ -1510,6 +1539,14 @@ def _is_artifact_name(name: str) -> bool:
     return _matches_name(name, PROJECT_ARTIFACT_NAMES, PROJECT_ARTIFACT_GLOBS)
 
 
+def _project_artifact_name(path: Path) -> str:
+    if _is_artifact_name(path.name):
+        return path.name
+    if path.name in PROJECT_ARTIFACT_SUBDIRECTORIES.get(path.parent.name, ()):
+        return f"{path.parent.name}/{path.name}"
+    return ""
+
+
 def _has_project_marker(names: set[str]) -> bool:
     return any(
         _matches_name(name, PROJECT_MARKER_NAMES, PROJECT_MARKER_GLOBS)
@@ -1588,14 +1625,15 @@ def _discover_project_roots(
         if _has_project_marker(names) or (
             include_unmarked_roots
             and is_search_root
-            and any(_is_artifact_name(name) for name in names)
+            and any(_is_artifact_name(name) or name in PROJECT_ARTIFACT_SUBDIRECTORIES
+                    for name in names)
         ):
             projects.add(facts.path)
 
         for entry in entries:
             if progress is not None:
                 progress.advance()
-            if entry.name == ".git" or _is_artifact_name(entry.name):
+            if entry.name == ".git" or _project_artifact_name(Path(entry.path)):
                 continue
             try:
                 if not entry.is_dir(follow_symlinks=False):
@@ -1642,9 +1680,9 @@ def scan_project_artifacts(
     progress.start()
     discovery_progress = progress.task("project-discovery")
     artifact_progress = progress.task("project-artifacts")
-    seen: set[tuple[int, int]] = set()
     reference_time = time.time() if now is None else now
     preselect_seconds = preselect_age_days * 24 * 60 * 60
+    guards = _scan_guard_context(ignore)
     try:
         project_roots = _discover_project_roots(
             roots,
@@ -1709,7 +1747,9 @@ def scan_project_artifacts(
                 continue
             if not stat.S_ISDIR(child_facts.stat.st_mode):
                 continue
-            if _is_artifact_name(entry.name):
+            artifact_name = _project_artifact_name(child_facts.path)
+            if artifact_name:
+                hardlinks: dict[tuple[int, int], tuple[int, int]] = {}
                 if child_facts.is_dataless:
                     measurement = _DirectoryMeasurement(
                         cloud_file_count=1,
@@ -1719,11 +1759,12 @@ def scan_project_artifacts(
                     measurement = _measure_dir(
                         child_facts.path,
                         ctl,
-                        seen,
+                        set(),
                         ignore,
                         result.issues,
                         "project-artifacts",
                         artifact_progress,
+                        hardlinks=hardlinks,
                     )
                 if measurement.size <= 0 and measurement.cloud_file_count == 0:
                     continue
@@ -1755,13 +1796,13 @@ def scan_project_artifacts(
                     Item(
                         child_facts.path,
                         measurement.size,
-                        f"构建产物({entry.name})",
+                        f"构建产物({artifact_name})",
                         (
                             "critical"
                             if measurement.cloud_file_count
                             else "safe"
                         ),
-                        f"{project_artifact_note(entry.name)}；{selection_note}；不代表整个项目的活跃度",
+                        f"{project_artifact_note(artifact_name)}；{selection_note}；不代表整个项目的活跃度",
                         logical_size=measurement.logical_size,
                         allocated_size=measurement.allocated_size,
                         cloud_file_count=measurement.cloud_file_count,
@@ -1779,7 +1820,7 @@ def scan_project_artifacts(
                         ),
                         identity=child_facts.identity,
                         project_root=project_root,
-                        artifact_name=entry.name,
+                        artifact_name=artifact_name,
                         latest_mtime=latest_mtime,
                         age_days=age_days,
                         preselected=preselected,
@@ -1787,6 +1828,9 @@ def scan_project_artifacts(
                         domain="project",
                     )
                 )
+                result.items[-1] = _apply_scan_guards(result.items[-1], guards, result)
+                if hardlinks:
+                    result._hardlinks[result.items[-1]] = hardlinks
                 continue
             if child_facts.is_dataless:
                 continue
@@ -1807,7 +1851,7 @@ def scan_project_artifacts(
     else:
         artifact_progress.complete()
     result.items.sort(key=lambda item: (str(item.project_root), str(item.path)))
-    return result
+    return _deduplicate_hardlinks(result)
 
 
 def human(n: float) -> str:

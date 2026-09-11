@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import os
 import plistlib
+import subprocess
 import tempfile
 import unittest
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from openclean.cleanup import execute_cleanup
-from openclean.engine import IgnoreRules, scan_points
-from openclean.scanpoints import ScanPoint
+from openclean.cleanup import SelectionError, execute_cleanup, select_cleanup_items
+from openclean.engine import IgnoreRules, finalize_overlapping_result, scan_points
+from openclean.models import ScanResult
+from openclean.processes import ProcessSnapshot
+from openclean.scanpoints import DEVELOPER_JUNK, SYSTEM_JUNK, ScanPoint
 from openclean.updater import (
     assess_updater_candidate,
     assess_updater_staging_root,
@@ -194,6 +198,73 @@ class UpdaterAssessmentTests(unittest.TestCase):
 
 
 class UpdaterScanAndCleanupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        for module in ("engine", "cleanup"):
+            patcher = mock.patch(f"openclean.{module}.capture_process_snapshot",
+                                 return_value=ProcessSnapshot(()))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_environment_updater_and_merge_retain_risk_and_live_version_checks(self) -> None:
+        for include_generic in (False, True):
+            for changed in (False, True):
+                with self.subTest(generic=include_generic, changed=changed), tempfile.TemporaryDirectory() as tmp:
+                    home, _, cache = self._fixture(Path(tmp).resolve(), "1.0", "1.0")
+                    uv = replace(next(p for p in DEVELOPER_JUNK if p.category == "uv 缓存"), domain="developer")
+                    generic = replace(next(p for p in SYSTEM_JUNK if p.category == "用户缓存"), domain="system")
+                    points = [generic, uv] if include_generic else [uv]
+                    trash = home / ".Trash"
+                    trash.mkdir(mode=0o700)
+                    with mock.patch.dict(os.environ, {"HOME": str(home), "UV_CACHE_DIR": str(cache)}), mock.patch(
+                        "openclean.updater._application_roots", return_value=(home / "Applications",),
+                    ), mock.patch("openclean.engine.capture_process_snapshot", return_value=ProcessSnapshot(())):
+                        result = finalize_overlapping_result(scan_points(points, workers=1))
+                        item = result.items[0]
+                        self.assertEqual(item.updater_status, "same_version_residue")
+                        self.assertEqual(item.safety, "critical")
+                        self.assertTrue(item.requires_explicit_selection)
+                        self.assertEqual((item.installed_version, item.staged_version), ("1.0", "1.0"))
+                        with self.assertRaises(SelectionError):
+                            select_cleanup_items(result.items, selectors=[str(cache)], include_confirm=True)
+                        selected = select_cleanup_items(result.items, selectors=[str(cache)], include_critical=True)
+                        if changed:
+                            _write_app(cache / "extracted/build/WorkBuddy.app", "com.workbuddy.workbuddy", "2.0")
+                        report = execute_cleanup(
+                            selected, IgnoreRules(), home=home, trash_resolver=lambda _: trash,
+                            process_runner=lambda command, **_: subprocess.CompletedProcess(command, 0, "", ""),
+                        )
+                    self.assertEqual(report.complete, not changed)
+                    self.assertEqual(cache.exists(), changed)
+                    if changed:
+                        self.assertIn("版本状态已变化", report.outcomes[0].message)
+
+    def test_same_path_merge_preserves_updater_metadata_and_blocks_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home, cache_root, cache = self._fixture(Path(tmp).resolve(), "1.0", "1.0")
+            point = ScanPoint("generic", (str(cache_root),), "confirm", expand_children=True,
+                              updater_protection=True, domain="system")
+            with mock.patch.dict(os.environ, {"HOME": str(home)}), mock.patch(
+                "openclean.updater._application_roots", return_value=(home / "Applications",),
+            ):
+                updater = scan_points([point], workers=1).items[0]
+            plain = replace(updater, category="specific", domain="developer", safety="safe",
+                            updater_status="", installed_version="", staged_version="",
+                            updater_external_install=False, requires_explicit_selection=False)
+            conflict = replace(updater, staged_version="0.9", updater_status="older_version_residue")
+            for other in (plain, conflict):
+                for items in ([updater, other], [other, updater]):
+                    with self.subTest(other=other.category, order=items[0].category):
+                        merged = finalize_overlapping_result(ScanResult(items=items)).items[0]
+                        self.assertEqual(merged.safety, "critical")
+                        self.assertTrue(merged.requires_explicit_selection)
+                        self.assertTrue(merged.updater_status)
+                        if other is plain:
+                            self.assertEqual((merged.updater_status, merged.installed_version, merged.staged_version),
+                                             ("same_version_residue", "1.0", "1.0"))
+                        else:
+                            self.assertFalse(merged.actionable)
+                            self.assertIn("不一致", merged.action_block_reason)
+
     def _fixture(self, root: Path, staged_version: str, installed_version: str):
         home = root / "home"
         applications = home / "Applications"

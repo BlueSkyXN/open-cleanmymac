@@ -18,6 +18,36 @@ from openclean.models import normalize_path
 
 
 class RulesStoreTests(unittest.TestCase):
+    def test_non_utf8_rules_return_structured_errors_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            rules = root / "rules.json"
+            original = b"\xff\xfe"
+            rules.write_bytes(original)
+            for verb in ("list", "add", "remove"):
+                for redact in (False, True):
+                    with self.subTest(verb=verb, redact=redact):
+                        args = ["ignore", verb, "--rules", str(rules), "--json"]
+                        if verb != "list":
+                            args.append(str(root / "target"))
+                        if redact:
+                            args.append("--redact-paths")
+                        stdout, stderr = io.StringIO(), io.StringIO()
+                        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                            status = main(args)
+                        payload = json.loads(stdout.getvalue())
+                        self.assertEqual(status, 2)
+                        self.assertEqual(payload["error"]["code"], "rules_error")
+                        self.assertFalse(payload["executed"])
+                        self.assertEqual(stderr.getvalue(), "")
+                        self.assertEqual(rules.read_bytes(), original)
+                        if redact:
+                            self.assertNotIn(str(root), stdout.getvalue())
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.assertEqual(main(["ignore", "list", "--rules", str(rules)]), 2)
+            self.assertIn("UTF-8", stderr.getvalue())
+
     def test_cli_text_receipt_uses_the_persisted_normalized_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

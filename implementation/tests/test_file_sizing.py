@@ -13,7 +13,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 from openclean.cli import main
-from openclean.engine import scan_points
+from openclean.cleanup import select_cleanup_items
+from openclean.engine import finalize_overlapping_result, scan_points
 from openclean.models import MACOS_SF_DATALESS, FileFacts
 from openclean.scanpoints import DOMAINS, ScanPoint
 
@@ -37,6 +38,72 @@ def _stat_with_blocks(stat_result, blocks: int, *, flags: int | None = None):
 
 
 class FileSizingTests(unittest.TestCase):
+    def test_hardlinks_across_scan_points_and_top_level_files_count_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            first, second = root / "first", root / "second"
+            first.mkdir()
+            second.mkdir()
+            original, linked = first / "one.bin", second / "two.bin"
+            original.write_bytes(b"x" * 65536)
+            linked.hardlink_to(original)
+            cases = (
+                [ScanPoint("first", (str(first),)), ScanPoint("second", (str(second),))],
+                [ScanPoint("files", (str(original), str(linked)))],
+                [ScanPoint("directories", (str(first), str(second)))],
+            )
+            for points in cases:
+                with self.subTest(points=[point.category for point in points]):
+                    result = scan_points(points, workers=2)
+                    self.assertEqual(result.total, original.stat().st_blocks * 512)
+                    self.assertEqual(sum(item.logical_size for item in result.items), 65536)
+                    self.assertEqual(len(result.items), 2)
+                    for item in result.items:
+                        self.assertEqual(select_cleanup_items(result.items, selectors=[str(item.path)]), [item])
+                    finalized = finalize_overlapping_result(result)
+                    self.assertEqual(finalized.total, result.total)
+
+    def test_hardlink_accounting_preserves_parent_child_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            child = root / "child"
+            child.mkdir()
+            original = root / "one.bin"
+            original.write_bytes(b"x" * 65536)
+            (child / "two.bin").hardlink_to(original)
+            residual = root / "keep.bin"
+            residual.write_bytes(b"keep")
+            for points in (
+                [ScanPoint("root", (str(root),)), ScanPoint("child", (str(child),))],
+                [ScanPoint("child", (str(child),)), ScanPoint("root", (str(root),))],
+            ):
+                result = finalize_overlapping_result(scan_points(points, workers=2))
+                self.assertEqual(result.total, sum(p.stat().st_blocks * 512 for p in (original, residual)))
+                self.assertEqual({item.path for item in result.items}, {root, child})
+
+    def test_scan_cli_deduplicates_hardlinks_across_regular_and_project_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            cache = home / "cache"
+            dependencies = home / "project/node_modules"
+            cache.mkdir()
+            dependencies.mkdir(parents=True)
+            original = cache / "package.bin"
+            original.write_bytes(b"x" * 65536)
+            (dependencies / "package.bin").hardlink_to(original)
+            rules = home / "rules.json"
+            rules.write_text('{"schema_version": 1}', encoding="utf-8")
+            output = io.StringIO()
+            with mock.patch.dict(DOMAINS, {"developer": [ScanPoint("cache", (str(cache),))]}), contextlib.redirect_stdout(output):
+                code = main(["scan", "--domain", "developer", "--domain", "project",
+                             "--project-root", str(dependencies.parent), "--rules", str(rules), "--json"])
+            payload = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(payload["schema_version"], 2)
+            self.assertEqual(payload["total_bytes"], original.stat().st_blocks * 512)
+            self.assertEqual({item["path"] for item in payload["items"]}, {str(cache), str(dependencies)})
+            self.assertNotIn("_hardlinks", output.getvalue())
+
     def test_python_runtime_uses_public_or_numeric_darwin_fallback(self) -> None:
         if sys.platform != "darwin":
             self.skipTest("SF_DATALESS fallback is Darwin-specific")
