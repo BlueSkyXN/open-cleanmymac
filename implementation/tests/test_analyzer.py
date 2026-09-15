@@ -13,12 +13,73 @@ from unittest import mock
 
 from openclean.analyzer import AnalyzeError, analyze_path
 from openclean.cli import main
-from openclean.engine import IgnoreRules
+from openclean.engine import IgnoreRules, scan_points
+from openclean.filesystem import lstat_retry
 from openclean.knowledge_base import KnowledgeBase
 from openclean.models import FileFacts
+from openclean.scanpoints import ScanPoint
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_disappeared_child_reports_partial_analysis_without_writes(self) -> None:
+        for is_directory in (False, True):
+            for redact in (False, True):
+                with self.subTest(directory=is_directory, redact=redact), tempfile.TemporaryDirectory() as tmp:
+                    home = Path(tmp).resolve()
+                    root = home / "data"
+                    root.mkdir()
+                    missing = root / "disappearing"
+                    if is_directory:
+                        missing.mkdir()
+                        (missing / "data.bin").write_bytes(b"data")
+                    else:
+                        missing.write_bytes(b"data")
+                    kept = root / "keep.bin"
+                    kept.write_bytes(b"keep")
+                    rules = home / "rules.json"
+                    rules.write_text('{"schema_version": 1}', encoding="utf-8")
+
+                    def disappear_before_measurement(path: Path):
+                        if path == missing:
+                            raise FileNotFoundError(errno.ENOENT, "disappeared", str(path))
+                        return lstat_retry(path)
+
+                    stdout = io.StringIO()
+                    with mock.patch.dict(os.environ, {"HOME": str(home)}), mock.patch(
+                        "openclean.engine.lstat_retry", side_effect=disappear_before_measurement,
+                    ), contextlib.redirect_stdout(stdout):
+                        status = main([
+                            "analyze", str(root), "--rules", str(rules), "--json",
+                            *(["--redact-paths"] if redact else []),
+                        ])
+
+                    payload = json.loads(stdout.getvalue())
+                    self.assertEqual(status, 1)
+                    self.assertFalse(payload["complete"])
+                    self.assertEqual(payload["schema_version"], 2)
+                    self.assertEqual(payload["entry_count_total"], 1)
+                    self.assertEqual(payload["total_bytes"], kept.stat().st_blocks * 512)
+                    self.assertEqual(payload["reclaimable_bytes"], 0)
+                    self.assertEqual(payload["issues"][0]["code"], "path_disappeared")
+                    self.assertTrue(payload["issues"][0]["blocking"])
+                    if redact:
+                        self.assertNotIn(str(home), stdout.getvalue())
+                    else:
+                        self.assertEqual(payload["issues"][0]["path"], str(missing))
+                        self.assertEqual(payload["entries"][0]["path"], str(kept))
+                    self.assertTrue(missing.exists())
+                    self.assertEqual(kept.read_bytes(), b"keep")
+                    self.assertFalse((home / ".Trash").exists())
+
+    def test_missing_optional_scan_root_is_not_an_analysis_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = scan_points([
+                ScanPoint("可选缓存", (str(Path(tmp) / "not-installed"),), domain="system"),
+            ], workers=1)
+        self.assertTrue(result.complete)
+        self.assertEqual(result.items, [])
+        self.assertEqual(result.issues, [])
+
     def test_rejects_dataless_root_without_enumerating_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -88,9 +88,11 @@ class CleanupGuardContext:
         return facts
 
     def _overlaps(self, path: Path, root: Path) -> bool:
-        if path.is_relative_to(root):
+        # 按路径组件比较，避免逐候选反复解析；父容器仍实时探测已知子项。
+        parts, root_parts = path.parts, root.parts
+        if parts[:len(root_parts)] == root_parts:
             return True
-        return root.is_relative_to(path) and self._probe(root) is not None
+        return root_parts[:len(parts)] == parts and self._probe(root) is not None
 
     def _registered_roots(self, darwin_cache_root: Path | None) -> Iterator[tuple[Path, tuple[str, ...]]]:
         for rule in APPLICATION_PATH_RULES:

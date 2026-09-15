@@ -641,7 +641,8 @@ def _scan_point_candidates(
             issues,
             point.category,
             protection,
-            missing_is_issue=False,
+            # Analyze 路径来自本次目录枚举，消失不能当作可选扫描点未安装。
+            missing_is_issue=point.domain == "analyze",
         )
         if (
             root_facts is None

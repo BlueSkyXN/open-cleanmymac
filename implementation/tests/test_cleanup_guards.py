@@ -56,6 +56,25 @@ class CleanupScopeGuardsTests(unittest.TestCase):
     def scan(self, target: Path):
         return scan_points([ScanPoint("scope", (str(target),), "critical")], workers=1).items[0]
 
+    def test_scope_comparison_keeps_component_boundaries_and_live_probes(self) -> None:
+        parent = self.home / "范围[1]"
+        root = parent / "cache"
+        child = root / "nested"
+        sibling = parent / "cache-backup"
+        guards = CleanupGuardContext(IgnoreRules(), lambda: ProcessSnapshot(()))
+        with mock.patch.object(guards, "_probe", wraps=guards._probe) as probe:
+            self.assertTrue(guards._overlaps(root, root))
+            self.assertTrue(guards._overlaps(child, root))
+            self.assertFalse(guards._overlaps(sibling, root))
+            probe.assert_not_called()
+
+            self.assertFalse(guards._overlaps(parent, root))
+            root.mkdir(parents=True)
+            self.assertTrue(guards._overlaps(parent, root))
+            root.rmdir()
+            self.assertFalse(guards._overlaps(parent, root))
+            self.assertEqual(probe.call_count, 3)
+
     def test_clean_and_analyze_protect_same_scope(self) -> None:
         cache = self.cache("Library/Caches/com.openai.codex")
         child = self.cache("Library/Caches/com.openai.codex/nested")
