@@ -146,6 +146,13 @@ Countable total、每任务 Control 聚合和 observer 仅是条件增强；需�
 - Codex 相邻原子写 temp 与 disabled feature cache 仍未做通用判定；目标缺失、JSON 截断或
   当前配置关闭都不能单独证明可删除，后续必须先定义 primary/backup/feature ownership。
 
+### 10. 空间 TUI 不完整结果呈现
+
+curses 空间 TUI（`space_tui.py`）不渲染 `analysis.issues`，交互式 analyze 的退出码
+只看执行结果、不检查 `analysis.complete`；同一不完整分析在 `--json` 路径返回退出码 1，
+`--line-interactive` 会把 issues 打到 stderr。补齐时对齐 Clean/Purge 交互式路径对
+`result.complete` 的判定，并先解决 curses 自由导航对应"哪一次分析"的语义。
+
 ## 后续识别增强（不属于本轮交付范围）
 
 - 通用 Electron 发现、额外项目标记与产物类型绑定、Xcode downloaded runtimes 和

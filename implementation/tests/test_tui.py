@@ -107,6 +107,8 @@ class ReviewTuiStateTests(unittest.TestCase):
         self.assertTrue(result.execution_confirmed)
         self.assertEqual(result.selected, (safe, confirm))
         self.assertTrue(any("Dev" in line for line in screen.lines))
+        self.assertTrue(any("永久删除" in line for line in screen.lines))
+        self.assertFalse(any("永久释放" in line for line in screen.lines))
 
     def test_without_yes_confirmation_only_submits_preview(self) -> None:
         safe = _item("safe", "safe", preselected=True)

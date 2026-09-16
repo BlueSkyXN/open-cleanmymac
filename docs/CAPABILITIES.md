@@ -150,6 +150,12 @@ JSON 预览和临时 Trash 精确执行后保留未选数据；不将隔离测�
 
 ## 验证边界
 
+未发布源码修复 Analyze 已枚举子项消失后仍报告完整成功的问题：返回 `path_disappeared`、
+`complete=false` 和非零退出码，保留其它已测结果，普通可选扫描点缺失仍正常跳过。
+应用保护范围改用路径组件比较以减少重复解析，保留父子边界、相似名称排除与实时探测；
+清理文本/TUI 区分永久删除操作与实际空间净增量。回归见 `test_analyzer.py`、
+`test_cleanup_guards.py`、`test_cleanup_cli.py` 和 `test_tui.py`。
+
 未发布源码修复 Purge 将 `.vitepress` 整根误列为产物的问题，仅识别一级 `cache`、`dist`；
 所有文件系统清理入口共享应用/updater 范围保护，父目录/子目录、Analyze 和环境变量入口
 不能绕过；批量预检及逐项执行重新识别扫描后新增的保护对象和暂存状态。同路径合并保留

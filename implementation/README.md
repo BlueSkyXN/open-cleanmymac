@@ -179,7 +179,9 @@ JSON 字段与容量口径不变。子集锚点不代表父目录可删除，ret
 - `unsupported_bytes`：既不可执行又非特权候选的占用。
 
 `scan` 额外返回 `command`、`mode` 和 `requested_domains`。`analyze` 返回 `top`、
-`truncated`、`entry_count_total`、`entry_count_returned`。路径候选的
+`truncated`、`entry_count_total`、`entry_count_returned`。已枚举的 Analyze 子项在计量前消失时，
+返回 `path_disappeared`、`complete=false` 和退出码 1，同时保留其它已测结果；
+普通扫描点对应的软件未安装、目录不存在仍正常跳过。路径候选的
 `cross_device_paths` 表示递归时跳过的其它文件系统挂载点数量；非零候选不可执行。
 `device_id` 是本次启动中的文件系统设备标识；顶层 `volumes` 按设备分别汇总
 `mount_point`、`system_disk` 和容量。updater 项额外返回 `updater_status`、
@@ -227,6 +229,9 @@ JSON 字段与容量口径不变。子集锚点不代表父目录可删除，ret
 序列化阶段把同一文档内路径映射成稳定 opaque ref；输出声明
 `selection_replayable=false`，不能直接用于后续 `--select`。`complete=true` 只表示
 没有 blocking issue；仍应检查 `issues`。
+
+清理回执中的 `moved_to_trash_bytes` 与 `permanently_deleted_bytes` 是操作计量，
+不是执行前后磁盘可用空间的净增量；文本与 TUI 不承诺等量释放空间。
 
 Agent `clean` 的嵌套计划也应脱敏路径和 Run/Finding ID。已发布 `0.24.0a1` 在此处存在
 元组遍历遗漏；`0.24.0a2` 已在源码修复，旧安装包输出不能因带有 `redaction.enabled=true` 就视为可公开分享。

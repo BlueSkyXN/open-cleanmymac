@@ -668,8 +668,9 @@ def _print_cleanup_summary(report: CleanupReport) -> None:
     print("─" * 88)
     print(
         f"移动到 Trash：{human(report.moved_bytes)}；"
-        f"永久释放：{human(report.deleted_bytes)}"
+        f"永久删除计量：{human(report.deleted_bytes)}"
     )
+    print("以上为操作计量，不代表磁盘可用空间净增量。")
 
 
 def _line_menu(menu: str) -> MenuChoice:

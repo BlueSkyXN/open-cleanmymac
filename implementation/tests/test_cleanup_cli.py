@@ -110,6 +110,9 @@ class CleanupCliTests(unittest.TestCase):
         self.assertIn("当前选择", output)
         self.assertNotIn("只读预览", output)
         self.assertNotIn("默认预选", output)
+        self.assertIn("永久删除计量：", output)
+        self.assertIn("不代表磁盘可用空间净增量", output)
+        self.assertNotIn("永久释放", output)
 
     def test_preview_never_mutates_even_with_selection_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

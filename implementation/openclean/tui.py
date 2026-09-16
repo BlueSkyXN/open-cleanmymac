@@ -376,7 +376,7 @@ def _draw_confirmation(
         screen,
         height - 2,
         0,
-        "普通项进入同卷 Trash；Trash/Docker prune 会永久释放空间。",
+        "普通项进入同卷 Trash；Trash/Docker prune 是永久删除操作。",
         width,
     )
     screen.refresh()
