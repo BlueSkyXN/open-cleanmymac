@@ -45,6 +45,12 @@ UPDATER_RULES: tuple[UpdaterRule, ...] = (
         staged_archive_globs=("downloads/WorkBuddy-*.zip",),
     ),
     UpdaterRule(
+        "Library/Caches/com.tencent.workbuddy.mac.BundleMigration",
+        "com.tencent.workbuddy.mac",
+        staged_app_globs=("extracted/*/WorkBuddy.app",),
+        staged_archive_globs=("downloads/WorkBuddy-*.zip",),
+    ),
+    UpdaterRule(
         "Library/Caches/com.aliyun.lingma.ide.ShipIt",
         "com.aliyun.lingma.ide",
         staged_app_globs=("update.*/Qoder CN IDE.app",),

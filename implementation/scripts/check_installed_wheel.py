@@ -68,6 +68,21 @@ def main() -> None:
         assert not call("clean", *selection, "--yes", "--include-critical", expected_status=1)["executed"]
         assert (logs / "fixture").read_bytes() == b"keep workbuddy logs"
 
+        large_root = home / "Downloads"
+        large_root.mkdir()
+        large_file = large_root / "large.bin"
+        large_file.write_bytes(b"x" * 8192)
+        (large_root / "small.bin").write_bytes(b"keep")
+        large = call("large", str(large_root), "--min-size", "1KiB")
+        assert large["complete"] and large["matched_file_count"] == 1
+        assert large["items"][0]["path"] == str(large_file)
+        assert not large["items"][0]["actionable"] and large["reclaimable_bytes"] == 0
+        redacted_large = call("large", str(large_root), "--min-size", "1KiB", "--redact-paths")
+        assert str(home) not in json.dumps(redacted_large)
+        assert redacted_large["items"][0]["path"].startswith("path:")
+        assert call("large", str(large_root), "--yes", expected_status=2)["error"]["code"] == "usage_error"
+        assert large_file.read_bytes() == b"x" * 8192
+
         project = home / "Projects/demo"
         project.mkdir(parents=True)
         (project / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
@@ -99,7 +114,7 @@ def main() -> None:
         assert rescanned["complete"]
         assert all(Path(item["path"]).name != ".venv"
                    for group in rescanned["projects"] for item in group["artifacts"])
-    print("PASS: installed wheel Codex/WorkBuddy inspect/show/preview/refusal and exact purge execution/rescan; temporary HOME only")
+    print("PASS: installed wheel Codex/WorkBuddy inspect/show/preview/refusal, large files and exact purge execution/rescan; temporary HOME only")
 
 
 if __name__ == "__main__":

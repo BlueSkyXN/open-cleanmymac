@@ -155,6 +155,17 @@ curses 空间 TUI（`space_tui.py`）不渲染 `analysis.issues`，交互式 ana
 
 ## 后续识别增强（不属于本轮交付范围）
 
+- ZCode `dev.zcode.app.ShipIt` / `@zcodedesktop-updater` 尚未注册 updater 版本规则；需有
+  可核实的暂存布局、精确 app/ZIP 元数据与下载中状态。相同 bundle ID 的多个安装副本仍
+  保持版本不明，不以应用名称筛选或最高版本替代安装目标证据。
+- GOCACHE/GOMODCACHE/HOMEBREW_CACHE 已在可信用户缓存根内生效；外置缓存与按卷 pnpm
+  store 的发现仍需独立定义定位、归属和只读/动作边界，不能只添加环境变量或放开任意路径。
+- `large` 大文件扫描已实现只读发现；Large & Old 的访问日期/年龄过滤仍未实现，后续需明确
+  Spotlight 缺失与 mtime 的区别，不把大小或未修改天数直接解释为闲置或可删除。
+- 语言资源审计尚未发现外置 Applications 根；缺失开发语言元数据时会记录 issue 并跳过，
+  后续可补按应用的未知量/跳过明细，不推断所有 `.lproj` 都可删除。
+- 文本摘要仍可改善：`scan` 已区分发现量与当前可执行量，Clean/Purge 更突出当前选择；
+  只读诊断、运行阻断与真实可回收量不应混为一类。退出应用不保证解锁，重启也不保证净释放。
 - 通用 Electron 发现、额外项目标记与产物类型绑定、Xcode downloaded runtimes 和
   CoreSymbolication 专项仍是待核实对象，不作为本轮必做功能或可执行清理承诺。
 

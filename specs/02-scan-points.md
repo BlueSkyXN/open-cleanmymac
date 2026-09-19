@@ -49,6 +49,11 @@ REQ-DETECT-003：复用下表能力和 [EXPERIENCE](../docs/EXPERIENCE.md) 的�
 
 VAL-DETECT-003：专项 JSON/文本/详情解释使用本次 Item 证据，不额外读取正文，不把诊断字节计入可回收。
 
+Codex Electron 补充精确缓存子目录时沿用运行保护、confirm 与默认不选；不递归扩展任意
+profile/partition，不包含登录、历史、会话和组件目录。Service Worker/CacheStorage 保持
+retention 只读诊断，年龄不构成删除依据；测试须覆盖近似名称、symlink、ignore、应用运行
+和扫描后启动，以及已退出时仍无法执行 CacheStorage 清理。
+
 ## 4. WorkBuddy 的具体经验约束
 
 REQ-DETECT-004：expired 日志只匹配有效日期的
@@ -62,16 +67,39 @@ REQ-DETECT-006：Electron 只识别 `app/session` 和 `Partitions/*` 下的
 `Cache`、`Code Cache`、`GPUCache`、`DawnGraphiteCache`、`DawnWebGPUCache`。
 保留 Cookies、IndexedDB、Local Storage、binaries、plugins、skills、项目、会话和历史。
 已有两个 BundleMigration ID 的归属保护继续有效，不泛化名称相似目录。
+两个 ID 的已知暂存 app/ZIP 还须分别通过 updater 版本判定；运行进程已退出不代表暂存
+更新已安装。不得用另一代 ID 的安装应用、最高版本或应用名称替代缺失的版本归属证据。
 
 VAL-DETECT-004/005/006：[test_workbuddy.py](../implementation/tests/test_workbuddy.py)
 覆盖正反名称、整组年龄、跳过与预算、session/Partitions 范围、经典/inspect 共用和拒绝执行。
 新增清理动作需要新的对象与前后证据，不能把此只读规格改成执行授权。
 
-## 5. 实现与测试
+## 5. 大文件只读扫描
+
+`large [path]` 是用户批准的文件级占用发现增强，与五域垃圾扫描和一级目录 Analyze 并存。
+默认扫描家目录、表观大小至少 100 MiB、显示最大的 50 个普通文件；支持显式目录、大小
+阈值、显示数量、扫描项预算、已有 ignore/protect、JSON 和路径脱敏。不提供选择或删除参数。
+
+REQ-DETECT-007：只读取元数据，逐级排除 symlink、云占位和保护路径，限制在扫描根所在
+设备与文件系统；不能因文件很大而把它归为垃圾。包含所选范围内普通应用/缓存文件，
+不默默排除五域扫描点。硬链接按 device/inode 保留一个已发现路径、容量只计一次。
+单文件表观大小用于筛选和排序，已分配块独立报告；mtime 仅表示修改时间，不冒充访问日期。
+
+REQ-DETECT-008：所有结果零预选、不可执行、reclaimable 为 0。默认最多检查 200000 个
+目录项，权限/元数据失败或预算耗尽保留部分结果并返回 complete=false/exit 1；取消返回
+exit 130。显示 top 截断与扫描不完整分开，合计覆盖全部已匹配文件，不只当前显示列表。
+有意跳过的类别与数量必须可见，complete 仅表示已完成该边界内的遍历，不承诺全盘可访问。
+
+VAL-DETECT-007/008：临时夹具覆盖递归、阈值/排序/top、物理/逻辑计量、硬链接、ignore、
+symlink、dataless 根与后代、跨文件系统、消失/权限、预算/取消、JSON 脱敏和拒绝执行参数。
+
+## 6. 实现与测试
 
 - 经典发现：[test_scan_point_expansion.py](../implementation/tests/test_scan_point_expansion.py)、[test_system_junk_discovery.py](../implementation/tests/test_system_junk_discovery.py)、[test_project_purge.py](../implementation/tests/test_project_purge.py)。
 - 专项诊断：[storage_diagnostics.py](../implementation/openclean/storage_diagnostics.py)、[workbuddy.py](../implementation/openclean/workbuddy.py)、[test_storage_diagnostics.py](../implementation/tests/test_storage_diagnostics.py)。
 - updater/进程：[test_updater.py](../implementation/tests/test_updater.py)、[test_process_protection.py](../implementation/tests/test_process_protection.py)。
+- WorkBuddy 两代 updater、Codex 缓存及受限环境路径：[test_cache_gap_regressions.py](../implementation/tests/test_cache_gap_regressions.py)。
+- 大文件只读发现：[test_large_files.py](../implementation/tests/test_large_files.py)。
 - 动作边界：[06](06-system-flow.md)、[07](07-predicate-engine.md)。
 
 不在本文设“每个软件都建包”的目标，也不保留未经证实的厂商私有路径字典。

@@ -7,10 +7,12 @@ from __future__ import annotations
 import argparse
 import json
 import hashlib
+import re
 import stat
 import sys
 from collections.abc import Iterable
 from dataclasses import asdict
+from decimal import Decimal
 from pathlib import Path
 
 from . import __version__
@@ -41,6 +43,7 @@ from .knowledge_base import (
     RulesStore,
 )
 from .knowledge_update import KnowledgeUpdateError, update_knowledge_base
+from .large_files import DEFAULT_MAX_ENTRIES, DEFAULT_MIN_SIZE, LargeFilesError, scan_large_files
 from .macos import volume_mount_point
 from .models import Item, ScanResult, normalize_path
 from .navigator import run_space_browser
@@ -126,6 +129,7 @@ def _command_from_argv(argv: list[str]) -> str:
         "scan",
         "clean",
         "analyze",
+        "large",
         "purge",
         "optimize",
         "ignore",
@@ -210,6 +214,18 @@ def _positive_int(value: str) -> int:
     if parsed < 1:
         raise argparse.ArgumentTypeError("必须是大于 0 的整数")
     return parsed
+
+
+def _byte_size(value: str) -> int:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(B|[KMGT]I?B)?", value.strip(), re.IGNORECASE)
+    if match is None:
+        raise argparse.ArgumentTypeError("大小应为正字节数或如 100MB、100MiB、1.5GiB")
+    unit = (match[2] or "B").upper()
+    power = "KMGT".index(unit[0]) + 1 if unit != "B" else 0
+    size = int(Decimal(match[1]) * (1024 if "I" in unit else 1000) ** power)
+    if size < 1:
+        raise argparse.ArgumentTypeError("大小必须至少为 1 字节")
+    return size
 
 
 def _nonnegative_int(value: str) -> int:
@@ -970,6 +986,41 @@ def _print_clean_report(
     _print_issues(result)
 
 
+def _print_large_report(result, args: argparse.Namespace) -> None:
+    if args.json:
+        _print_json({
+            "command": "large", "mode": "report", "executed": False,
+            "root": str(result.root), "min_size_bytes": args.min_size,
+            "size_basis": "logical", "top": args.top, "max_entries": args.max_entries,
+            "complete": result.complete, "cancelled": result.cancelled,
+            "truncated": result.truncated,
+            "scanned_entries": result.scanned_entries, "scanned_files": result.scanned_files,
+            "matched_file_count": result.matched_files, "returned_file_count": len(result.items),
+            "logical_bytes": result.logical_bytes, "allocated_bytes": result.allocated_bytes,
+            "potential_bytes": result.allocated_bytes, "reclaimable_bytes": 0, "preselected_bytes": 0,
+            "skipped": result.skipped,
+            "items": [_item_payload(item) for item in result.items],
+            "issues": [_issue_payload(issue) for issue in result.issues],
+        }, redact_paths=args.redact_paths, path_seeds=args._raw_argv)
+        return
+    print(f"\n大文件扫描：{result.root}（表观大小 ≥ {human(args.min_size)}）")
+    print(f"{'表观大小':>12}  {'已分配空间':>12}  {'修改距今天数':>12}  路径")
+    for item in result.items:
+        print(f"{human(item.logical_size):>12}  {human(item.allocated_size):>12}  {item.age_days:>12}  {item.path}")
+    print(f"\n匹配 {result.matched_files} 个文件，显示 {len(result.items)} 个"
+          + ("（列表已截断）" if result.truncated else ""))
+    print(f"匹配文件表观合计 {human(result.logical_bytes)}；已分配合计 {human(result.allocated_bytes)}；"
+          "可回收量 0 B，本命令只读。")
+    print("修改时间不等于最后使用时间；占用不代表垃圾，APFS 共享块不代表独占空间。")
+    if any(result.skipped.values()):
+        labels = {"ignored": "忽略/保护", "unreadable": "元数据失败", "symlinks": "符号链接",
+                  "cloud_placeholders": "云占位", "cross_filesystem": "跨文件系统",
+                  "hardlink_aliases": "重复硬链接", "special_files": "特殊文件"}
+        print("跳过：" + "，".join(f"{labels[key]} {count}" for key, count in result.skipped.items() if count))
+    print("扫描完整（在上述边界内）" if result.complete else "扫描不完整；仅展示本次已取得的结果。")
+    _print_issues(result)
+
+
 def _print_analyze_report(
     analysis: SpaceAnalysis,
     as_json: bool,
@@ -1575,6 +1626,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_json_output_options(analyze)
 
+    large = sub.add_parser(
+        "large", help="递归扫描大文件；仅只读报告，不提供清理操作",
+        description="按表观大小递归列出普通文件；不读取正文、不跟随符号链接、不跨文件系统。",
+    )
+    large.add_argument("path", nargs="?", type=Path, default=Path.home(), help="扫描目录；默认家目录")
+    large.add_argument("--min-size", type=_byte_size, default=DEFAULT_MIN_SIZE,
+                       help="表观大小下限；默认 100MiB；支持 B/KB/MB/GB/TB 与 KiB/MiB/GiB/TiB")
+    large.add_argument("--top", type=_nonnegative_int, default=50, help="显示最大的 N 个文件；默认 50，0 为全部")
+    large.add_argument("--max-entries", type=_positive_int, default=DEFAULT_MAX_ENTRIES,
+                       help="最多检查的目录项数；默认 200000，达到上限时返回不完整结果")
+    _add_rule_options(large)
+    _add_json_output_options(large)
+
     purge = sub.add_parser(
         "purge",
         help="按项目扫描可重建产物；仅 --yes 才执行当前选择",
@@ -2018,6 +2082,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if (
             result.complete and (cleanup is None or cleanup.complete)
         ) else 1
+
+    if args.cmd == "large":
+        try:
+            ignore = _load_ignore_rules(args)
+            result = scan_large_files(args.path, min_size=args.min_size, top=args.top,
+                                      max_entries=args.max_entries, protection=ignore)
+        except KnowledgeBaseError as exc:
+            return _fail(args, "large", "rules_error", f"规则加载失败：{exc}")
+        except LargeFilesError as exc:
+            return _fail(args, "large", "invalid_path", str(exc))
+        except KeyboardInterrupt:
+            return _fail(args, "large", "cancelled", "已取消。", exit_code=130)
+        _print_large_report(result, args)
+        return 130 if result.cancelled else 0 if result.complete else 1
 
     if args.cmd == "analyze":
         try:

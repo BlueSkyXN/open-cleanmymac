@@ -8,7 +8,7 @@
 临时写路径和 guard 状态，不读取真实 `HOME`。curses TUI 另有由生产绘制函数生成的确定性
 SVG，不冒充 macOS Terminal 截图。
 
-> **两套命令面**：`make preview` 当前覆盖经典五域命令族（`scan`/`clean`/`purge`/`analyze`/
+> **两套命令面**：`make preview` 当前覆盖经典五域命令族及大文件扫描（`scan`/`clean`/`purge`/`analyze`/`large`/
 > `optimize`/`ignore`/`config`/`cat`）。新增的 **Agent Runtime**（`inspect`/`show`/
 > `clean --run --finding`/`strategy`，`codex`/`workbuddy` pack）的隔离端到端验证由 `test_agent_*` 与 `test_workbuddy.py`
 > 承载（inspect→show→clean 预览→授权执行，全部在 `TemporaryDirectory` 内、mock 进程/句柄
@@ -46,13 +46,13 @@ AI 浏览器补齐测试在临时 profile 中验证八个新增精确路径及�
 {
   "workspace": "TemporaryDirectory",
   "real_user_data_modified": false,
-  "passed": true,
-  "scenario_count": 19
+  "passed": true
 }
 ```
 
 脚本会 mock 动态进程、Docker、Trash 和语言偏好发现，避免读取或调用真实 Docker daemon、
 真实用户 Trash、正式规则服务和特权 helper。它不需要也不会请求 sudo。
+`scenario_count` 和逐场景结果以本次实际运行输出为准。
 
 ## 实际运行结果
 
@@ -70,6 +70,7 @@ PASS  clean-ai-preview                   exit=0   ai 只读预览 1 个候选
 PASS  clean-trash-preview                exit=0   trash 只读预览 2 个候选
 PASS  purge-preview                      exit=0   项目产物按项目分组，只读预览成功
 PASS  analyze-preview                    exit=0   一级空间分析、排序和卷信息预览成功
+PASS  large-files-preview                exit=0   递归大文件发现、逻辑/物理计量与只读报告成功
 PASS  ignore-lifecycle                   exit=0   忽略规则仅在临时 rules.json 中完成增查删
 PASS  config-lifecycle                   exit=0   analytics 偏好仅写入临时 0600 配置
 PASS  cat                                exit=0   终端猫 JSON 输出成功
@@ -81,7 +82,6 @@ PASS  purge-temp-execution               exit=0   旧项目产物仅移动到临
 PASS  analyze-temp-execution             exit=0   精确选择项仅移动到临时同卷 Trash
 PASS  optimize-ram-guard                 exit=1   无安全公开执行器时明确拒绝且非零退出
 PASS  optimize-purgeable-guard           exit=1   无安全公开执行器时明确拒绝且非零退出
-结果：19/19 个可执行预览场景通过。
 ```
 
 这里的 `exit=1` 是 `optimize` 的预期 guard 契约，不是 preview failure。测试还验证
@@ -133,6 +133,7 @@ SVG 只使用静态元素，无脚本、`foreignObject`、外部字体或外部 
 | 只读清理 | clean junk/dev/ai/trash |
 | 项目 | purge 发现、分组、7 天预选 |
 | 空间 | analyze 一级排序、卷信息 |
+| 大文件 | large 递归文件阈值、表观/已分配计量、零预选与只读 |
 | 本地状态 | ignore add/list/remove、config analytics on/off |
 | 临时执行 | clean junk/dev/ai、精确 clean trash、purge、analyze |
 | 安全拒绝 | optimize ram、optimize purgeable |

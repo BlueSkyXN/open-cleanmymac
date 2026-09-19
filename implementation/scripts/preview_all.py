@@ -346,6 +346,23 @@ def _run_preview() -> tuple[list[PreviewResult], list[dict[str, str]]]:
                     summary="一级空间分析、排序和卷信息预览成功",
                 )
 
+                status, stdout, _ = _run_cli(cli_main, [
+                    "large", str(paths["analyze_root"]), "--min-size", "1KiB",
+                    "--rules", str(paths["rules"]), "--json",
+                ])
+                large_payload = _json_payload(stdout)
+                _record(
+                    results, identifier="large-files-preview",
+                    command="openclean large <TEMP_PATH> --min-size 1KiB --json",
+                    status=status, expected_status=0,
+                    condition=(large_payload.get("complete") is True
+                               and large_payload.get("matched_file_count") == 1
+                               and large_payload.get("reclaimable_bytes") == 0
+                               and all(not item["actionable"] for item in large_payload["items"])
+                               and paths["analyze_file"].exists()),
+                    summary="递归大文件发现、逻辑/物理计量与只读报告成功",
+                )
+
                 lifecycle_statuses = []
                 lifecycle_payloads = []
                 for action in ("add", "list", "remove"):

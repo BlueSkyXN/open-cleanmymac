@@ -76,7 +76,12 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | dataless/疑似占位保护 | 所有文件扫描/执行 | `available` | 不保证识别全部已 materialized cloud-synced 文件；真实 provider fixture 待验收 |
 | 运行中应用缓存保护 | `scan/clean/purge/analyze` | `available` | 共享范围判定覆盖已知根、后代及包含对象的父项；运行中或所需进程状态未知时不可执行，执行前重新识别 |
 | updater 版本状态保护 | `scan/clean/purge/analyze` | `available` | 新版/应用缺失/未知状态不可执行；同版/旧版仅限受支持根 critical 精确选择；扫描后新增暂存或版本变化也使旧选择失效 |
+| WorkBuddy 两代 BundleMigration | `scan/clean junk` | `available` | 分别校验旧/新 bundle ID 的暂存 app 与 ZIP；待安装包、损坏 ZIP、安装缺失和版本冲突均阻断；不混用两代安装元数据 |
+| Codex Electron 精确缓存 | `scan/clean ai` | `available` | 已知根与精确浏览器分区中的 Cache/Code Cache/GPU/Dawn、根级 shader/CRX 缓存；confirm、默认不选、运行保护及执行前复核 |
+| Codex 浏览器 CacheStorage | `scan/clean ai` | `read-only` | 已知根与精确浏览器分区中的 Service Worker/CacheStorage，仅报告元数据与 retention；保留登录、历史、会话和组件数据 |
+| Go/Homebrew 环境缓存路径 | `scan/clean dev` | `available`（受限） | 跟随 GOCACHE/GOMODCACHE/HOMEBREW_CACHE，但仅限可信用户缓存根；要求精确选择，外置卷路径仍拒绝 |
 | 按卷容量汇总 | JSON 扫描/预览 | `available` | 按运行时 device 分组系统盘与外置盘；非文件系统资源不归卷 |
+| 递归大文件扫描 | `large [path]` | `read-only` | 表观大小阈值/排序、独立物理计量、top/预算、硬链接去重、忽略/云/跨卷边界；无访问日期推断、无清理执行器 |
 | 日志/runtime/download 保留期 | `scan/clean junk` | `read-only` | WorkBuddy、Codex、Lark、Shadowrocket、TRAE、UURemote 的公开根；Codex 另按 `YYYY/MM/DD` 分区；不读取正文/包内容或批量删除 |
 | WorkBuddy 个人经验结构 | `scan --domain ai` / `clean ai` / `inspect workbuddy` | `read-only` | expired 后缀、numeric Worker 整组年龄和精确 Electron 缓存；不触碰 binaries、插件、技能、会话历史；见 [经验依据](EXPERIENCE.md) |
 | 浏览器 CacheStorage 保留期 | `scan/clean junk` | `read-only` | Chrome/Brave/Edge/Comet Default/Profile 根；不读取 origin、Cookies、Login Data、IndexedDB 或整个 Profile |
@@ -149,6 +154,15 @@ Default/DawnCache、根级 GrShaderCache。未采纳来源线索中的 Default/G
 JSON 预览和临时 Trash 精确执行后保留未选数据；不将隔离测试包装成真实浏览器验收。
 
 ## 验证边界
+
+大文件发现见 `test_large_files.py`，隔离预览及 wheel 安装验收也包含 `large`：递归阈值、
+top 与预算区分、物理/逻辑计量、硬链接、保护/云/跨卷、部分失败/取消和 JSON 脱敏。
+这些验证不把文件大小或 mtime 转为删除资格，也不证明能识别全部 File Provider 状态。
+
+WorkBuddy 新 ID、Codex 精确缓存/CacheStorage 和 Go/Homebrew 环境路径的后续源码回归见
+`test_cache_gap_regressions.py`：临时 app/ZIP 正反样本、父子保护、执行前版本/进程变化、
+精确选择与未选数据保留、只读拒绝、symlink/ignore 和环境可信根限制。实机扫描仅证明
+当前路径识别与保护状态，容量随应用运行变化，不代表新增缓存动作已做真实删除验收。
 
 未发布源码修复 Analyze 已枚举子项消失后仍报告完整成功的问题：返回 `path_disappeared`、
 `complete=false` 和非零退出码，保留其它已测结果，普通可选扫描点缺失仍正常跳过。
