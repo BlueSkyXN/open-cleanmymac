@@ -8,7 +8,14 @@ import unicodedata
 MIN_WIDTH = 48
 MIN_HEIGHT = 14
 _colors_enabled = False
-ROLE_PAIRS = {"title": 1, "focus": 2, "warning": 3, "danger": 4, "selected": 5}
+_theme = "auto"
+ROLE_PAIRS = {"title": 1, "warning": 3, "danger": 4, "selected": 5}
+# 使用 256 色索引，避开可自定义的前 16 个 ANSI 色及粗体映射为亮色的设置。
+# auto 始终沿用终端默认前景/背景，不从 TERM、COLORFGBG 或 macOS 外观猜测背景。
+COLOR_SCHEMES = {
+    "light": {"title": 24, "warning": 94, "danger": 124, "selected": 22},
+    "dark": {"title": 81, "warning": 221, "danger": 210, "selected": 114},
+}
 
 
 def safe_text(value: object) -> str:
@@ -57,35 +64,37 @@ def wrap_cells(value: object, width: int) -> list[str]:
 
 
 def init_styles() -> None:
-    global _colors_enabled
+    global _colors_enabled, _theme
     _colors_enabled = False
-    if "NO_COLOR" in os.environ or os.environ.get("TERM") == "dumb":
-        return
+    requested = os.environ.get("OPENCLEAN_THEME", "auto").strip().lower()
+    _theme = requested if requested in {"auto", *COLOR_SCHEMES} else "auto"
     try:
         if not curses.has_colors():
             return
         curses.start_color()
+        # curses.wrapper 会先初始化白字黑底的 pair 0；NO_COLOR 也必须恢复终端默认色。
         curses.use_default_colors()
-        for role, foreground, background in (
-            ("title", curses.COLOR_CYAN, -1),
-            ("focus", curses.COLOR_BLACK, curses.COLOR_CYAN),
-            ("warning", curses.COLOR_YELLOW, -1),
-            ("danger", curses.COLOR_RED, -1),
-            ("selected", curses.COLOR_GREEN, -1),
-        ):
-            curses.init_pair(ROLE_PAIRS[role], foreground, background)
+        if "NO_COLOR" in os.environ or os.environ.get("TERM") == "dumb" or \
+                _theme == "auto" or getattr(curses, "COLORS", 0) < 256:
+            return
+        for role, foreground in COLOR_SCHEMES[_theme].items():
+            curses.init_pair(ROLE_PAIRS[role], foreground, -1)
         _colors_enabled = True
     except curses.error:
         pass
 
 
 def style(role: str) -> int:
+    # 默认色反白可随 iTerm2/Terminal 的前景与背景变化，无需读取 stdin 的终端查询响应。
+    if role == "focus":
+        return curses.A_REVERSE
     if role == "muted":
-        return curses.A_DIM
-    attribute = curses.A_BOLD if role in {"title", "focus", "warning", "danger", "selected"} else 0
+        return curses.A_NORMAL
+    # 不叠加 A_BOLD/A_DIM：iTerm2 可独立配置粗体颜色和 faint 强度。
+    attribute = curses.A_UNDERLINE if role in {"title", "danger"} else curses.A_NORMAL
     if _colors_enabled and role in ROLE_PAIRS:
         return attribute | curses.color_pair(ROLE_PAIRS[role])
-    return attribute | (curses.A_REVERSE if role == "focus" else 0)
+    return attribute
 
 
 def draw_text(screen, row: int, column: int, value: object, width: int, role: str = "plain") -> None:

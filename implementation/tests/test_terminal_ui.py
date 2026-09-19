@@ -18,13 +18,110 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from openclean import terminal_ui
 from openclean.analyzer import SpaceAnalysis, SpaceEntry
 from openclean.cli import _print_clean_report, _print_report
 from openclean.models import Item, ScanIssue, ScanResult
 from openclean.space_tui import _draw_browser
 from openclean.terminal_ui import cell_width, clip_cells, draw_footer, init_styles, pad_cells, safe_text, style
 from openclean.tui import ReviewGroup, _draw_confirmation, _draw_items, _item_key, _run_review
-from scripts.capture_tui_assets import GridScreen
+from scripts.capture_tui_assets import GridScreen, cell_colors, indexed_color, preview_styles
+
+
+class TerminalThemeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        for patcher in (
+            mock.patch.dict(os.environ, {"TERM": "xterm-256color"}, clear=True),
+            mock.patch.object(terminal_ui, "_colors_enabled", False),
+            mock.patch.object(terminal_ui, "_theme", "auto"),
+            mock.patch("curses.has_colors", return_value=True),
+            mock.patch("curses.start_color"),
+            mock.patch("curses.use_default_colors"),
+            mock.patch("curses.COLORS", 256, create=True),
+            mock.patch("curses.color_pair", side_effect=lambda pair: pair << 8),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_auto_uses_native_colors_without_guessing_terminal_background(self) -> None:
+        for theme in ("auto", "unknown"):
+            for hint in ("0;15", "15;0"):
+                with self.subTest(theme=theme, hint=hint), mock.patch.dict(os.environ, {
+                    "OPENCLEAN_THEME": theme, "COLORFGBG": hint, "TERM_PROGRAM": "iTerm.app",
+                }), mock.patch("curses.init_pair") as register, mock.patch("curses.init_color") as palette:
+                    init_styles()
+                    register.assert_not_called()
+                    palette.assert_not_called()
+                    self.assertFalse(terminal_ui._colors_enabled)
+                    self.assertEqual(style("focus"), curses.A_REVERSE)
+
+    def test_explicit_schemes_keep_default_background_and_native_focus(self) -> None:
+        for theme in ("light", "dark"):
+            with self.subTest(theme=theme), preview_styles(theme) as pairs:
+                self.assertTrue(terminal_ui._colors_enabled)
+                for role, foreground in terminal_ui.COLOR_SCHEMES[theme].items():
+                    self.assertGreaterEqual(foreground, 16)
+                    self.assertEqual(pairs[terminal_ui.ROLE_PAIRS[role]], (foreground, -1))
+                    self.assertTrue(style(role) & curses.A_COLOR)
+                self.assertEqual(style("focus"), curses.A_REVERSE)
+                for role in ("plain", "title", "warning", "danger", "selected", "muted", "focus"):
+                    self.assertFalse(style(role) & (curses.A_BOLD | curses.A_DIM), role)
+
+    def test_color_overrides_and_limited_terminals_fall_back(self) -> None:
+        for environment, colors, supported in (
+            ({"NO_COLOR": ""}, 256, True),
+            ({"TERM": "dumb"}, 256, True),
+            ({}, 8, True),
+            ({}, 16, True),
+            ({}, 256, False),
+        ):
+            with self.subTest(environment=environment, colors=colors, supported=supported), \
+                    mock.patch.dict(os.environ, {"OPENCLEAN_THEME": "light", **environment}), \
+                    mock.patch("curses.COLORS", colors), \
+                    mock.patch("curses.has_colors", return_value=supported), \
+                    mock.patch("curses.init_pair") as register:
+                init_styles()
+                register.assert_not_called()
+                self.assertFalse(terminal_ui._colors_enabled)
+                self.assertEqual(style("focus"), curses.A_REVERSE)
+                self.assertEqual(style("muted"), curses.A_NORMAL)
+
+    def test_initialization_failure_resets_previously_enabled_colors(self) -> None:
+        for operation in ("start_color", "use_default_colors", "init_pair"):
+            with self.subTest(operation=operation), \
+                    mock.patch.dict(os.environ, {"OPENCLEAN_THEME": "dark"}), \
+                    mock.patch.object(terminal_ui, "_colors_enabled", True), \
+                    mock.patch(f"curses.{operation}", side_effect=curses.error):
+                init_styles()
+                self.assertFalse(terminal_ui._colors_enabled)
+                self.assertFalse(style("title") & curses.A_COLOR)
+                self.assertEqual(style("focus"), curses.A_REVERSE)
+
+    def test_reference_light_and_dark_text_meets_contrast_target(self) -> None:
+        def luminance(color):
+            components = [int(color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+            linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+                      for value in components]
+            return sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+        for appearance in ("light", "dark"):
+            for theme in ("auto", appearance):
+                with preview_styles(theme) as pairs:
+                    screen = GridScreen(appearance=appearance, color_pairs=pairs)
+                    for role in ("plain", "title", "warning", "danger", "selected", "muted", "focus"):
+                        with self.subTest(appearance=appearance, theme=theme, role=role):
+                            values = sorted(luminance(color) for color in cell_colors(screen, style(role)))
+                            self.assertGreaterEqual((values[1] + 0.05) / (values[0] + 0.05), 4.5)
+
+    def test_preview_colors_follow_production_pairs_and_reverse_video(self) -> None:
+        for appearance in ("light", "dark"):
+            with preview_styles(appearance) as pairs:
+                screen = GridScreen(appearance=appearance, color_pairs=pairs)
+                self.assertEqual(cell_colors(screen, style("focus")),
+                                 (screen.profile["background"], screen.profile["foreground"]))
+                self.assertEqual(cell_colors(screen, style("selected")),
+                                 (indexed_color(terminal_ui.COLOR_SCHEMES[appearance]["selected"]),
+                                  screen.profile["background"]))
 
 
 class TerminalPresentationTests(unittest.TestCase):
@@ -80,11 +177,14 @@ class TerminalPresentationTests(unittest.TestCase):
             self.assertIn("按 Y", text)
             self.assertIn("返回列表", text)
 
-    def test_no_color_skips_color_initialization_but_keeps_focus(self) -> None:
-        with mock.patch.dict(os.environ, {"NO_COLOR": ""}), mock.patch("curses.start_color") as start:
+    def test_no_color_restores_default_background_without_custom_colors(self) -> None:
+        with mock.patch.dict(os.environ, {"NO_COLOR": ""}), \
+                mock.patch("curses.has_colors", return_value=True), mock.patch("curses.start_color"), \
+                mock.patch("curses.use_default_colors") as defaults, mock.patch("curses.init_pair") as register:
             init_styles()
             self.assertTrue(style("focus") & curses.A_REVERSE)
-            start.assert_not_called()
+            defaults.assert_called_once_with()
+            register.assert_not_called()
 
     def test_small_review_ignores_hidden_confirmation_until_resize(self) -> None:
         item = self.items()[0]
@@ -142,9 +242,20 @@ class TerminalPresentationTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "darwin", "原生 macOS curses PTY 验证")
     def test_native_curses_keeps_chinese_and_preview_keyboard_flow(self) -> None:
+        for environment, colored in (
+            ({"OPENCLEAN_THEME": "auto"}, False),
+            ({"OPENCLEAN_THEME": "light"}, True),
+            ({"OPENCLEAN_THEME": "dark"}, True),
+            ({"OPENCLEAN_THEME": "light", "NO_COLOR": ""}, False),
+        ):
+            with self.subTest(environment=environment):
+                self.run_native_session(environment, colored)
+
+    def run_native_session(self, environment: dict[str, str], colored: bool) -> None:
         program = '''
 import curses, json
 from pathlib import Path
+from openclean import terminal_ui
 from openclean.models import Item
 from openclean.tui import ReviewGroup, _draw_items, _run_review
 from openclean.terminal_ui import init_styles
@@ -156,13 +267,16 @@ def session(screen):
     text = screen.instr(4, 0).decode('utf-8')
     result = _run_review(screen, groups, title='Clean', allow_execution=False)
     return {'chinese': '中文缓存' in text, 'selected': len(result.selected),
-            'submitted': result.submitted, 'executed': result.execution_confirmed}
+            'submitted': result.submitted, 'executed': result.execution_confirmed,
+            'colored': terminal_ui._colors_enabled, 'default_pair': curses.pair_content(0)}
 print('FRAME_RESULT:' + json.dumps(curses.wrapper(session)))
 '''
         with tempfile.TemporaryDirectory() as temporary:
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
             env = {**os.environ, "HOME": temporary, "TERM": "xterm-256color"}
+            env.pop("NO_COLOR", None)
+            env.update(environment)
             process = subprocess.Popen([sys.executable, "-c", program], stdin=slave, stdout=slave,
                                        stderr=slave, env=env)
             os.close(slave)
@@ -191,7 +305,9 @@ print('FRAME_RESULT:' + json.dumps(curses.wrapper(session)))
                     process.wait()
                 os.close(master)
             payload = json.loads(captured.split(b"FRAME_RESULT:")[-1].strip())
-            self.assertEqual(payload, {"chinese": True, "selected": 1, "submitted": True, "executed": False})
+            self.assertEqual(payload, {"chinese": True, "selected": 1, "submitted": True,
+                                       "executed": False, "colored": colored, "default_pair": [-1, -1]})
+            self.assertNotIn(b"]11;?", captured)  # 不查询背景，避免响应与键盘输入混用。
 
 
 if __name__ == "__main__":

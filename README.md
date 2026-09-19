@@ -37,7 +37,10 @@ fail-closed，不会伪报成功。
 是唯一发行渠道，已发布版本和附件以发行页为准；不通过 PyPI、Homebrew 或其他包管理器分发。
 
 <p align="center">
-  <img src="docs/assets/tui-clean-review.svg" alt="Clean TUI 候选审阅，使用固定合成数据" width="920">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/tui-clean-review-light.svg">
+    <img src="docs/assets/tui-clean-review.svg" alt="Clean TUI 候选审阅，使用固定合成数据" width="920">
+  </picture>
 </p>
 
 上图由当前 Clean TUI 的生产绘制函数生成，使用固定合成候选。更多画面见
@@ -54,7 +57,9 @@ Codex Electron 精确缓存以 confirm、默认不选展示，浏览器 CacheSto
 不代表已经支持外置卷缓存迁移。具体范围见 [实现说明](implementation/README.md)。
 新增 `large [path]` 递归发现大文件，按表观大小筛选/排序，另报已分配空间；始终只读。
 CLI 文本报告将候选与完整路径分行，并区分发现、可操作、选择和阻断量；TUI 增加整行焦点、
-状态配色、中文列宽对齐、窄屏快捷键换行及空间占比条。`NO_COLOR` 可使用单色显示。
+中文列宽对齐、窄屏快捷键换行及空间占比条。默认 `OPENCLEAN_THEME=auto` 使用终端自己的
+前景/背景和反白焦点，适配 iTerm2、Terminal 的白底或深色配置；不使用粗体颜色或淡化提示。
+256 色终端可用 `OPENCLEAN_THEME=light|dark` 显式启用对应底色的状态配色，`NO_COLOR` 优先。
 这里的图形交互是终端内 TUI，项目没有独立桌面 GUI。
 未知归属不等于可安全删除；Purge 的年龄表示产物及其内容的修改时间，不代表项目闲置。
 命令、JSON schema v2、默认选择和既有静态规则保持兼容，详见 [CHANGELOG](CHANGELOG.md)。
