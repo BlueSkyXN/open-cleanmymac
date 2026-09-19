@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import curses
 import html
+import io
 import sys
 import unicodedata
 import xml.etree.ElementTree as ET
@@ -20,9 +23,11 @@ if str(IMPLEMENTATION_ROOT) not in sys.path:
 REPOSITORY_ROOT = IMPLEMENTATION_ROOT.parent
 DEFAULT_OUTPUT_DIR = REPOSITORY_ROOT / "docs" / "assets"
 ASSET_NAMES = (
+    "tui-menu.svg",
     "tui-clean-review.svg",
     "tui-clean-confirm.svg",
     "tui-analyze.svg",
+    "cli-scan.svg",
 )
 TERMINAL_HEIGHT = 24
 TERMINAL_WIDTH = 120
@@ -62,6 +67,7 @@ class GridScreen:
             [None for _ in range(self.width)]
             for _ in range(self.height)
         ]
+        self.attributes = [[0 for _ in range(self.width)] for _ in range(self.height)]
 
     def addnstr(
         self,
@@ -69,6 +75,7 @@ class GridScreen:
         column: int,
         text: str,
         length: int,
+        attribute: int = 0,
     ) -> None:
         if not 0 <= row < self.height or column < 0 or column >= self.width:
             return
@@ -84,9 +91,11 @@ class GridScreen:
             if cursor + width > limit:
                 break
             self.cells[row][cursor] = character
+            self.attributes[row][cursor] = attribute
             previous = cursor
             for continuation in range(1, width):
                 self.cells[row][cursor + continuation] = ""
+                self.attributes[row][cursor + continuation] = attribute
             cursor += width
 
     def refresh(self) -> None:
@@ -140,12 +149,25 @@ def _svg(screen: GridScreen, *, title: str, description: str) -> str:
     ]
     for row_index, row in enumerate(screen.cells):
         baseline = TOP_MARGIN + (row_index + 1) * CELL_HEIGHT - 5
+        focused = [index for index, attribute in enumerate(screen.attributes[row_index])
+                   if (attribute >> 8) & 255 == 2 or attribute & curses.A_REVERSE]
+        if focused:
+            elements.append(f'    <rect x="{LEFT_MARGIN + min(focused) * CELL_WIDTH}" '
+                            f'y="{TOP_MARGIN + row_index * CELL_HEIGHT}" '
+                            f'width="{(max(focused) - min(focused) + 1) * CELL_WIDTH}" '
+                            f'height="{CELL_HEIGHT}" fill="#80d9e1"/>')
         for column, character in enumerate(row):
             if character in {None, "", " "}:
                 continue
             x = LEFT_MARGIN + column * CELL_WIDTH
+            attribute = screen.attributes[row_index][column]
+            pair = (attribute >> 8) & 255
+            fill = {1: "#80d9e1", 2: "#10212b", 3: "#f2cb82", 4: "#ff9a91", 5: "#9bd6aa"}.get(
+                pair, "#9ba8b8" if attribute & curses.A_DIM else "#c9d1d9",
+            )
+            weight = ' font-weight="bold"' if attribute & curses.A_BOLD else ""
             elements.append(
-                f'    <text x="{x}" y="{baseline}">'
+                f'    <text x="{x}" y="{baseline}" fill="{fill}"{weight}>'
                 f"{html.escape(character)}</text>"
             )
     elements.extend(("  </g>", "</svg>", ""))
@@ -326,12 +348,39 @@ def _render_analyze() -> str:
     )
 
 
+def _render_menu() -> str:
+    from openclean.tui import _draw_menu
+
+    screen = GridScreen()
+    _draw_menu(screen, "root", 0)
+    return _svg(screen, title="OpenClean · 主菜单", description="生产主菜单绘制函数的固定预览，不执行清理。")
+
+
+def _render_cli_scan() -> str:
+    from openclean.cli import _print_report
+    from openclean.models import ScanResult
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        _print_report(ScanResult(items=list(_clean_items())), False, ["developer"])
+    lines = output.getvalue().splitlines()
+    screen = GridScreen(height=max(24, len(lines) + 2))
+    for row, line in enumerate(lines):
+        screen.addnstr(row, 1, line, len(line.encode("utf-8")))
+    return _svg(screen, title="OpenClean CLI · 扫描报告", description="生产 CLI 文本报告，仅使用固定合成候选。")
+
+
 def render_assets() -> dict[str, str]:
-    assets = {
-        "tui-clean-review.svg": _render_clean_review(),
-        "tui-clean-confirm.svg": _render_clean_confirmation(),
-        "tui-analyze.svg": _render_analyze(),
-    }
+    with mock.patch("openclean.terminal_ui._colors_enabled", True), mock.patch(
+        "curses.color_pair", side_effect=lambda pair: pair << 8,
+    ):
+        assets = {
+            "tui-menu.svg": _render_menu(),
+            "tui-clean-review.svg": _render_clean_review(),
+            "tui-clean-confirm.svg": _render_clean_confirmation(),
+            "tui-analyze.svg": _render_analyze(),
+            "cli-scan.svg": _render_cli_scan(),
+        }
     if tuple(assets) != ASSET_NAMES:
         raise AssertionError("TUI 资产名称与清单不一致")
     forbidden = (

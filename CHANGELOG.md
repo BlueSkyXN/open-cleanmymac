@@ -43,6 +43,10 @@
 
 ### Changed
 
+- 改善 CLI/TUI 视觉：文本候选与完整路径分行，摘要区分发现、可执行、选择和阻断量；
+  终端界面使用整行焦点、选中/阻断配色、中文列宽对齐、长文本省略和快捷键换行。
+  Analyze 显示文件名、占比条及首个阻断问题；主菜单与确认页统一层级。支持 NO_COLOR
+  单色回退，小于 48×14 时保留选择并暂停隐藏操作。JSON、执行保护和确认步骤保持兼容。
 - Codex Electron 缓存补充已观察根和精确浏览器分区：confirm、默认不选、运行中不可执行；
   Service Worker/CacheStorage 单独复用只读 retention，不将登录、历史、会话或组件目录当缓存。
 - 开发域增加 GOCACHE/GOMODCACHE/HOMEBREW_CACHE 环境路径识别，沿用可信用户缓存根、

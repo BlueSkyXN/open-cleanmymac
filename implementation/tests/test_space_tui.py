@@ -34,7 +34,7 @@ class _FakeScreen:
     def erase(self) -> None:
         self.lines.append("<erase>")
 
-    def addnstr(self, _row: int, _column: int, text: str, _length: int) -> None:
+    def addnstr(self, _row: int, _column: int, text: str, _length: int, _attribute: int = 0) -> None:
         self.lines.append(text)
 
     def refresh(self) -> None:

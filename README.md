@@ -53,6 +53,9 @@ Codex Electron 精确缓存以 confirm、默认不选展示，浏览器 CacheSto
 `GOCACHE`、`GOMODCACHE`、`HOMEBREW_CACHE` 纳入环境路径识别，但仍仅接受可信用户缓存根，
 不代表已经支持外置卷缓存迁移。具体范围见 [实现说明](implementation/README.md)。
 新增 `large [path]` 递归发现大文件，按表观大小筛选/排序，另报已分配空间；始终只读。
+CLI 文本报告将候选与完整路径分行，并区分发现、可操作、选择和阻断量；TUI 增加整行焦点、
+状态配色、中文列宽对齐、窄屏快捷键换行及空间占比条。`NO_COLOR` 可使用单色显示。
+这里的图形交互是终端内 TUI，项目没有独立桌面 GUI。
 未知归属不等于可安全删除；Purge 的年龄表示产物及其内容的修改时间，不代表项目闲置。
 命令、JSON schema v2、默认选择和既有静态规则保持兼容，详见 [CHANGELOG](CHANGELOG.md)。
 

@@ -54,6 +54,7 @@ from .runtime.inspect_service import inspect_target, validated_home
 from .runtime.run_store import RunStore, finding_to_dict, default_run_store_dir
 from .scanpoints import DOMAINS
 from .space_tui import SpaceTUIUnavailable, review_space
+from .terminal_ui import pad_cells, safe_text
 from .strategies.registry import StrategyRegistry, pack_hash
 from .tui import (
     MENU_ITEMS, MENU_TITLES, MenuChoice, ReviewGroup, TUIUnavailable,
@@ -774,6 +775,22 @@ def _scan_summary(result: ScanResult) -> dict[str, object]:
     }
 
 
+def _print_text_item(name: str, item: Item, *, selected: bool = False, extra: str = "") -> None:
+    marker = "[!]" if not item.actionable else "[x]" if selected else "[ ]"
+    state = "只读诊断" if item.diagnostic_kind else "不可执行" if not item.actionable else "需逐项选择" if item.requires_explicit_selection else "可审阅"
+    print(f"  {marker} {pad_cells(name, 30)} {human(item.size):>10}  {item.safety:<8} {state}{safe_text(extra)}")
+    print(f"      {safe_text(_item_location(item))}")
+    annotations = _item_annotations(item).strip()
+    if annotations:
+        print(f"      {safe_text(annotations)}")
+
+
+def _print_text_totals(result: ScanResult, *, selection_label: str = "当前选择") -> None:
+    print(f"发现 {human(result.total)} · 当前可执行 {human(result.actionable_total)}")
+    print(f"{selection_label} {human(result.preselected_total)} · "
+          f"只读/阻断 {human(sum(item.size for item in result.items if not item.actionable))}")
+
+
 def _print_report(
     result: ScanResult,
     as_json: bool,
@@ -799,20 +816,14 @@ def _print_report(
         return
 
     cats = result.by_category()
-    print(f"\n{'类别':<22}{'大小':>10}  {'安全':<8} 路径")
+    print("\n扫描结果 · 只读报告")
     print("─" * 78)
     for cat, items in sorted(cats.items(),
                              key=lambda kv: -sum(i.size for i in kv[1])):
         for i in sorted(items, key=lambda x: -x.size):
-            print(
-                f"{cat:<22}{human(i.size):>10}  "
-                f"{i.safety:<8} {_item_location(i)}{_item_annotations(i)}"
-            )
+            _print_text_item(cat, i, selected=i.preselected is True)
     print("─" * 78)
-    print(
-        f"{'合计发现':<22}{human(result.total):>10}；"
-        f"当前可执行 {human(result.actionable_total)}"
-    )
+    _print_text_totals(result, selection_label="默认预选")
     _print_issues(result)
 
 
@@ -871,25 +882,17 @@ def _print_purge_report(
         project_total = sum(item.size for item in items)
         print(f"\n{project_root.name}  {human(project_total)}  {project_root}")
         for item in sorted(items, key=lambda candidate: -candidate.size):
-            marker = "[x]" if item.preselected else "[ ]"
             age = f"{item.age_days} 天" if item.age_days is not None else "未知"
             cloud = (
                 f"  云占位 {item.cloud_file_count}"
                 if item.cloud_file_count
                 else ""
             )
-            print(
-                f"  {marker} {item.artifact_name:<20} "
-                f"{human(item.size):>10}  {age:>8}  "
-                f"{item.safety:<8} {item.path}{cloud}{_item_annotations(item)}"
-            )
+            _print_text_item(item.artifact_name, item, selected=item.preselected is True, extra=f" · {age}{cloud}")
             if cleanup is None and item.note:
-                print(f"      {item.note}")
+                print(f"      {safe_text(item.note)}")
     print("\n" + "─" * 88)
-    print(
-        f"发现 {human(result.total)}；当前选择 "
-        f"{human(result.preselected_total)}"
-    )
+    _print_text_totals(result)
     if cleanup is None:
         print("当前是只读预览；添加 --yes 才会执行当前选择。")
     else:
@@ -961,24 +964,16 @@ def _print_clean_report(
         domain_total = sum(item.size for item in items)
         print(f"\n{CLEAN_DOMAIN_LABELS[domain]}  {human(domain_total)}")
         for item in sorted(items, key=lambda candidate: -candidate.size):
-            marker = "[x]" if item.preselected else "[ ]"
             cloud = (
                 f"  云占位 {item.cloud_file_count}"
                 if item.cloud_file_count
                 else ""
             )
-            print(
-                f"  {marker} {item.category:<24} "
-                f"{human(item.size):>10}  {item.safety:<8} "
-                f"{_item_location(item)}{cloud}{_item_annotations(item)}"
-            )
+            _print_text_item(item.category, item, selected=item.preselected is True, extra=cloud)
             for evidence in item_diagnostic_summary(item):
                 print(f"      {evidence}")
     print("\n" + "─" * 88)
-    print(
-        f"发现 {human(result.total)}；当前选择 "
-        f"{human(result.preselected_total)}"
-    )
+    _print_text_totals(result)
     if cleanup is None:
         print("当前是只读预览；添加 --yes 才会执行当前选择。")
     else:
@@ -1004,9 +999,10 @@ def _print_large_report(result, args: argparse.Namespace) -> None:
         }, redact_paths=args.redact_paths, path_seeds=args._raw_argv)
         return
     print(f"\n大文件扫描：{result.root}（表观大小 ≥ {human(args.min_size)}）")
-    print(f"{'表观大小':>12}  {'已分配空间':>12}  {'修改距今天数':>12}  路径")
+    print(f"{pad_cells('表观大小', 12, right=True)}  {pad_cells('已分配空间', 12, right=True)}  "
+          f"{pad_cells('修改距今天数', 12, right=True)}  路径")
     for item in result.items:
-        print(f"{human(item.logical_size):>12}  {human(item.allocated_size):>12}  {item.age_days:>12}  {item.path}")
+        print(f"{human(item.logical_size):>12}  {human(item.allocated_size):>12}  {item.age_days:>12}  {safe_text(item.path)}")
     print(f"\n匹配 {result.matched_files} 个文件，显示 {len(result.items)} 个"
           + ("（列表已截断）" if result.truncated else ""))
     print(f"匹配文件表观合计 {human(result.logical_bytes)}；已分配合计 {human(result.allocated_bytes)}；"
