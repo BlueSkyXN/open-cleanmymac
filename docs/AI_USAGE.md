@@ -22,11 +22,17 @@ openclean scan --domain project --project-root "$ROOT" --json
 openclean clean dev --no-interactive --json
 openclean purge "$ROOT" --no-interactive --json
 openclean analyze "$ROOT" --top 20 --no-interactive --json
+openclean large ~/Downloads --min-size 100MiB --top 50 --json
 ```
 
 `scan` 默认聚合全部五域，`--domain` 可重复。`--project-root` 必须配合
 `--domain project`，并指向现有的非 symlink 目录。上面的 `clean`、`purge` 和 `analyze`
 均为只读预览。
+
+`large` 是独立的大文件发现入口，不属于五域垃圾分类。读取 `size_basis=logical`、
+`logical_bytes` 与 `allocated_bytes`，区分 `truncated`（显示数量限制）与 `complete=false`
+（扫描预算/错误/取消）。合计覆盖全部已匹配文件；`skipped` 说明未计量的类型。全部结果
+零预选、不可执行、可回收量 0；不能从大小或 mtime 推导用户已不再需要文件。
 
 ## 五个扫描域
 

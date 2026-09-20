@@ -839,6 +839,31 @@ def _capture_runtime_snapshots(
     return processes, open_files
 
 
+def scan_codex_browser_storage_diagnostics(protection: Predicate) -> ScanResult:
+    """只读计量已观察到的 Codex 浏览器根；不扩展任意分区或 profile。"""
+    result = ScanResult()
+    processes, open_files = _capture_runtime_snapshots(
+        result, task="Codex 浏览器 CacheStorage 保留期",
+    )
+    scanned = scan_retention_rules(
+        tuple(
+            RetentionRule(
+                "Codex 浏览器 CacheStorage 保留期",
+                f"~/Library/Application Support/Codex/{prefix}Service Worker/CacheStorage",
+                _CODEX_PROCESS_MARKERS,
+            )
+            for prefix in (
+                "", "Default/", "codex-browser-app/", "Partitions/codex-browser-app/",
+                "Default/Partitions/codex-browser-app/",
+            )
+        ),
+        protection, process_snapshot=processes, open_files=open_files,
+    )
+    result.items.extend(scanned.items)
+    result.issues.extend(scanned.issues)
+    return result
+
+
 def scan_retention_diagnostics(protection: Predicate) -> ScanResult:
     result = ScanResult()
     dynamic_rules, discovery_issues = discover_darwin_transient_retention_rules()

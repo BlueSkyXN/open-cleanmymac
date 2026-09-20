@@ -9,8 +9,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增 `large [path]` 只读递归大文件扫描：表观大小阈值/排序、独立已分配块计量、
+  top 与扫描预算、硬链接去重、ignore/protect、云占位/链接/跨文件系统跳过和 JSON 脱敏。
+  默认家目录、100 MiB、前 50 项；权限/元数据失败或预算耗尽报告部分结果，取消返回 130。
+  修改时间不冒充访问日期；命中项零预选、不可执行，不提供删除参数。
+
 ### Fixed
 
+- 新版 WorkBuddy `com.tencent.workbuddy.mac.BundleMigration` 接入现有 updater 状态机，
+  应用未运行也会保护待安装更新；保留旧 ID 支持、版本不明/缺失阻断和执行前实时复核。
 - Analyze 已枚举的子项在计量前消失时，保留其余结果，返回 `path_disappeared`、
   `complete=false` 和退出码 1，不再把不完整扫描报为成功；普通可选扫描点缺失行为不变。
 - 清理结果不再把永久删除计量称为“永久释放”；文本回执说明操作计量不等于磁盘可用空间
@@ -34,6 +43,10 @@
 
 ### Changed
 
+- Codex Electron 缓存补充已观察根和精确浏览器分区：confirm、默认不选、运行中不可执行；
+  Service Worker/CacheStorage 单独复用只读 retention，不将登录、历史、会话或组件目录当缓存。
+- 开发域增加 GOCACHE/GOMODCACHE/HOMEBREW_CACHE 环境路径识别，沿用可信用户缓存根、
+  confirm 和精确选择限制；不扩展外置卷、自定义缓存根或按卷 pnpm store 的执行范围。
 - 应用保护范围比较使用已有路径组件，减少逐候选重复解析路径；保持父子关系与相似名称
   判定，不新增文件或进程状态缓存，父容器和执行前复核仍检查当前状态。
 - 通用用户缓存和 Darwin 用户缓存保留静态归属规则，并为精确 bundle ID 补充有界

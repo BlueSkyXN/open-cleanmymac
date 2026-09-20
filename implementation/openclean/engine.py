@@ -57,6 +57,7 @@ from .scanpoints import (
 )
 from .startup_items import scan_broken_startup_items
 from .storage_diagnostics import (
+    scan_codex_browser_storage_diagnostics,
     scan_codex_storage_artifact_diagnostics,
     scan_darwin_temp_updater_diagnostics,
     scan_open_unlinked_diagnostics,
@@ -992,6 +993,8 @@ def _scan_dynamic_point_with_progress(
             result = scan_open_unlinked_diagnostics(protection)
         elif point.scanner == "codex-storage-artifacts":
             result = scan_codex_storage_artifact_diagnostics(protection)
+        elif point.scanner == "codex-browser-storage":
+            result = scan_codex_browser_storage_diagnostics(protection)
         elif point.scanner == "workbuddy-storage":
             result = scan_workbuddy_storage(protection)
         else:

@@ -25,7 +25,7 @@ class PreviewAllTests(unittest.TestCase):
         self.assertTrue(payload["passed"])
         self.assertFalse(payload["real_user_data_modified"])
         self.assertEqual(payload["workspace"], "TemporaryDirectory")
-        self.assertEqual(payload["scenario_count"], 19)
+        self.assertEqual(payload["scenario_count"], 20)
         self.assertTrue(all(item["passed"] for item in payload["scenarios"]))
         identifiers = {item["identifier"] for item in payload["scenarios"]}
         self.assertEqual(
@@ -39,6 +39,7 @@ class PreviewAllTests(unittest.TestCase):
                 "clean-trash-preview",
                 "purge-preview",
                 "analyze-preview",
+                "large-files-preview",
                 "ignore-lifecycle",
                 "config-lifecycle",
                 "cat",

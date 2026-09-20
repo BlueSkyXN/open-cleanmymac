@@ -48,6 +48,11 @@ fail-closed，不会伪报成功。
 
 后续源码（未发布）补充了通用缓存的动态应用归属保护，细化 Purge 的清理后果说明，
 并补齐已有 Antigravity/chrome-devtools-mcp 数据根中的精确浏览器缓存路径。
+WorkBuddy 两代 BundleMigration ID 均纳入版本保护，待安装更新不会因应用退出而成为普通缓存。
+Codex Electron 精确缓存以 confirm、默认不选展示，浏览器 CacheStorage 单独作只读诊断。
+`GOCACHE`、`GOMODCACHE`、`HOMEBREW_CACHE` 纳入环境路径识别，但仍仅接受可信用户缓存根，
+不代表已经支持外置卷缓存迁移。具体范围见 [实现说明](implementation/README.md)。
+新增 `large [path]` 递归发现大文件，按表观大小筛选/排序，另报已分配空间；始终只读。
 未知归属不等于可安全删除；Purge 的年龄表示产物及其内容的修改时间，不代表项目闲置。
 命令、JSON schema v2、默认选择和既有静态规则保持兼容，详见 [CHANGELOG](CHANGELOG.md)。
 
@@ -99,6 +104,7 @@ python3 -m venv .venv
 .venv/bin/openclean --version
 .venv/bin/openclean scan --json
 .venv/bin/openclean clean dev --no-interactive
+.venv/bin/openclean large ~/Downloads --min-size 100MiB --top 50 --json
 # Agent Runtime（附加命令面，与上面命令并存）：
 .venv/bin/openclean inspect codex --json
 .venv/bin/openclean inspect workbuddy --json
@@ -117,6 +123,7 @@ python3 -m venv .venv
 | `clean trash` | 是 | 永久删除 | 清空内容，保留 Trash 根 |
 | `purge [path]` | 是 | 用户态 | 旧产物默认预选；普通项移到同卷 Trash |
 | `analyze [path]` | 是 | critical 精确选择 | 占用不等于垃圾；不跨候选所在卷 |
+| `large [path]` | 是 | 只读 | 递归发现普通大文件，默认 ≥100 MiB、前 50 项；零预选，不读取正文、不跨卷 |
 | Docker daemon 容量 | 是 | 受限 | 三类 prune 需精确选择；Volumes 拒绝；真实 daemon 待验收 |
 | 日志 / 缓存 / updater / WorkBuddy 经验结构等诊断 | 是 | 否 | 只读报告；不提供通用删除器 |
 | `optimize ram / purgeable` | 命令面 | 否 | `status=unavailable`，退出码 1 |

@@ -42,6 +42,7 @@ openclean clean                         # 四类候选预览
 openclean clean dev --no-interactive
 openclean purge ~/Projects --no-interactive
 openclean analyze ~ --top 20 --no-interactive
+openclean large ~/Downloads --min-size 100MiB --top 50 --json
 openclean ignore list --json
 openclean config --json
 openclean optimize ram --json           # 预期 unavailable，退出 1
@@ -85,6 +86,19 @@ Purge 的 `note` 区分依赖重装、环境重建、索引和构建后果；恢
 
 ### AI 浏览器缓存路径补齐
 
+Codex 的 `~/Library/Application Support/Codex` 根、`Default`、`codex-browser-app`、
+`Partitions/codex-browser-app` 和 `Default/Partitions/codex-browser-app` 仅识别精确
+Cache/Code Cache/GPU/Dawn 缓存；根级另含 shader 和 CRX 下载缓存。它们为 confirm、
+默认不选，运行中或进程检测失败不可执行，移动前再次核对进程。Cookies、History、
+IndexedDB、Local Storage、会话、WidevineCdm、WasmTtsEngine 和整个 profile 不作为缓存候选。
+上述精确根的 `Service Worker/CacheStorage` 复用 retention 诊断，归入 AI 域；即使应用已退出，
+仍固定 `actionable=false`，不提供删除执行器。未识别的分区与近似目录名不自动扩面。
+
+WorkBuddy 的 `com.workbuddy.workbuddy.BundleMigration` 与
+`com.tencent.workbuddy.mac.BundleMigration` 各自校验对应 bundle ID 的 app/ZIP 元数据，
+复用 staged/installed 版本状态机及执行前复核；两代 ID 不自动互相替代。
+多个安装副本版本冲突继续报 `version_unknown`，不按最高版本或应用名称猜测目标。
+
 已有 Antigravity 数据根增加 Default 下的 Cache、Code Cache、GPUCache、DawnGraphiteCache、
 DawnWebGPUCache、Service Worker/CacheStorage；已有 chrome-devtools-mcp 数据根增加
 Default/DawnCache（旧版名称）和根级 GrShaderCache。仅匹配精确路径，不新增 Profile *、
@@ -127,6 +141,28 @@ CLI envelope 为 schema 2，计划数组仅为 `plan.plan_items[]`。混合阻�
 详细契约、错误与仍未实现的能力见 [Agent Runtime 当前状态](../docs/AGENT_RUNTIME_STATUS.md)；
 已有对象、接口与执行契约见 [specs/agent-runtime/](../specs/agent-runtime/_index.md)；
 全量迁移与退役经典能力的旧路线已撤销，未批准扩展不作为当前开发任务。
+
+## 大文件扫描
+
+`large [path]` 递归扫描指定目录，省略路径时使用家目录。它与一级目录 `analyze`、垃圾
+分类 `scan` 并存，包含所选范围内应用/缓存中的普通文件，不能把命中视为垃圾。
+
+- `--min-size` 默认 `100MiB`，支持正字节数、十进制 KB/MB/GB/TB 和二进制 KiB/MiB/GiB/TiB，
+  如 `1.5GiB`。按表观大小筛选和降序排列，实际分配块独立报告。
+- `--top` 默认 50，0 显示全部；`--max-entries` 默认 200000，限制检查的文件/目录项总数。
+- 复用 `--ignore`、`--rules`、`--json`、`--redact-paths`。跳过符号链接、云占位、保护路径、
+  特殊文件及其它设备/文件系统。硬链接只保留一个已发现路径、容量只累计一次。
+- `latest_mtime` / `age_days` 是修改时间和距今天数，不是最后访问/使用时间；本版不接入
+  Spotlight，也不提供旧文件年龄过滤或文件删除参数。
+
+JSON schema v2 新增 `command=large`，已有命令格式不变。`items` 复用文件元数据投影；
+`size_basis=logical`、`min_size_bytes` 说明筛选口径，`logical_bytes` / `allocated_bytes`
+是全部已匹配文件合计，`matched_file_count` / `returned_file_count` 区分发现和显示数量。
+`truncated` 仅表示 top 截断；扫描预算耗尽、权限或元数据错误令 `complete=false` 并返回 1，
+同时保留部分结果和 issues。取消返回 130。参数/根路径/规则无效返回 2。
+`skipped` 明示忽略、读取失败、链接、云占位、跨文件系统、重复硬链接和特殊文件数量；
+`complete=true` 只表示完成上述边界内的遍历。所有项 `actionable=false`、`preselected=false`，
+`reclaimable_bytes` / `preselected_bytes` 为 0；分配块也不代表 APFS 独占或删除收益。
 
 ## 选择与执行
 
@@ -296,6 +332,12 @@ ignore。
 fd 和 Darwin `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`。Docker prune 绑定
 扫描时 CLI realpath、context/host、endpoint 和 Engine ID，执行前复核。细节见
 [架构说明](../docs/ARCHITECTURE.md) 和 [安全政策](../SECURITY.md)。
+
+`GOCACHE`、`GOMODCACHE`、`HOMEBREW_CACHE` 与已有的 `UV_CACHE_DIR`、`POETRY_CACHE_DIR`
+共用以上限制，来源标记为 `environment`、至少 confirm、默认不选且必须精确选择。
+内置默认路径继续扫描；环境变量增加候选，不证明工具正在使用该目录。外置卷、自定义 HOME
+之外的缓存与按卷 pnpm store 仍未支持；路径被拒绝时报告 `unsafe_environment_path`，
+不能把这项增强当作任意缓存迁移后的发现能力。
 
 Clean、Purge、Analyze 与执行器共用应用/updater 范围判定。环境变量目标同样复用静态
 归属、已注册扫描点（含 `.cache` 内工具）和有界 bundle ID 查询；精确根、后代及包含

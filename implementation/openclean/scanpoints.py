@@ -68,6 +68,7 @@ DEVELOPER_JUNK: list[ScanPoint] = [
     ScanPoint(
         "Go 构建缓存",
         ("~/Library/Caches/go-build",),
+        env_paths=("GOCACHE",),
         running_process_markers=("/bin/go ", "go build", "go test", "gopls"),
     ),
     ScanPoint(
@@ -75,12 +76,13 @@ DEVELOPER_JUNK: list[ScanPoint] = [
         ("~/go/pkg/mod",),
         "confirm",
         "等价于可重建的 module 下载缓存；清理后需要重新下载依赖",
+        env_paths=("GOMODCACHE",),
         running_process_markers=("/bin/go ", "go build", "go test", "gopls"),
     ),
     ScanPoint("Deno 缓存", ("~/Library/Caches/deno",)),
     ScanPoint("Bun 缓存", ("~/.bun/install/cache",)),
     ScanPoint("mise 缓存", ("~/Library/Caches/mise",)),
-    ScanPoint("Homebrew 缓存", ("~/Library/Caches/Homebrew",)),
+    ScanPoint("Homebrew 缓存", ("~/Library/Caches/Homebrew",), env_paths=("HOMEBREW_CACHE",)),
     ScanPoint("Cargo 注册缓存", ("~/.cargo/registry/cache",)),
     ScanPoint(
         "Cargo Git 缓存",
@@ -375,6 +377,32 @@ AI_TOOL_JUNK: list[ScanPoint] = [
         ),
         default_selected=False,
         running_process_markers=("codex",),
+    ),
+    ScanPoint(
+        "Codex Electron 缓存",
+        tuple(
+            f"~/Library/Application Support/Codex/{prefix}{name}"
+            for prefix in (
+                "", "Default/", "codex-browser-app/", "Partitions/codex-browser-app/",
+                "Default/Partitions/codex-browser-app/",
+            )
+            for name in (
+                "Cache", "Code Cache", "GPUCache", "DawnGraphiteCache",
+                "DawnWebGPUCache", "GraphiteDawnCache",
+            )
+        ) + tuple(
+            f"~/Library/Application Support/Codex/{name}"
+            for name in ("GrShaderCache", "ShaderCache", "component_crx_cache", "extensions_crx_cache")
+        ),
+        "confirm",
+        "仅识别精确缓存子目录；保留登录、历史、会话和组件数据，Service Worker 另作只读诊断",
+        default_selected=False,
+        running_process_markers=("ChatGPT.app", "Codex.app", "Codex Helper"),
+    ),
+    ScanPoint(
+        "Codex 浏览器 CacheStorage 保留期",
+        (), "critical", "仅报告精确浏览器分区的占用与年龄，不提供删除执行器",
+        scanner="codex-browser-storage", default_selected=False,
     ),
     ScanPoint(
         "Codex SQLite 内部空闲页",
