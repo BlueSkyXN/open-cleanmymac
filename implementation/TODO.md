@@ -148,8 +148,9 @@ Countable total、每任务 Control 聚合和 observer 仅是条件增强；需�
 
 ### 10. 空间 TUI 不完整结果呈现
 
-curses 空间 TUI（`space_tui.py`）不渲染 `analysis.issues`，交互式 analyze 的退出码
-只看执行结果、不检查 `analysis.complete`；同一不完整分析在 `--json` 路径返回退出码 1，
+curses 空间 TUI（`space_tui.py`）已显示不完整标记、问题数量和首个阻断原因，但尚未提供
+完整 issues 浏览；交互式 analyze 的退出码仍只看执行结果、不检查 `analysis.complete`。
+同一不完整分析在 `--json` 路径返回退出码 1，
 `--line-interactive` 会把 issues 打到 stderr。补齐时对齐 Clean/Purge 交互式路径对
 `result.complete` 的判定，并先解决 curses 自由导航对应"哪一次分析"的语义。
 
@@ -164,8 +165,8 @@ curses 空间 TUI（`space_tui.py`）不渲染 `analysis.issues`，交互式 ana
   Spotlight 缺失与 mtime 的区别，不把大小或未修改天数直接解释为闲置或可删除。
 - 语言资源审计尚未发现外置 Applications 根；缺失开发语言元数据时会记录 issue 并跳过，
   后续可补按应用的未知量/跳过明细，不推断所有 `.lproj` 都可删除。
-- 文本摘要仍可改善：`scan` 已区分发现量与当前可执行量，Clean/Purge 更突出当前选择；
-  只读诊断、运行阻断与真实可回收量不应混为一类。退出应用不保证解锁，重启也不保证净释放。
+- 文本摘要已区分发现、当前可执行、选择和只读/阻断量；进一步建议层仍需逐项条件证据。
+  退出应用不保证解锁，重启也不保证净释放。
 - 通用 Electron 发现、额外项目标记与产物类型绑定、Xcode downloaded runtimes 和
   CoreSymbolication 专项仍是待核实对象，不作为本轮必做功能或可执行清理承诺。
 

@@ -39,7 +39,7 @@ class _FakeScreen:
     def erase(self) -> None:
         self.lines.append("<erase>")
 
-    def addnstr(self, _row: int, _column: int, text: str, _length: int) -> None:
+    def addnstr(self, _row: int, _column: int, text: str, _length: int, _attribute: int = 0) -> None:
         self.lines.append(text)
 
     def refresh(self) -> None:
@@ -278,8 +278,16 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(self._run([curses.KEY_DOWN, 10], menu="optimize").action, "purgeable")
 
     def test_small_screen_and_resize_keep_selection(self) -> None:
-        screen = _FakeScreen([curses.KEY_DOWN, curses.KEY_RESIZE, 10], height=1, width=1)
-        with mock.patch.object(screen, "getmaxyx", side_effect=[(1, 1), (4, 10), (24, 120)]):
+        screen = _FakeScreen([10, curses.KEY_RESIZE, curses.KEY_DOWN, 10], height=1, width=1)
+        getch = screen.getch
+
+        def resized_key():
+            key = getch()
+            if key == curses.KEY_RESIZE:
+                screen.height, screen.width = 24, 120
+            return key
+
+        with mock.patch.object(screen, "getch", side_effect=resized_key):
             self.assertEqual(self._run([], screen=screen), MenuChoice("purge", 1))
 
     def test_wrapper_returns_choice_or_reports_initialization_failure(self) -> None:
@@ -303,10 +311,10 @@ class ItemDetailTests(unittest.TestCase):
         self.assertEqual("".join(_wrap_detail_line(text, 12)), text)
         self.assertEqual("".join(_wrap_detail_line("a\x1b\nb", 12)), r"a\x1b\nb")
         screen = _FakeScreen([], height=6, width=20)
-        with mock.patch.object(screen, "getmaxyx", side_effect=[(6, 20), (24, 120), (1, 1)]):
-            for offset in (9999, 9999, 0):
-                actual, maximum = _draw_item_details(screen, item, offset)
-                self.assertLessEqual(actual, maximum)
+        for height, width, offset in ((6, 20, 9999), (24, 120, 9999), (1, 1, 0)):
+            screen.height, screen.width = height, width
+            actual, maximum = _draw_item_details(screen, item, offset)
+            self.assertLessEqual(actual, maximum)
         self.assertTrue(any("last-entry" in line for line in screen.lines))
 
     def test_all_diagnostic_kinds_use_existing_evidence_without_mutating_item(self) -> None:

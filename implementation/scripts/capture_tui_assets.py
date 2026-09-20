@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import curses
 import html
+import io
 import sys
 import unicodedata
 import xml.etree.ElementTree as ET
@@ -20,10 +23,20 @@ if str(IMPLEMENTATION_ROOT) not in sys.path:
 REPOSITORY_ROOT = IMPLEMENTATION_ROOT.parent
 DEFAULT_OUTPUT_DIR = REPOSITORY_ROOT / "docs" / "assets"
 ASSET_NAMES = (
+    "tui-menu.svg",
     "tui-clean-review.svg",
     "tui-clean-confirm.svg",
     "tui-analyze.svg",
+    "cli-scan.svg",
+    "tui-clean-review-light.svg",
+    "cli-scan-light.svg",
+    "tui-clean-review-colors-light.svg",
+    "tui-clean-review-colors-dark.svg",
 )
+REFERENCE_PROFILES = {
+    "dark": {"background": "#0d1117", "foreground": "#c9d1d9", "chrome": "#161b22", "caption": "#8b949e"},
+    "light": {"background": "#ffffff", "foreground": "#24292f", "chrome": "#f0f3f6", "caption": "#57606a"},
+}
 TERMINAL_HEIGHT = 24
 TERMINAL_WIDTH = 120
 CELL_WIDTH = 10
@@ -45,9 +58,13 @@ class GridScreen:
         self,
         height: int = TERMINAL_HEIGHT,
         width: int = TERMINAL_WIDTH,
+        appearance: str = "dark",
+        color_pairs: dict[int, tuple[int, int]] | None = None,
     ) -> None:
         self.height = height
         self.width = width
+        self.profile = REFERENCE_PROFILES[appearance]
+        self.color_pairs = color_pairs or {}
         self.keypad_enabled = False
         self.erase()
 
@@ -62,6 +79,7 @@ class GridScreen:
             [None for _ in range(self.width)]
             for _ in range(self.height)
         ]
+        self.attributes = [[0 for _ in range(self.width)] for _ in range(self.height)]
 
     def addnstr(
         self,
@@ -69,6 +87,7 @@ class GridScreen:
         column: int,
         text: str,
         length: int,
+        attribute: int = 0,
     ) -> None:
         if not 0 <= row < self.height or column < 0 or column >= self.width:
             return
@@ -84,9 +103,11 @@ class GridScreen:
             if cursor + width > limit:
                 break
             self.cells[row][cursor] = character
+            self.attributes[row][cursor] = attribute
             previous = cursor
             for continuation in range(1, width):
                 self.cells[row][cursor + continuation] = ""
+                self.attributes[row][cursor + continuation] = attribute
             cursor += width
 
     def refresh(self) -> None:
@@ -103,6 +124,31 @@ class GridScreen:
         return "\n".join(lines).rstrip()
 
 
+def indexed_color(index: int) -> str:
+    """标准 xterm 256 色立方体/灰阶；预览不猜测用户可配置的前 16 色。"""
+    if 16 <= index <= 231:
+        value = index - 16
+        levels = (0, 95, 135, 175, 215, 255)
+        rgb = (levels[value // 36], levels[(value // 6) % 6], levels[value % 6])
+    elif 232 <= index <= 255:
+        rgb = (8 + 10 * (index - 232),) * 3
+    else:
+        raise ValueError("预览只支持明确的 256 色索引")
+    return "#" + "".join(f"{component:02x}" for component in rgb)
+
+
+def cell_colors(screen: GridScreen, attribute: int) -> tuple[str, str]:
+    foreground, background = screen.profile["foreground"], screen.profile["background"]
+    pair = (attribute >> 8) & 255
+    if pair in screen.color_pairs:
+        fg_index, bg_index = screen.color_pairs[pair]
+        foreground = foreground if fg_index == -1 else indexed_color(fg_index)
+        background = background if bg_index == -1 else indexed_color(bg_index)
+    if attribute & curses.A_REVERSE:
+        foreground, background = background, foreground
+    return foreground, background
+
+
 def _svg(screen: GridScreen, *, title: str, description: str) -> str:
     width = LEFT_MARGIN * 2 + screen.width * CELL_WIDTH
     height = TOP_MARGIN + screen.height * CELL_HEIGHT + 24
@@ -117,35 +163,51 @@ def _svg(screen: GridScreen, *, title: str, description: str) -> str:
         f"  <desc>{html.escape(accessible_description)}</desc>",
         (
             f'  <rect width="{width}" height="{height}" rx="16" '
-            'fill="#0d1117"/>'
+            f'fill="{screen.profile["background"]}"/>'
         ),
         (
             f'  <rect width="{width}" height="44" rx="16" '
-            'fill="#161b22"/>'
+            f'fill="{screen.profile["chrome"]}"/>'
         ),
-        '  <rect y="28" width="100%" height="16" fill="#161b22"/>',
+        f'  <rect y="28" width="100%" height="16" fill="{screen.profile["chrome"]}"/>',
         '  <circle cx="22" cy="22" r="6" fill="#ff5f57"/>',
         '  <circle cx="42" cy="22" r="6" fill="#febc2e"/>',
         '  <circle cx="62" cy="22" r="6" fill="#28c840"/>',
         (
             f'  <text x="{width / 2:.1f}" y="27" text-anchor="middle" '
-            'fill="#8b949e" font-family="Menlo, Monaco, monospace" '
+            f'fill="{screen.profile["caption"]}" font-family="Menlo, Monaco, monospace" '
             f'font-size="14">{html.escape(title)}</text>'
         ),
         (
-            '  <g fill="#c9d1d9" '
+            f'  <g fill="{screen.profile["foreground"]}" '
             'font-family="Menlo, Monaco, Noto Sans Mono CJK SC, monospace" '
             'font-size="15">'
         ),
     ]
     for row_index, row in enumerate(screen.cells):
         baseline = TOP_MARGIN + (row_index + 1) * CELL_HEIGHT - 5
+        column = 0
+        while column < screen.width:
+            _, background = cell_colors(screen, screen.attributes[row_index][column])
+            end = column + 1
+            while end < screen.width and cell_colors(screen, screen.attributes[row_index][end])[1] == background:
+                end += 1
+            if background != screen.profile["background"]:
+                elements.append(f'    <rect x="{LEFT_MARGIN + column * CELL_WIDTH}" '
+                                f'y="{TOP_MARGIN + row_index * CELL_HEIGHT}" '
+                                f'width="{(end - column) * CELL_WIDTH}" '
+                                f'height="{CELL_HEIGHT}" fill="{background}"/>')
+            column = end
         for column, character in enumerate(row):
             if character in {None, "", " "}:
                 continue
             x = LEFT_MARGIN + column * CELL_WIDTH
+            attribute = screen.attributes[row_index][column]
+            fill, _ = cell_colors(screen, attribute)
+            weight = ' font-weight="bold"' if attribute & curses.A_BOLD else ""
+            decoration = ' text-decoration="underline"' if attribute & curses.A_UNDERLINE else ""
             elements.append(
-                f'    <text x="{x}" y="{baseline}">'
+                f'    <text x="{x}" y="{baseline}" fill="{fill}"{weight}{decoration}>'
                 f"{html.escape(character)}</text>"
             )
     elements.extend(("  </g>", "</svg>", ""))
@@ -196,13 +258,13 @@ def _clean_items():
     )
 
 
-def _render_clean_review() -> str:
+def _render_clean_review(appearance: str = "dark", color_pairs=None) -> str:
     from openclean.tui import ReviewGroup, _draw_items, _item_key
 
     items = _clean_items()
     groups = (ReviewGroup("developer", "Dev Tools", items),)
     selected = {_item_key(item) for item in items if item.preselected}
-    screen = GridScreen()
+    screen = GridScreen(appearance=appearance, color_pairs=color_pairs)
     _draw_items(
         screen,
         groups,
@@ -326,12 +388,60 @@ def _render_analyze() -> str:
     )
 
 
+def _render_menu() -> str:
+    from openclean.tui import _draw_menu
+
+    screen = GridScreen()
+    _draw_menu(screen, "root", 0)
+    return _svg(screen, title="OpenClean · 主菜单", description="生产主菜单绘制函数的固定预览，不执行清理。")
+
+
+def _render_cli_scan(appearance: str = "dark") -> str:
+    from openclean.cli import _print_report
+    from openclean.models import ScanResult
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        _print_report(ScanResult(items=list(_clean_items())), False, ["developer"])
+    lines = output.getvalue().splitlines()
+    screen = GridScreen(height=max(24, len(lines) + 2), appearance=appearance)
+    for row, line in enumerate(lines):
+        screen.addnstr(row, 1, line, len(line.encode("utf-8")))
+    return _svg(screen, title="OpenClean CLI · 扫描报告", description="生产 CLI 文本报告，仅使用固定合成候选。")
+
+
+@contextlib.contextmanager
+def preview_styles(theme: str = "auto"):
+    """调用生产初始化并记录真实的 pair 定义，不另造一套预览调色板。"""
+    from openclean import terminal_ui
+
+    pairs = {}
+    with mock.patch.dict("os.environ", {"TERM": "xterm-256color", "OPENCLEAN_THEME": theme}, clear=True), \
+            mock.patch.object(terminal_ui, "_colors_enabled", False), \
+            mock.patch.object(terminal_ui, "_theme", "auto"), \
+            mock.patch("curses.has_colors", return_value=True), \
+            mock.patch("curses.start_color"), mock.patch("curses.use_default_colors"), \
+            mock.patch("curses.COLORS", 256, create=True), \
+            mock.patch("curses.init_pair", side_effect=lambda pair, fg, bg: pairs.update({pair: (fg, bg)})), \
+            mock.patch("curses.color_pair", side_effect=lambda pair: pair << 8):
+        terminal_ui.init_styles()
+        yield pairs
+
+
 def render_assets() -> dict[str, str]:
-    assets = {
-        "tui-clean-review.svg": _render_clean_review(),
-        "tui-clean-confirm.svg": _render_clean_confirmation(),
-        "tui-analyze.svg": _render_analyze(),
-    }
+    with preview_styles():
+        assets = {
+            "tui-menu.svg": _render_menu(),
+            "tui-clean-review.svg": _render_clean_review(),
+            "tui-clean-confirm.svg": _render_clean_confirmation(),
+            "tui-analyze.svg": _render_analyze(),
+            "cli-scan.svg": _render_cli_scan(),
+            "tui-clean-review-light.svg": _render_clean_review("light"),
+            "cli-scan-light.svg": _render_cli_scan("light"),
+        }
+    for appearance in ("light", "dark"):
+        with preview_styles(appearance) as pairs:
+            assets[f"tui-clean-review-colors-{appearance}.svg"] = _render_clean_review(appearance, pairs)
     if tuple(assets) != ASSET_NAMES:
         raise AssertionError("TUI 资产名称与清单不一致")
     forbidden = (

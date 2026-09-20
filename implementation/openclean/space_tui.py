@@ -12,6 +12,10 @@ from .engine import Control, human
 from .models import Item
 from .navigator import RevealError, reveal_in_finder
 from .predicates import Predicate
+from .terminal_ui import (
+    clip_cells, draw_footer, draw_small_screen, draw_text, init_styles,
+    small_screen,
+)
 
 
 class SpaceTUIUnavailable(RuntimeError):
@@ -33,13 +37,8 @@ def _same_or_descendant(path: Path, root: Path) -> bool:
         return False
 
 
-def _safe_add(screen, row: int, column: int, text: str, width: int) -> None:
-    if row < 0 or column >= width:
-        return
-    try:
-        screen.addnstr(row, column, text, max(0, width - column - 1))
-    except curses.error:
-        pass
+def _safe_add(screen, row: int, column: int, text: str, width: int, role: str = "plain") -> None:
+    draw_text(screen, row, column, text, width, role)
 
 
 def _is_directory(path: Path) -> bool:
@@ -95,7 +94,8 @@ def _draw_browser(
 ) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
-    _safe_add(screen, 0, 0, f"Analyze · {analysis.root}", width)
+    _safe_add(screen, 0, 1, "Analyze · 空间浏览", width, "title")
+    _safe_add(screen, 1, 1, clip_cells(analysis.root, width - 3, tail=True), width, "muted")
     volume = ""
     if analysis.volume_total is not None and analysis.volume_free is not None:
         volume = (
@@ -104,20 +104,15 @@ def _draw_browser(
         )
     if analysis.local_snapshots_checked:
         volume += f" · TM 本地快照 {len(analysis.local_snapshots)}"
+    _safe_add(screen, 2, 1, f"已选 {len(selected)} 项 · {human(_selected_total(selected))}{volume}", width)
+    status = ("分析不完整" if not analysis.complete else "占用不等于垃圾")
+    if analysis.issues:
+        status += f" · {len(analysis.issues)} 处提示"
     if len(entries) < len(analysis.entries):
-        volume += (
-            f" · 显示最大 {len(entries)}/{len(analysis.entries)} 项"
-            "（占比基于全部）"
-        )
-    _safe_add(
-        screen,
-        1,
-        0,
-        f"已选 {len(selected)} 项 · {human(_selected_total(selected))}{volume}",
-        width,
-    )
-    _safe_add(screen, 2, 0, "─" * max(1, width - 1), width)
-    visible = max(1, height - 7)
+        status += f" · 显示最大 {len(entries)}/{len(analysis.entries)} 项（占比基于全部）"
+    _safe_add(screen, 3, 1, status, width, "warning" if not analysis.complete else "muted")
+    footer = draw_footer(screen, "↑↓ 移动 · →/Enter 进入 · ← 返回 · Space 选择 · A 全选 · O Finder · Delete 汇总 · Q 退出")
+    visible = max(1, footer - 8)
     offset = max(0, min(cursor - visible + 1, len(entries) - visible))
     for index in range(offset, min(len(entries), offset + visible)):
         item = entries[index].item
@@ -132,20 +127,18 @@ def _draw_browser(
             if item.cloud_file_count
             else ""
         )
-        line = (
-            f"{prefix} [{marker}] {human(item.size):>10} "
-            f"{entries[index].percent:6.1f}%  {arrow} {item.path}{cloud}"
-        )
-        _safe_add(screen, 3 + index - offset, 0, line, width)
-    _safe_add(screen, height - 3, 0, message, width)
-    _safe_add(
-        screen,
-        height - 2,
-        0,
-        "↑↓ 移动 · →/Enter 进入 · ← 返回 · Space 选择 · A 全选 · "
-        "O Finder · Delete 汇总 · Q 退出",
-        width,
-    )
+        filled = max(0, min(10, round(entries[index].percent / 10)))
+        bar = ("━" * filled + "─" * (10 - filled) + "  ") if width >= 90 else ""
+        line = (f"{prefix} [{marker}] {human(item.size):>10} "
+                f"{entries[index].percent:6.1f}%  {bar}{arrow} {item.path.name}{cloud}")
+        role = "focus" if index == cursor else "warning" if not item.actionable else "plain"
+        _safe_add(screen, 5 + index - offset, 1, line, width, role)
+    if not entries:
+        _safe_add(screen, 5, 1, "此目录没有可显示的项目。", width, "muted")
+    elif entries[cursor].item.path is not None:
+        _safe_add(screen, footer - 3, 1, clip_cells(entries[cursor].item.path, width - 3, tail=True), width, "muted")
+    warning = next((issue.message for issue in analysis.issues if issue.blocking), "")
+    _safe_add(screen, footer - 2, 1, warning or message, width, "warning" if warning else "muted")
     screen.refresh()
 
 
@@ -157,7 +150,7 @@ def _draw_confirmation(
 ) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
-    _safe_add(screen, 0, 0, "Analyze · 删除汇总", width)
+    _safe_add(screen, 0, 1, "Analyze · 删除汇总", width, "title")
     _safe_add(
         screen,
         2,
@@ -173,7 +166,7 @@ def _draw_confirmation(
         message = "按 Y 确认移动到同卷 Trash；Esc 返回；Q 取消。"
     else:
         message = "未指定 --yes，不会写文件。按 Enter 输出选择预览；Esc 返回。"
-    _safe_add(screen, height - 2, 0, message, width)
+    draw_footer(screen, message)
     screen.refresh()
 
 
@@ -181,7 +174,7 @@ def _draw_critical_confirmation(screen, selected: dict[Path, Item]) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
     count = sum(item.safety == "critical" for item in selected.values())
-    _safe_add(screen, 0, 0, "Analyze · Critical 二次确认", width)
+    _safe_add(screen, 0, 1, "Analyze · Critical 二次确认", width, "danger")
     _safe_add(
         screen,
         2,
@@ -189,7 +182,7 @@ def _draw_critical_confirmation(screen, selected: dict[Path, Item]) -> None:
         f"选择中包含 {count} 个 critical 项。按 ! 执行；Esc 返回。",
         width,
     )
-    _safe_add(screen, height - 2, 0, "--yes 不能单独绕过此步骤。", width)
+    draw_footer(screen, "! 执行 · Esc 返回 · Q 取消；--yes 不能单独绕过此步骤。")
     screen.refresh()
 
 
@@ -204,6 +197,7 @@ def _run_space_review(
     revealer=reveal_in_finder,
 ) -> SpaceReviewResult:
     screen.keypad(True)
+    init_styles()
     try:
         curses.curs_set(0)
     except curses.error:
@@ -220,6 +214,11 @@ def _run_space_review(
     needs_analysis = True
 
     while True:
+        if small_screen(screen):
+            draw_small_screen(screen)
+            if screen.getch() in {ord("q"), ord("Q")}:
+                return SpaceReviewResult((), False, False, True)
+            continue
         if mode == "browse":
             if needs_analysis:
                 try:

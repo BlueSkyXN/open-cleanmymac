@@ -89,6 +89,19 @@ PASS  optimize-purgeable-guard           exit=1   无安全公开执行器时明
 
 ## 合成 TUI 视觉预览
 
+这里展示的是终端内界面，不是独立桌面 GUI。当前绘制共用中文列宽、焦点和状态样式，
+默认前景/背景沿用终端自身的颜色；设置 `NO_COLOR` 仍保留反白、下划线及文字状态。窄屏快捷键换行，
+小于 48×14 时保留选择并提示放大。文档画面使用固定合成数据及可审计的生产绘制函数。
+
+### 主菜单与 CLI 报告
+
+![生产主菜单的合成预览](assets/tui-menu.svg)
+
+![CLI 扫描报告的合成预览](assets/cli-scan.svg)
+
+CLI 保留完整路径并将说明分行，发现量、可操作量、选择量和只读/阻断量分别呈现；
+输出不增加 ANSI 颜色或改变 JSON。TUI 使用整行焦点，选中与不可执行仍有独立文字标记。
+
 以下 SVG 不是手绘 mockup：生成器直接调用当前生产 TUI 的 `_draw_*` 函数，在固定的
 `24×120` 合成 screen 上绘制固定候选。它们不启动真实终端，也不读取真实用户目录、
 Docker daemon、File Provider 或网络服务。
@@ -99,6 +112,40 @@ Docker daemon、File Provider 或网络服务。
 Local Volumes。
 
 ![Clean TUI 候选明细，使用固定合成数据](assets/tui-clean-review.svg)
+
+### 白底、深色与 iTerm2
+
+默认 `OPENCLEAN_THEME=auto` 不猜测底色，而是直接使用终端默认前景/背景；切换 iTerm2
+的浅色/深色 Profile 后无需同步修改 OpenClean。整行焦点交换前景/背景，不指定黑字青底；
+提示使用正常强度，不依赖独立的 Bold Color、faint 强度或前 16 个 ANSI 色。
+
+同一候选画面的白底版本，以及白底 CLI 报告：
+
+![白底默认配色的 Clean 候选审阅](assets/tui-clean-review-light.svg)
+
+![白底 CLI 扫描报告](assets/cli-scan-light.svg)
+
+需要状态颜色时，可为当前命令显式选择与终端背景匹配的主题：
+
+```bash
+OPENCLEAN_THEME=light openclean   # 白色/浅色底
+OPENCLEAN_THEME=dark openclean    # 深色底
+NO_COLOR=1 openclean             # 禁用自定义状态配色，保留反白焦点
+```
+
+显式配色仅在至少 256 色终端上启用，使用 16 以上的色索引并保留默认背景；`NO_COLOR`
+优先于主题设置，能力不足或初始化失败时回到终端默认色。不修改 iTerm2/Terminal 偏好。
+
+![显式 light 配色的 Clean 候选审阅](assets/tui-clean-review-colors-light.svg)
+
+![显式 dark 配色的 Clean 候选审阅](assets/tui-clean-review-colors-dark.svg)
+
+这些预览使用白色 `#ffffff` 和深色 `#0d1117` 作为参考背景，正文、状态及焦点文字的
+对比度均通过至少 4.5:1 的自动检查；这不代表用户任意自定义 Profile 的对比度保证。
+生成器调用生产配色初始化并记录实际色对，反白也按真实属性交换前景/背景。
+[iTerm2 官方颜色文档](https://iterm2.com/documentation-preferences-profiles-colors.html)
+说明了浅色/深色 Profile、ANSI、Bold、Faint 和 Minimum Contrast 等用户设置；
+本项目的原生 macOS curses PTY 检查覆盖键盘和配色初始化，SVG 预览不等同于 iTerm2 GUI 实测。
 
 ### 未授权时的汇总页
 

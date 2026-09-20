@@ -109,8 +109,13 @@ class LargeFilesTests(unittest.TestCase):
         self.assertEqual(result.items, [])
         self.assertEqual(result.skipped["symlinks"], 2)
         for target in (link, link / "subdir"):
-            with self.subTest(target=target), self.assertRaises(LargeFilesError):
-                scan_large_files(target)
+            with self.subTest(target=target):
+                with self.assertRaises(LargeFilesError) as raised:
+                    scan_large_files(target)
+                message = str(raised.exception)
+                self.assertIn("符号链接", message)
+                self.assertIn(str(os.path.realpath(target)), message)
+                self.assertIn("重试", message)
 
     def test_cloud_directories_files_and_root_ancestors_are_not_enumerated(self) -> None:
         cloud_file = self.file("cloud-file.bin", 100)
@@ -263,6 +268,7 @@ class LargeFilesTests(unittest.TestCase):
             status = main(["large", str(self.root), "--rules", str(self.rules), "--min-size", "1"])
         self.assertEqual(status, 0)
         self.assertIn("表观大小", output.getvalue())
+        self.assertIn("阈值 1 B", output.getvalue())
         self.assertIn("扫描完整", output.getvalue())
         self.assertIn("可回收量 0 B", output.getvalue())
 

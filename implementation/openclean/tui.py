@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import curses
-import unicodedata
 from dataclasses import dataclass
 
 from .engine import human
 from .models import Item
+from .terminal_ui import (
+    clip_cells, draw_footer, draw_small_screen, draw_text, init_styles,
+    pad_cells, small_screen, wrap_cells,
+)
 
 
 class TUIUnavailable(RuntimeError):
@@ -56,8 +59,27 @@ class MenuChoice:
     cursor: int
 
 
+def _draw_menu(screen, menu: str, cursor: int) -> None:
+    screen.erase()
+    height, width = screen.getmaxyx()
+    _safe_add(screen, 0, 1, MENU_TITLES[menu], width, "title")
+    _safe_add(screen, 1, 1, "选择一项任务开始 · 所有清理都先审阅", width, "muted")
+    items = MENU_ITEMS[menu]
+    step = 2 if height >= 20 else 1
+    visible = max(1, (height - 7) // step)
+    offset = max(0, cursor - visible + 1)
+    for index in range(offset, min(len(items), offset + visible)):
+        prefix = "▸" if index == cursor else " "
+        _safe_add(screen, 4 + (index - offset) * step, 1,
+                  f"{prefix} {items[index][1]}", width, "focus" if index == cursor else "plain")
+    ending = "M 更多 · Q/Esc 退出" if menu == "root" else "Q/Esc 返回"
+    draw_footer(screen, f"↑↓ 移动 · Enter 进入 · {ending} · 参数：openclean --help")
+    screen.refresh()
+
+
 def _run_menu(screen, *, menu: str, cursor: int) -> MenuChoice:
     screen.keypad(True)
+    init_styles()
     try:
         curses.curs_set(0)
     except curses.error:
@@ -65,19 +87,12 @@ def _run_menu(screen, *, menu: str, cursor: int) -> MenuChoice:
     items = MENU_ITEMS[menu]
     cursor = max(0, min(cursor, len(items) - 1))
     while True:
-        screen.erase()
-        height, width = screen.getmaxyx()
-        _safe_add(screen, 0, 0, MENU_TITLES[menu], width)
-        _safe_add(screen, 1, 0, "完整命令与参数：openclean --help", width)
-        visible = max(1, height - 5)
-        offset = max(0, cursor - visible + 1)
-        for index in range(offset, min(len(items), offset + visible)):
-            prefix = "▸" if index == cursor else " "
-            _safe_add(screen, 3 + index - offset, 0,
-                      f"{prefix} {items[index][1]}", width)
-        ending = "M 更多 · Q/Esc 退出" if menu == "root" else "Q/Esc 返回"
-        _safe_add(screen, height - 1, 0, f"↑↓ 移动 · Enter 进入 · {ending}", width)
-        screen.refresh()
+        if small_screen(screen):
+            draw_small_screen(screen)
+            if screen.getch() in {ord("q"), ord("Q"), 27}:
+                return MenuChoice("quit" if menu == "root" else "back", cursor)
+            continue
+        _draw_menu(screen, menu, cursor)
         key = screen.getch()
         if key in {ord("q"), ord("Q"), 27}:
             return MenuChoice("quit" if menu == "root" else "back", cursor)
@@ -166,21 +181,7 @@ def item_detail_lines(item: Item) -> tuple[str, ...]:
 
 
 def _wrap_detail_line(text: str, width: int) -> list[str]:
-    # 按终端列宽折行，完整保留长路径；控制字符以转义形式显示。
-    text = "".join(char if char.isprintable() else repr(char)[1:-1] for char in text)
-    lines: list[str] = []
-    current = ""
-    columns = 0
-    for char in text:
-        size = (0 if unicodedata.combining(char) else
-                2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1)
-        if current and columns + size > max(1, width):
-            lines.append(current)
-            current, columns = "", 0
-        current += char
-        columns += size
-    lines.append(current)
-    return lines
+    return wrap_cells(text, width)
 
 
 def _draw_item_details(screen, item: Item, offset: int) -> tuple[int, int]:
@@ -188,13 +189,13 @@ def _draw_item_details(screen, item: Item, offset: int) -> tuple[int, int]:
     height, width = screen.getmaxyx()
     lines = [part for line in item_detail_lines(item)
              for part in _wrap_detail_line(line, max(1, width - 1))]
-    visible = max(1, height - 4)
+    footer = draw_footer(screen, "↑↓ 滚动 · Esc/← 返回 · Q 取消审阅")
+    visible = max(1, footer - 3)
     maximum = max(0, len(lines) - visible)
     offset = max(0, min(offset, maximum))
-    _safe_add(screen, 0, 0, "只读详情 · 不改变选择", width)
+    _safe_add(screen, 0, 1, "只读详情 · 不改变选择", width, "title")
     for row, line in enumerate(lines[offset:offset + visible], 2):
         _safe_add(screen, row, 0, line, width)
-    _safe_add(screen, height - 1, 0, "↑↓ 滚动 · Esc/← 返回 · Q 取消审阅", width)
     screen.refresh()
     return offset, maximum
 
@@ -225,13 +226,8 @@ def _selected_items(
     )
 
 
-def _safe_add(screen, row: int, column: int, text: str, width: int) -> None:
-    if row < 0 or column >= width:
-        return
-    try:
-        screen.addnstr(row, column, text, max(0, width - column - 1))
-    except curses.error:
-        pass
+def _safe_add(screen, row: int, column: int, text: str, width: int, role: str = "plain") -> None:
+    draw_text(screen, row, column, text, width, role)
 
 
 def _marker(item: Item, selected_keys: set) -> str:
@@ -258,18 +254,15 @@ def _draw_header(
     groups: tuple[ReviewGroup, ...],
     selected_keys: set,
 ) -> int:
-    height, width = screen.getmaxyx()
+    _, width = screen.getmaxyx()
     selected = _selected_items(groups, selected_keys)
-    _safe_add(screen, 0, 0, title, width)
-    _safe_add(
-        screen,
-        1,
-        0,
-        f"已选 {len(selected)} 项 · {human(sum(item.size for item in selected))}",
-        width,
-    )
-    if height > 2:
-        _safe_add(screen, 2, 0, "─" * max(1, width - 1), width)
+    all_items = [item for group in groups for item in group.items]
+    total = sum(item.size for item in all_items)
+    actionable = sum(item.size for item in all_items if item.actionable)
+    _safe_add(screen, 0, 1, title, width, "title")
+    _safe_add(screen, 1, 1, f"发现 {human(total)} · 可操作 {human(actionable)}", width)
+    _safe_add(screen, 2, 1, f"已选 {len(selected)} 项 · {human(sum(item.size for item in selected))}"
+              f"  |  只读/阻断 {human(total - actionable)}", width, "muted")
     return 3
 
 
@@ -283,22 +276,19 @@ def _draw_groups(
     screen.erase()
     height, width = screen.getmaxyx()
     row = _draw_header(screen, title, groups, selected_keys)
-    visible = max(1, height - row - 3)
+    footer = draw_footer(screen, "↑↓ 移动 · → 查看 · Space 切换分类 · A 批量选择 · Enter 确认 · Q 退出")
+    row += 1
+    visible = max(1, footer - row - 1)
     offset = max(0, min(cursor - visible + 1, len(groups) - visible))
     for index in range(offset, min(len(groups), offset + visible)):
         group = groups[index]
         prefix = "▸" if index == cursor else " "
         total = sum(item.size for item in group.items)
-        line = (
-            f"{prefix} [{_group_marker(group, selected_keys)}] "
-            f"{group.label:<24} {human(total):>10}  →"
-        )
-        _safe_add(screen, row + index - offset, 0, line, width)
-    footer = (
-        "↑↓ 移动 · → 查看 · Space 切换分类 · "
-        "A 批量选择 · Enter 确认 · Q 退出"
-    )
-    _safe_add(screen, height - 2, 0, footer, width)
+        label_width = min(30, max(12, width - 36))
+        line = (f"{prefix} [{_group_marker(group, selected_keys)}] "
+                f"{pad_cells(clip_cells(group.label, label_width), label_width)} "
+                f"{human(total):>10}  {len(group.items)} 项 →")
+        _safe_add(screen, row + index - offset, 1, line, width, "focus" if index == cursor else "plain")
     screen.refresh()
 
 
@@ -319,33 +309,32 @@ def _draw_items(
         groups,
         selected_keys,
     )
-    visible = max(1, height - row - 3)
+    footer = draw_footer(screen, "↑↓ 移动 · Space/Enter 切换 · I 只读详情 · A 批量选择 · ←/Esc 返回 · Q 退出")
+    category_width = min(24, max(12, width // 5))
+    _safe_add(screen, row, 1, "      " + pad_cells("类别", category_width) + "       大小  状态 / 路径", width, "muted")
+    row += 1
+    visible = max(1, footer - row - 3)
     offset = max(0, min(cursor - visible + 1, len(group.items) - visible))
     for index in range(offset, min(len(group.items), offset + visible)):
         item = group.items[index]
         prefix = "▸" if index == cursor else " "
         location = str(item.path) if item.path is not None else item.identifier
-        blocked = (
-            f"  [不可执行: {item.action_block_reason}]"
-            if not item.actionable
-            else ""
-        )
-        exact = (
-            "  [需逐项选择]"
-            if item.actionable and item.requires_explicit_selection
-            else ""
-        )
+        status = "不可执行" if not item.actionable else "逐项选择" if item.requires_explicit_selection else item.safety
         line = (
             f"{prefix} [{_marker(item, selected_keys)}] "
-            f"{item.category:<24} {human(item.size):>10}  "
-            f"{item.safety:<8} {location}{blocked}{exact}"
+            f"{pad_cells(clip_cells(item.category, category_width), category_width)} {human(item.size):>10}  "
+            f"{pad_cells(status, 8)} {location}"
         )
-        _safe_add(screen, row + index - offset, 0, line, width)
-    footer = (
-        "↑↓ 移动 · Space/Enter 切换 · "
-        "I 只读详情 · A 批量选择 · ←/Esc 返回 · Q 退出"
-    )
-    _safe_add(screen, height - 2, 0, footer, width)
+        role = "focus" if index == cursor else "warning" if not item.actionable else "selected" if _item_key(item) in selected_keys else "plain"
+        _safe_add(screen, row + index - offset, 1, line, width, role)
+    if group.items:
+        current = group.items[cursor]
+        location = current.path if current.path is not None else current.identifier
+        _safe_add(screen, footer - 3, 1, clip_cells(location, width - 3, tail=True), width, "muted")
+        state = (f"不可执行：{current.action_block_reason}" if not current.actionable else
+                 "需逐项选择 · 批量选择不会包含此项" if current.requires_explicit_selection else
+                 f"{current.safety} · I 查看说明与完整路径")
+        _safe_add(screen, footer - 2, 1, state, width, "warning" if not current.actionable else "plain")
     screen.refresh()
 
 
@@ -359,11 +348,11 @@ def _draw_confirmation(
     screen.erase()
     height, width = screen.getmaxyx()
     selected = _selected_items(groups, selected_keys)
-    _safe_add(screen, 0, 0, f"{title} / 汇总确认", width)
+    _safe_add(screen, 0, 1, f"{title} / 汇总确认", width, "title")
     _safe_add(
         screen,
         2,
-        0,
+        1,
         f"选择 {len(selected)} 项，共 {human(sum(item.size for item in selected))}",
         width,
     )
@@ -371,14 +360,18 @@ def _draw_confirmation(
         message = "按 Y 确认执行；按 N/Esc 返回；按 Q 取消。"
     else:
         message = "本次未指定 --yes，只会输出选择预览。按 Enter 继续，Esc 返回。"
-    _safe_add(screen, 4, 0, message, width)
-    _safe_add(
-        screen,
-        height - 2,
-        0,
-        "普通项进入同卷 Trash；Trash/Docker prune 是永久删除操作。",
-        width,
-    )
+    footer = draw_footer(screen, message)
+    warnings = [line for warning in ("普通项进入同卷 Trash。", "Trash/Docker prune 是永久删除操作。")
+                for line in wrap_cells(warning, width - 2)]
+    warning_start = footer - 1 - len(warnings)
+    available = max(0, warning_start - 5)
+    for row, item in enumerate(selected[:available], 4):
+        _safe_add(screen, row, 1, f"{human(item.size):>10}  {item.path or item.identifier}", width)
+    if len(selected) > available:
+        _safe_add(screen, warning_start - 1, 1, f"另 {len(selected) - available} 项；返回列表可逐项检查", width, "muted")
+    for row, line in enumerate(warnings, warning_start):
+        _safe_add(screen, row, 1, line, width, "warning")
+    _safe_add(screen, footer - 1, 1, "移动到废纸篓不等于已释放空间。", width, "muted")
     screen.refresh()
 
 
@@ -386,7 +379,7 @@ def _draw_critical_confirmation(screen, selected: tuple[Item, ...]) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
     critical = [item for item in selected if item.safety == "critical"]
-    _safe_add(screen, 0, 0, "Critical 二次确认", width)
+    _safe_add(screen, 0, 1, "Critical 二次确认", width, "danger")
     _safe_add(
         screen,
         2,
@@ -394,7 +387,7 @@ def _draw_critical_confirmation(screen, selected: tuple[Item, ...]) -> None:
         f"已选择 {len(critical)} 个 critical 项。按 ! 执行；Esc 返回。",
         width,
     )
-    _safe_add(screen, height - 2, 0, "此步骤不可由 --yes 单独绕过。", width)
+    draw_footer(screen, "! 执行 · Esc 返回 · Q 取消；此步骤不可由 --yes 单独绕过。")
     screen.refresh()
 
 
@@ -423,6 +416,7 @@ def _run_review(
     allow_execution: bool,
 ) -> ReviewResult:
     screen.keypad(True)
+    init_styles()
     try:
         curses.curs_set(0)
     except curses.error:
@@ -443,6 +437,11 @@ def _run_review(
     mode = "groups"
 
     while True:
+        if small_screen(screen):
+            draw_small_screen(screen)
+            if screen.getch() in {ord("q"), ord("Q")}:
+                return ReviewResult((), False, False, True)
+            continue
         if mode == "groups":
             _draw_groups(screen, groups, group_cursor, selected_keys, title)
         elif mode == "items":

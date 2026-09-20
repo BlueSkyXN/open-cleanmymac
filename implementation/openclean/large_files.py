@@ -59,7 +59,9 @@ def _validated_root(root: Path, protection: Predicate) -> FileFacts:
         except OSError as exc:
             raise LargeFilesError(f"无法访问扫描路径 {current}：{exc}") from exc
         if stat.S_ISLNK(facts.stat.st_mode):
-            raise LargeFilesError(f"扫描路径包含符号链接：{current}")
+            resolved = Path(os.path.realpath(root))
+            hint = f"；可改用解析后的路径重试：{resolved}" if resolved != root else ""
+            raise LargeFilesError(f"扫描路径包含符号链接：{current}{hint}")
         if facts.is_probable_cloud_placeholder:
             raise LargeFilesError(f"扫描路径包含 dataless/疑似云占位：{current}")
         if protection.should_ignore(facts):
