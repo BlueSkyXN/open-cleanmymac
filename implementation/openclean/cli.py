@@ -998,7 +998,7 @@ def _print_large_report(result, args: argparse.Namespace) -> None:
             "issues": [_issue_payload(issue) for issue in result.issues],
         }, redact_paths=args.redact_paths, path_seeds=args._raw_argv)
         return
-    print(f"\n大文件扫描：{result.root}（表观大小 ≥ {human(args.min_size)}）")
+    print(f"\n大文件扫描：{result.root}（表观大小 ≥ {human(args.min_size)}；阈值 {args.min_size} B）")
     print(f"{pad_cells('表观大小', 12, right=True)}  {pad_cells('已分配空间', 12, right=True)}  "
           f"{pad_cells('修改距今天数', 12, right=True)}  路径")
     for item in result.items:
