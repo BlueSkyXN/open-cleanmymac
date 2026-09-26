@@ -1,6 +1,7 @@
 """统一扫描界面：任务状态、暂停/继续、取消收尾与过期输入清理。"""
 from __future__ import annotations
 
+import os
 import tempfile
 import signal
 import threading
@@ -420,6 +421,19 @@ class ScanScreenTests(unittest.TestCase):
                 title="Clean · 扫描",
                 scope="fixture",
             )
+
+    def test_missing_term_rejects_before_touching_curses(self) -> None:
+        # 无 TERM 时不得进入 curses 初始化：同进程内反复失败的 initscr
+        # 会在 macOS 上直接 abort 进程（CI 无 TERM 环境曾触发）。
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch("curses.wrapper") as wrapper, \
+                self.assertRaises(TUIUnavailable):
+            start_scan_screen(
+                lambda control, publish: "unused",
+                title="Clean · 扫描",
+                scope="fixture",
+            )
+        wrapper.assert_not_called()
 
 
 def _static_snapshot():

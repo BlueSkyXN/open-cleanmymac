@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import curses
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -317,6 +318,10 @@ def _run_scan_screen(screen, action, *, title: str, scope: str) -> ScanScreenOut
 
 def start_scan_screen(action, *, title: str, scope: str) -> ScanScreenOutcome:
     """打开统一扫描界面；终端初始化失败抛 TUIUnavailable（未开始扫描）。"""
+    if not os.environ.get("TERM"):
+        # 无 TERM 时 setupterm 必然失败；同进程内失败后再重试 initscr，
+        # macOS 的 ncurses 可能直接 abort 进程。提前拒绝，统一走文本回退。
+        raise TUIUnavailable("无法启动扫描界面：TERM 环境变量未设置")
     try:
         return curses.wrapper(
             lambda screen: _run_scan_screen(screen, action, title=title, scope=scope)
