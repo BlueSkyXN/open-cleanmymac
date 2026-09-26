@@ -1,6 +1,6 @@
 # 06 · 用户、Agent 与执行流程
 
-> 文档 ID：OC-06 · 修订：2 · 更新：2026-09-08 · 状态：baseline
+> 文档 ID：OC-06 · 修订：3 · 更新：2026-09-22 · 状态：baseline
 > 来源：SRC-GOAL、SRC-CODE、SRC-CONTRACT；入口需求见 [00](00-architecture.md)。
 
 ## 1. 一条产品流程，两种调用方式
@@ -18,6 +18,18 @@
 REQ-FLOW-001：Agent 自己获取 help/JSON、保留精确结果并选择命令，不要求用户逐条敲命令。
 对已有明确范围与动作授权，无需每次工具调用重复索要；新对象、新风险或含糊范围须先澄清。
 VAL-FLOW-001：任务记录能对应发现、精确预览、授权依据和结果；只读诊断不得转成 shell 删除。
+
+REQ-FLOW-001b：显示模式集中判定，显式参数优先于 TTY 探测。`--json` 是机器输出，
+不能与 `--interactive`/`--line-interactive` 组合；`--no-interactive` 与显式交互互斥，
+与 `--json` 同时出现是冗余的明确意图。`--interactive` 需要 stdin/stdout 均连接终端并
+不能与参数化选择（`--select`/`--all`/`--include-confirm`/`--include-critical`/`--force`
+及 Agent `--run/--finding`）组合，冲突在扫描前以 exit 2 拒绝；`--yes` 是执行授权，
+不是选择来源，可与 `--interactive` 配合。无显式模式时沿用 TTY 自动判断；显式子命令
+默认文本 CLI 属于未实施的推荐目标，不作为现状。
+VAL-FLOW-001b：框架分配 PTY、重定向 stdout/stderr、关闭 stdin 与冲突组合在扫描前
+被拒绝或进入非交互流程；JSON 输出不因 TTY 改变；显式 `--interactive` 失败不静默改走
+其他模式。回归见 [test_display_mode.py](../implementation/tests/test_display_mode.py)
+与 [docs/MODES.md](../docs/MODES.md)。
 
 经典调用用扫描返回的精确 path/identifier；Agent 附加调用用本次 Run/Finding。
 两者都是已有受限选择入口。没有任意 `delete PATH` 命令，不为自动化另造删除器。
@@ -40,6 +52,27 @@ VAL-FLOW-002：长路径、缺失元数据、只读/阻断对象可查看；详�
 浅色/深色参考背景上的正文、状态和焦点文字对比度至少 4.5:1；用户自定义颜色仍由终端决定。
 窗口小于 48×14 时保留当前选择并提示放大，只允许退出，避免确认隐藏的动作。
 文本摘要分开显示发现、可执行、选择及只读/阻断量；这些显示改进不得改变 JSON 或执行资格。
+
+Analyze 先显示工作状态，再在后台计量；Q 取消审阅、SIGINT 中断均先传播协作取消，再等待工作收尾。
+返回目录可复有界会话视图，R 刷新；缓存只服务浏览，提交前重新分析选择来源，变化项撤销并重新审阅。
+I 查看当前项详情，E 查看完整 issues；详情来自已有证据。零占用浏览行不扩张 CLI/JSON 清理候选，
+未知容量不得冒充零字节。正常提交同时携带当前页面及所选来源的完整性，不完整返回 1；
+主动取消审阅沿用退出 0，SIGINT 返回 130，取消不得呈现为扫描完整。
+
+clean/purge/analyze 在 TTY 下先进入统一扫描页：Space 请求暂停/继续，Q 取消审阅（退出 0），
+Ctrl-C 中断（130）。暂停只有全部活跃工作线程到达暂停检查点后才显示“已暂停”；阻塞 I/O 或不可暂停
+调用期间保持“暂停已请求”，不凭按键状态宣称已停住。任务状态来自真实 started/terminal
+反馈，首个未完成任务不冒充正在运行；加权百分比标注为任务进度。取消后等待扫描线程收尾，
+不重开扫描；扫描转审阅边界清理过期按键，Q 优先，Space/Enter 不泄漏成审阅页的第一次选择。
+非 TTY、JSON 与参数化选择路径不被扫描页截获。回归见
+[test_scan_tui.py](../implementation/tests/test_scan_tui.py)。
+
+Analyze 浏览提供三态选择标记：`[ ]` 未选、`[x]` 直接选择、`[-]` 目录内有独立选择而
+本目录未选、`[x] 随上级` 被直接选择的祖先覆盖。对 `[-]` 行，按键前后说明替换的子项
+数量；被覆盖的子项提示返回上级调整，不新建隐式排除。头部两层汇总同时显示全局已选与
+“此目录内已选”（含更深层目标）；当前目录整体已选或被上级选择时如实标注，不拆算父项
+计量虚构本页子项数量。这些是派生显示数据，精确选择集合、父子冲突规则与执行语义不变。
+回归见 [test_space_tui.py](../implementation/tests/test_space_tui.py)。
 
 ## 3. 选择与确认
 
@@ -90,6 +123,8 @@ VAL-FLOW-006：JSON/非交互错误路径不隐藏键盘等待，脱敏覆盖嵌
 - [AI_USAGE](../docs/AI_USAGE.md)：可用命令和授权内的经典使用流程。
 - [test_cleanup_cli.py](../implementation/tests/test_cleanup_cli.py)、[test_cleanup.py](../implementation/tests/test_cleanup.py)、[test_clean_preview.py](../implementation/tests/test_clean_preview.py)：VAL-FLOW-003/004/005。
 - [test_tui.py](../implementation/tests/test_tui.py)、[test_config_cli.py](../implementation/tests/test_config_cli.py)：VAL-FLOW-002 及菜单。
+- [test_display_mode.py](../implementation/tests/test_display_mode.py)：VAL-FLOW-001b 模式矩阵。
+- [test_scan_tui.py](../implementation/tests/test_scan_tui.py)、[test_analyze_session.py](../implementation/tests/test_analyze_session.py)、[test_analyze_pty.py](../implementation/tests/test_analyze_pty.py)：统一扫描页、三态选择与真实 PTY 取消。
 - [test_json_redaction.py](../implementation/tests/test_json_redaction.py)、[test_agent_review_cli.py](../implementation/tests/test_agent_review_cli.py)：VAL-FLOW-006。
 - [check_installed_wheel.py](../implementation/scripts/check_installed_wheel.py)：安装包实际 CLI 与临时 HOME 流程；脚本存在不等于当前安装包通过。
 

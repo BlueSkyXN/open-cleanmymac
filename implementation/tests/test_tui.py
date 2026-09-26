@@ -268,7 +268,7 @@ class MenuTests(unittest.TestCase):
 
     def test_more_optimize_back_and_quit(self) -> None:
         self.assertEqual(self._run([ord("m")]).action, "more")
-        self.assertEqual(self._run([10], menu="more").action, "cat")
+        self.assertEqual(self._run([curses.KEY_DOWN, 10], menu="more").action, "cat")
         for menu in ("root", "more", "optimize"):
             for key in (27, ord("q"), ord("Q")):
                 with self.subTest(menu=menu, key=key):
@@ -276,6 +276,16 @@ class MenuTests(unittest.TestCase):
                                      "quit" if menu == "root" else "back")
         self.assertEqual(self._run([10], menu="optimize").action, "ram")
         self.assertEqual(self._run([curses.KEY_DOWN, 10], menu="optimize").action, "purgeable")
+
+    def test_cheatsheet_returns_to_more_and_quit_exits(self) -> None:
+        screen = _FakeScreen([10, 27, 27])
+        with mock.patch("curses.curs_set"):
+            choice = _run_menu(screen, menu="more", cursor=0)
+        self.assertEqual(choice.action, "back")
+        self.assertTrue(any("命令速查" in line for line in screen.lines))
+        self.assertTrue(any("openclean analyze . --no-interactive" in line
+                            for line in screen.lines))
+        self.assertEqual(self._run([10, ord("q")], menu="more").action, "back")
 
     def test_small_screen_and_resize_keep_selection(self) -> None:
         screen = _FakeScreen([10, curses.KEY_RESIZE, curses.KEY_DOWN, 10], height=1, width=1)

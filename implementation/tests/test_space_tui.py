@@ -3,6 +3,7 @@ from __future__ import annotations
 import curses
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -24,6 +25,7 @@ class _FakeScreen:
         self.height = height
         self.width = width
         self.lines: list[str] = []
+        self.delay = -1
 
     def keypad(self, enabled: bool) -> None:
         self.keypad_enabled = enabled
@@ -40,7 +42,13 @@ class _FakeScreen:
     def refresh(self) -> None:
         pass
 
+    def timeout(self, delay):
+        self.delay = delay
+
     def getch(self) -> int:
+        if self.delay >= 0:
+            time.sleep(0.001)
+            return -1
         if not self.keys:
             raise AssertionError("测试按键已耗尽")
         return self.keys.pop(0)
@@ -130,7 +138,7 @@ class SpaceTuiTests(unittest.TestCase):
 
             self.assertTrue(result.execution_confirmed)
             self.assertEqual(result.selected[0].path, selected)
-            self.assertTrue(any("同卷 Trash" in line for line in screen.lines))
+            self.assertTrue(any("同卷废纸篓" in line for line in screen.lines))
             self.assertTrue(selected.exists())
 
     def test_reveal_and_cancel_are_read_only(self) -> None:
@@ -174,6 +182,77 @@ class SpaceTuiTests(unittest.TestCase):
 
         self.assertEqual(list(selected), [parent.path])
         self.assertIn("上级目录", message)
+        self.assertIn("返回上级", message)
+
+    def test_partial_child_selection_marks_parent_and_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            media = root / "media"
+            media.mkdir(parents=True)
+            (media / "movie.bin").write_bytes(b"m" * 20_000)
+            (root / "small.bin").write_bytes(b"x")
+
+            _, screen = self._run(
+                root,
+                [curses.KEY_RIGHT, ord(" "), curses.KEY_LEFT, ord("q")],
+                allow_execution=False,
+            )
+
+            self.assertTrue(any("[-]" in line for line in screen.lines))
+            self.assertTrue(any("此目录内已选 1 项" in line for line in screen.lines))
+            self.assertTrue(any("全局已选 1 项" in line for line in screen.lines))
+            self.assertTrue(any("目录内有 1 个已选目标" in line for line in screen.lines))
+
+    def test_covered_child_keeps_parent_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            media = root / "media"
+            media.mkdir(parents=True)
+            (media / "movie.bin").write_bytes(b"m" * 20_000)
+            (root / "small.bin").write_bytes(b"x")
+
+            result, screen = self._run(
+                root,
+                [
+                    ord(" "),           # 直接选择 media 目录
+                    curses.KEY_RIGHT,   # 进入被覆盖的目录
+                    ord(" "),           # 尝试单独切换子项
+                    ord("q"),
+                ],
+                allow_execution=False,
+            )
+
+            self.assertTrue(any("此目录整体已选" in line for line in screen.lines))
+            self.assertTrue(any("随上级" in line for line in screen.lines))
+            self.assertTrue(any("上级目录选择覆盖" in line for line in screen.lines))
+            self.assertTrue(result.cancelled)
+
+    def test_parent_selection_replaces_child_selections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            media = root / "media"
+            media.mkdir(parents=True)
+            (media / "movie.bin").write_bytes(b"m" * 20_000)
+            (root / "small.bin").write_bytes(b"x")
+
+            result, screen = self._run(
+                root,
+                [
+                    curses.KEY_RIGHT,   # 进入 media 选择 movie
+                    ord(" "),
+                    curses.KEY_LEFT,    # 返回后选择整个目录
+                    ord(" "),
+                    ord("d"),
+                    10,
+                ],
+                allow_execution=False,
+            )
+
+            self.assertTrue(result.submitted)
+            self.assertEqual(
+                [item.path for item in result.selected], [media]
+            )
+            self.assertTrue(any("替换 1 个子项选择" in line for line in screen.lines))
 
     def test_wrapper_reports_curses_failure(self) -> None:
         with mock.patch(

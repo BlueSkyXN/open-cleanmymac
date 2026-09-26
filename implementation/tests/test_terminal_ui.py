@@ -218,6 +218,18 @@ class TerminalPresentationTests(unittest.TestCase):
         self.assertIn("cache", text)
         self.assertIn("Delete 汇总", text)
 
+    def test_analyze_readonly_marker_keeps_capacity_columns_aligned(self) -> None:
+        first = Item(Path("/tmp/preview/open"), 4096, "空间")
+        second = Item(Path("/tmp/preview/locked"), 4096, "空间", actionable=False,
+                      action_block_reason="只读")
+        analysis = SpaceAnalysis(Path("/tmp/preview"), entries=[SpaceEntry(first, 50), SpaceEntry(second, 50)])
+        screen = GridScreen()
+        with mock.patch("openclean.space_tui._is_directory", return_value=False):
+            _draw_browser(screen, analysis, analysis.entries, 0, {}, "")
+        rows = [line for line in screen.plain_text().splitlines() if "4.0KB" in line]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(cell_width(rows[0].split("4.0KB")[0]), cell_width(rows[1].split("4.0KB")[0]))
+
     def test_text_reports_keep_full_paths_and_separate_non_actionable_totals(self) -> None:
         result = ScanResult(items=list(self.items()))
         for printer in (lambda: _print_report(result, False, ["developer"]),
@@ -264,7 +276,8 @@ groups = (ReviewGroup('dev', '开发工具', (item,)),)
 def session(screen):
     init_styles()
     _draw_items(screen, groups, 0, 0, set(), 'Clean')
-    text = screen.instr(4, 0).decode('utf-8')
+    # 行 3 是“本分类已选”范围汇总，条目行从行 5 开始。
+    text = screen.instr(5, 0).decode('utf-8')
     result = _run_review(screen, groups, title='Clean', allow_execution=False)
     return {'chinese': '中文缓存' in text, 'selected': len(result.selected),
             'submitted': result.submitted, 'executed': result.execution_confirmed,

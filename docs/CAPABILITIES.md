@@ -53,7 +53,8 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 
 | capability | command | status | boundary / exclusion |
 |---|---|---|---|
-| 五项主菜单 | 无参数 TTY | `available` | 方向键/Enter、More/Cat、Optimize 原因展示；子任务后暂停返回；初始化失败退回行式菜单；不附加 `--yes` |
+| 五项主菜单 | 无参数 TTY | `available` | 方向键/Enter、More（命令速查/Cat）、Optimize 原因展示；子任务后暂停返回；初始化失败退回行式菜单；不附加 `--yes` |
+| 扫描页交互 | clean/purge/analyze TTY | `available` | 统一扫描界面：任务状态（真实 started 反馈）、Space 暂停/继续（检查点确认）、Q 取消审阅 exit 0、Ctrl-C 130；模式契约见 [MODES.md](MODES.md) |
 | 候选只读详情 | Clean/Purge TUI 的 `I` | `available` | 当前 Item 证据、长路径滚动、未知值与子集说明；不重新扫描、不改变选择；Clean 文本提供诊断摘要，JSON 不变 |
 | Agent Runtime 探测 | `inspect <target>` | `available`（`codex`、`workbuddy`） | 只读探测，固化 Run/Finding 到本机 Run Store；未交付 target 返回 `pack_not_found`/exit 1 |
 | Finding 审阅 | `show --run --finding` | `available` | 从 Run Store 读取完整证据；只读 |
@@ -63,9 +64,9 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | 分类清理 | `clean junk / dev / ai` | `available` | 默认预览；`--yes` 只执行当前已审阅选择 |
 | Trash 审阅与清空 | `clean trash` | `available` | confirm；内容永久删除，根目录保留 |
 | 项目产物清理 | `purge [path]` | `available` | 只处理公开产物字典；普通项移到同卷 Trash |
-| 空间分析 | `analyze [path]` | `available` | 只报告实际占用；一级候选不跨设备；critical 精确选择；不自动删除 Time Machine 快照 |
+| 空间分析 | `analyze [path]` | `available` | 后台计量/暂停/取消、菜单范围选择、会话缓存、I 详情/E 问题、三态选择标记（`[ ]/[x]/[-]/随上级`）与全局/当前范围两层汇总、提交前复核；一级候选不跨文件系统，critical 精确选择；发行边界见 CHANGELOG |
 | 精确参数选择 | `clean/purge --select` | `available` | 从空选择集开始；tier flag 只作风险 gate；拒绝 `--select + --all` |
-| 文本/JSON/TUI 输出 | 全局 | `available` | 默认 JSON 保留精确路径；`--redact-paths` 生成不可 replay 的单文档 opaque refs |
+| 文本/JSON/TUI 输出 | 全局 | `available` | 默认 JSON 保留精确路径；`--redact-paths` 生成不可 replay 的单文档 opaque refs；`--interactive` 显式进入 TUI，模式冲突在扫描前拒绝 |
 | 用户 ignore | `ignore list / add / remove` | `available` | 写入用户 `0600` JSON；不内置私有规则 |
 | CLI 配置 | `config` | `available` | analytics 仅是偏好；当前没有遥测上传 |
 | 签名托管知识库客户端 | `config --update-knowledge` | `external-prerequisite` | 客户端已完成；项目尚无正式 URL、公钥和发布流程 |
@@ -107,7 +108,7 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | 分类清理 | `public-cli` | `cleanup.py`、`tui.py` | 选择/执行单测 + 临时 Trash preview |
 | Trash 审阅与清空 | `public-cli` | `macos.py`、`cleanup.py` | 两个合成 Trash 根的无扩面执行 preview |
 | 项目产物清理 | `public-cli` | `engine.py`、`cleanup.py` | 项目发现/年龄/嵌套/执行测试 |
-| 空间分析 | `public-cli` | `analyzer.py`、`filesystem.py`、`space_tui.py`、`navigator.py` | 单层排序、EINTR、device/filesystem 双边界、零 reclaimable、TUI/精确执行测试 |
+| 空间分析 | `public-cli` | `analyzer.py`、`filesystem.py`、`space_tui.py`、`navigator.py` | 单层排序、EINTR、device/filesystem 双边界、零 reclaimable、TUI/精确执行；`test_analyze_session.py` 与 `test_analyze_pty.py` 覆盖异步取消、缓存、选择变化和真实 PTY |
 | 精确参数选择 | `project-extension` | `cleanup.py`、`cli.py` | no-collateral selection 单测 + preview |
 | 文本/JSON/TUI 输出 | `public-cli` | `cli.py`、`redaction.py`、`tui.py`、`space_tui.py` | schema v2、opaque path refs、解析前错误、状态机及 SVG 资产测试 |
 | 用户 ignore | `public-cli` | `knowledge_base.py` | lifecycle、权限、规范路径回执、原子写测试 |
@@ -164,13 +165,17 @@ WorkBuddy 新 ID、Codex 精确缓存/CacheStorage 和 Go/Homebrew 环境路径�
 精确选择与未选数据保留、只读拒绝、symlink/ignore 和环境可信根限制。实机扫描仅证明
 当前路径识别与保护状态，容量随应用运行变化，不代表新增缓存动作已做真实删除验收。
 
-未发布源码修复 Analyze 已枚举子项消失后仍报告完整成功的问题：返回 `path_disappeared`、
+模式契约与统一扫描页的回归见 `test_display_mode.py`（模式矩阵、PTY/stdin 组合与冲突
+前置）和 `test_scan_tui.py`（任务 started 状态、暂停/继续、取消收尾与过期输入清理）；
+三态选择标记与两层汇总见 `test_space_tui.py` 与 `test_analyze_session.py`。
+
+`0.24.0a3` 修复 Analyze 已枚举子项消失后仍报告完整成功的问题：返回 `path_disappeared`、
 `complete=false` 和非零退出码，保留其它已测结果，普通可选扫描点缺失仍正常跳过。
 应用保护范围改用路径组件比较以减少重复解析，保留父子边界、相似名称排除与实时探测；
 清理文本/TUI 区分永久删除操作与实际空间净增量。回归见 `test_analyzer.py`、
 `test_cleanup_guards.py`、`test_cleanup_cli.py` 和 `test_tui.py`。
 
-未发布源码修复 Purge 将 `.vitepress` 整根误列为产物的问题，仅识别一级 `cache`、`dist`；
+`0.24.0a3` 修复 Purge 将 `.vitepress` 整根误列为产物的问题，仅识别一级 `cache`、`dist`；
 所有文件系统清理入口共享应用/updater 范围保护，父目录/子目录、Analyze 和环境变量入口
 不能绕过；批量预检及逐项执行重新识别扫描后新增的保护对象和暂存状态。同路径合并保留
 阻断、版本证据及确认要求；修复跨扫描点/顶层文件硬链接重复计量，保留各路径候选。
@@ -179,7 +184,7 @@ WorkBuddy 新 ID、Codex 精确缓存/CacheStorage 和 Go/Homebrew 环境路径�
 `test_file_sizing.py`、`test_rules_store.py`、`test_cleanup_guards.py`、`test_json_errors.py`，
 均使用临时夹具；不表示真实用户清理或新发行版已验收。
 
-后续源码（未发布）为通用用户缓存/Darwin 缓存补充精确 bundle ID 的动态归属，保留静态规则，
+`0.24.0a3` 为通用用户缓存/Darwin 缓存补充精确 bundle ID 的动态归属，保留静态规则，
 验证后的应用路径复用现有运行状态和执行前复核链。未知归属不等于无应用；完整卸载残留判断、
 通用 helper 关系解析、安装迁移追踪均未实现。见 `test_application_ownership.py`。
 Purge 已细化清理后果说明，年龄仍为产物年龄，不是项目活跃度；未改变候选与选择。

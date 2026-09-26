@@ -5,13 +5,13 @@
 
  Analyze · 空间浏览
  /tmp/openclean-demo/space
- 已选 1 项 · 12.6GB · 391.2GB 可用 / 931.3GB 总计
- 占用不等于垃圾 · 显示最大 4/5 项（占比基于全部）
+ 全局已选 1 项 · 12.6GB · 391.2GB 可用 / 931.3GB 总计
+ 此目录内已选 1 项 · 12.6GB · 占用不等于垃圾 · 显示最大 4/5 项（占比基于全部）
 
-   [ ]     28.9GB   57.9%  ━━━━━━────  → Projects
- ▸ [x]     12.6GB   25.2%  ━━━───────  → Caches
-   [ ]      7.3GB   14.6%  ━─────────  → Archives
-   [!]         0B    0.0%  ──────────    Cloud-Placeholder 云占位:12
+   [ ]            28.9GB   57.9%  ━━━━━━────  → Projects
+ ▸ [x]            12.6GB   25.2%  ━━━───────  → Caches
+   [ ]             7.3GB   14.6%  ━─────────  → Archives
+   只读               0B    0.0%  ──────────    Cloud-Placeholder 云占位:12
 
 
 
@@ -24,9 +24,9 @@
 
 
  /tmp/openclean-demo/space/Caches
+ 已直接选择此项。
  纯浏览不会修改文件；当前画面只使用固定合成数据。
-
- ↑↓ 移动 · →/Enter 进入 · ← 返回 · Space 选择 · A 全选 · O Finder · Delete 汇总 · Q 退出</desc>
+ ↑↓ 移动 · →/Enter 进入 · ← 返回 · R 刷新 · I 详情 · E 问题 · O Finder · Space 选择 · A 全选 · Delete 汇总 · Q 退出</desc>
   <rect width="1248" height="610" rx="16" fill="#0d1117"/>
   <rect width="1248" height="44" rx="16" fill="#161b22"/>
   <rect y="28" width="100%" height="16" fill="#161b22"/>
@@ -72,199 +72,216 @@
     <text x="254" y="97" fill="#c9d1d9">a</text>
     <text x="264" y="97" fill="#c9d1d9">c</text>
     <text x="274" y="97" fill="#c9d1d9">e</text>
-    <text x="34" y="119" fill="#c9d1d9">已</text>
-    <text x="54" y="119" fill="#c9d1d9">选</text>
-    <text x="84" y="119" fill="#c9d1d9">1</text>
-    <text x="104" y="119" fill="#c9d1d9">项</text>
-    <text x="134" y="119" fill="#c9d1d9">·</text>
-    <text x="154" y="119" fill="#c9d1d9">1</text>
-    <text x="164" y="119" fill="#c9d1d9">2</text>
-    <text x="174" y="119" fill="#c9d1d9">.</text>
-    <text x="184" y="119" fill="#c9d1d9">6</text>
-    <text x="194" y="119" fill="#c9d1d9">G</text>
-    <text x="204" y="119" fill="#c9d1d9">B</text>
-    <text x="224" y="119" fill="#c9d1d9">·</text>
-    <text x="244" y="119" fill="#c9d1d9">3</text>
-    <text x="254" y="119" fill="#c9d1d9">9</text>
-    <text x="264" y="119" fill="#c9d1d9">1</text>
-    <text x="274" y="119" fill="#c9d1d9">.</text>
-    <text x="284" y="119" fill="#c9d1d9">2</text>
-    <text x="294" y="119" fill="#c9d1d9">G</text>
-    <text x="304" y="119" fill="#c9d1d9">B</text>
-    <text x="324" y="119" fill="#c9d1d9">可</text>
-    <text x="344" y="119" fill="#c9d1d9">用</text>
-    <text x="374" y="119" fill="#c9d1d9">/</text>
-    <text x="394" y="119" fill="#c9d1d9">9</text>
-    <text x="404" y="119" fill="#c9d1d9">3</text>
-    <text x="414" y="119" fill="#c9d1d9">1</text>
-    <text x="424" y="119" fill="#c9d1d9">.</text>
-    <text x="434" y="119" fill="#c9d1d9">3</text>
-    <text x="444" y="119" fill="#c9d1d9">G</text>
-    <text x="454" y="119" fill="#c9d1d9">B</text>
-    <text x="474" y="119" fill="#c9d1d9">总</text>
-    <text x="494" y="119" fill="#c9d1d9">计</text>
-    <text x="34" y="141" fill="#c9d1d9">占</text>
-    <text x="54" y="141" fill="#c9d1d9">用</text>
-    <text x="74" y="141" fill="#c9d1d9">不</text>
-    <text x="94" y="141" fill="#c9d1d9">等</text>
-    <text x="114" y="141" fill="#c9d1d9">于</text>
-    <text x="134" y="141" fill="#c9d1d9">垃</text>
-    <text x="154" y="141" fill="#c9d1d9">圾</text>
-    <text x="184" y="141" fill="#c9d1d9">·</text>
-    <text x="204" y="141" fill="#c9d1d9">显</text>
-    <text x="224" y="141" fill="#c9d1d9">示</text>
-    <text x="244" y="141" fill="#c9d1d9">最</text>
-    <text x="264" y="141" fill="#c9d1d9">大</text>
-    <text x="294" y="141" fill="#c9d1d9">4</text>
-    <text x="304" y="141" fill="#c9d1d9">/</text>
-    <text x="314" y="141" fill="#c9d1d9">5</text>
-    <text x="334" y="141" fill="#c9d1d9">项</text>
-    <text x="354" y="141" fill="#c9d1d9">（</text>
-    <text x="374" y="141" fill="#c9d1d9">占</text>
-    <text x="394" y="141" fill="#c9d1d9">比</text>
-    <text x="414" y="141" fill="#c9d1d9">基</text>
-    <text x="434" y="141" fill="#c9d1d9">于</text>
-    <text x="454" y="141" fill="#c9d1d9">全</text>
-    <text x="474" y="141" fill="#c9d1d9">部</text>
-    <text x="494" y="141" fill="#c9d1d9">）</text>
+    <text x="34" y="119" fill="#c9d1d9">全</text>
+    <text x="54" y="119" fill="#c9d1d9">局</text>
+    <text x="74" y="119" fill="#c9d1d9">已</text>
+    <text x="94" y="119" fill="#c9d1d9">选</text>
+    <text x="124" y="119" fill="#c9d1d9">1</text>
+    <text x="144" y="119" fill="#c9d1d9">项</text>
+    <text x="174" y="119" fill="#c9d1d9">·</text>
+    <text x="194" y="119" fill="#c9d1d9">1</text>
+    <text x="204" y="119" fill="#c9d1d9">2</text>
+    <text x="214" y="119" fill="#c9d1d9">.</text>
+    <text x="224" y="119" fill="#c9d1d9">6</text>
+    <text x="234" y="119" fill="#c9d1d9">G</text>
+    <text x="244" y="119" fill="#c9d1d9">B</text>
+    <text x="264" y="119" fill="#c9d1d9">·</text>
+    <text x="284" y="119" fill="#c9d1d9">3</text>
+    <text x="294" y="119" fill="#c9d1d9">9</text>
+    <text x="304" y="119" fill="#c9d1d9">1</text>
+    <text x="314" y="119" fill="#c9d1d9">.</text>
+    <text x="324" y="119" fill="#c9d1d9">2</text>
+    <text x="334" y="119" fill="#c9d1d9">G</text>
+    <text x="344" y="119" fill="#c9d1d9">B</text>
+    <text x="364" y="119" fill="#c9d1d9">可</text>
+    <text x="384" y="119" fill="#c9d1d9">用</text>
+    <text x="414" y="119" fill="#c9d1d9">/</text>
+    <text x="434" y="119" fill="#c9d1d9">9</text>
+    <text x="444" y="119" fill="#c9d1d9">3</text>
+    <text x="454" y="119" fill="#c9d1d9">1</text>
+    <text x="464" y="119" fill="#c9d1d9">.</text>
+    <text x="474" y="119" fill="#c9d1d9">3</text>
+    <text x="484" y="119" fill="#c9d1d9">G</text>
+    <text x="494" y="119" fill="#c9d1d9">B</text>
+    <text x="514" y="119" fill="#c9d1d9">总</text>
+    <text x="534" y="119" fill="#c9d1d9">计</text>
+    <text x="34" y="141" fill="#c9d1d9">此</text>
+    <text x="54" y="141" fill="#c9d1d9">目</text>
+    <text x="74" y="141" fill="#c9d1d9">录</text>
+    <text x="94" y="141" fill="#c9d1d9">内</text>
+    <text x="114" y="141" fill="#c9d1d9">已</text>
+    <text x="134" y="141" fill="#c9d1d9">选</text>
+    <text x="164" y="141" fill="#c9d1d9">1</text>
+    <text x="184" y="141" fill="#c9d1d9">项</text>
+    <text x="214" y="141" fill="#c9d1d9">·</text>
+    <text x="234" y="141" fill="#c9d1d9">1</text>
+    <text x="244" y="141" fill="#c9d1d9">2</text>
+    <text x="254" y="141" fill="#c9d1d9">.</text>
+    <text x="264" y="141" fill="#c9d1d9">6</text>
+    <text x="274" y="141" fill="#c9d1d9">G</text>
+    <text x="284" y="141" fill="#c9d1d9">B</text>
+    <text x="304" y="141" fill="#c9d1d9">·</text>
+    <text x="324" y="141" fill="#c9d1d9">占</text>
+    <text x="344" y="141" fill="#c9d1d9">用</text>
+    <text x="364" y="141" fill="#c9d1d9">不</text>
+    <text x="384" y="141" fill="#c9d1d9">等</text>
+    <text x="404" y="141" fill="#c9d1d9">于</text>
+    <text x="424" y="141" fill="#c9d1d9">垃</text>
+    <text x="444" y="141" fill="#c9d1d9">圾</text>
+    <text x="474" y="141" fill="#c9d1d9">·</text>
+    <text x="494" y="141" fill="#c9d1d9">显</text>
+    <text x="514" y="141" fill="#c9d1d9">示</text>
+    <text x="534" y="141" fill="#c9d1d9">最</text>
+    <text x="554" y="141" fill="#c9d1d9">大</text>
+    <text x="584" y="141" fill="#c9d1d9">4</text>
+    <text x="594" y="141" fill="#c9d1d9">/</text>
+    <text x="604" y="141" fill="#c9d1d9">5</text>
+    <text x="624" y="141" fill="#c9d1d9">项</text>
+    <text x="644" y="141" fill="#c9d1d9">（</text>
+    <text x="664" y="141" fill="#c9d1d9">占</text>
+    <text x="684" y="141" fill="#c9d1d9">比</text>
+    <text x="704" y="141" fill="#c9d1d9">基</text>
+    <text x="724" y="141" fill="#c9d1d9">于</text>
+    <text x="744" y="141" fill="#c9d1d9">全</text>
+    <text x="764" y="141" fill="#c9d1d9">部</text>
+    <text x="784" y="141" fill="#c9d1d9">）</text>
     <text x="54" y="185" fill="#c9d1d9">[</text>
     <text x="74" y="185" fill="#c9d1d9">]</text>
-    <text x="134" y="185" fill="#c9d1d9">2</text>
-    <text x="144" y="185" fill="#c9d1d9">8</text>
-    <text x="154" y="185" fill="#c9d1d9">.</text>
-    <text x="164" y="185" fill="#c9d1d9">9</text>
-    <text x="174" y="185" fill="#c9d1d9">G</text>
-    <text x="184" y="185" fill="#c9d1d9">B</text>
-    <text x="224" y="185" fill="#c9d1d9">5</text>
-    <text x="234" y="185" fill="#c9d1d9">7</text>
-    <text x="244" y="185" fill="#c9d1d9">.</text>
-    <text x="254" y="185" fill="#c9d1d9">9</text>
-    <text x="264" y="185" fill="#c9d1d9">%</text>
-    <text x="294" y="185" fill="#c9d1d9">━</text>
-    <text x="304" y="185" fill="#c9d1d9">━</text>
-    <text x="314" y="185" fill="#c9d1d9">━</text>
-    <text x="324" y="185" fill="#c9d1d9">━</text>
-    <text x="334" y="185" fill="#c9d1d9">━</text>
-    <text x="344" y="185" fill="#c9d1d9">━</text>
-    <text x="354" y="185" fill="#c9d1d9">─</text>
-    <text x="364" y="185" fill="#c9d1d9">─</text>
-    <text x="374" y="185" fill="#c9d1d9">─</text>
-    <text x="384" y="185" fill="#c9d1d9">─</text>
-    <text x="414" y="185" fill="#c9d1d9">→</text>
-    <text x="434" y="185" fill="#c9d1d9">P</text>
-    <text x="444" y="185" fill="#c9d1d9">r</text>
-    <text x="454" y="185" fill="#c9d1d9">o</text>
-    <text x="464" y="185" fill="#c9d1d9">j</text>
-    <text x="474" y="185" fill="#c9d1d9">e</text>
-    <text x="484" y="185" fill="#c9d1d9">c</text>
-    <text x="494" y="185" fill="#c9d1d9">t</text>
-    <text x="504" y="185" fill="#c9d1d9">s</text>
+    <text x="204" y="185" fill="#c9d1d9">2</text>
+    <text x="214" y="185" fill="#c9d1d9">8</text>
+    <text x="224" y="185" fill="#c9d1d9">.</text>
+    <text x="234" y="185" fill="#c9d1d9">9</text>
+    <text x="244" y="185" fill="#c9d1d9">G</text>
+    <text x="254" y="185" fill="#c9d1d9">B</text>
+    <text x="294" y="185" fill="#c9d1d9">5</text>
+    <text x="304" y="185" fill="#c9d1d9">7</text>
+    <text x="314" y="185" fill="#c9d1d9">.</text>
+    <text x="324" y="185" fill="#c9d1d9">9</text>
+    <text x="334" y="185" fill="#c9d1d9">%</text>
+    <text x="364" y="185" fill="#c9d1d9">━</text>
+    <text x="374" y="185" fill="#c9d1d9">━</text>
+    <text x="384" y="185" fill="#c9d1d9">━</text>
+    <text x="394" y="185" fill="#c9d1d9">━</text>
+    <text x="404" y="185" fill="#c9d1d9">━</text>
+    <text x="414" y="185" fill="#c9d1d9">━</text>
+    <text x="424" y="185" fill="#c9d1d9">─</text>
+    <text x="434" y="185" fill="#c9d1d9">─</text>
+    <text x="444" y="185" fill="#c9d1d9">─</text>
+    <text x="454" y="185" fill="#c9d1d9">─</text>
+    <text x="484" y="185" fill="#c9d1d9">→</text>
+    <text x="504" y="185" fill="#c9d1d9">P</text>
+    <text x="514" y="185" fill="#c9d1d9">r</text>
+    <text x="524" y="185" fill="#c9d1d9">o</text>
+    <text x="534" y="185" fill="#c9d1d9">j</text>
+    <text x="544" y="185" fill="#c9d1d9">e</text>
+    <text x="554" y="185" fill="#c9d1d9">c</text>
+    <text x="564" y="185" fill="#c9d1d9">t</text>
+    <text x="574" y="185" fill="#c9d1d9">s</text>
     <rect x="34" y="190" width="1180" height="22" fill="#c9d1d9"/>
     <text x="34" y="207" fill="#0d1117">▸</text>
     <text x="54" y="207" fill="#0d1117">[</text>
     <text x="64" y="207" fill="#0d1117">x</text>
     <text x="74" y="207" fill="#0d1117">]</text>
-    <text x="134" y="207" fill="#0d1117">1</text>
-    <text x="144" y="207" fill="#0d1117">2</text>
-    <text x="154" y="207" fill="#0d1117">.</text>
-    <text x="164" y="207" fill="#0d1117">6</text>
-    <text x="174" y="207" fill="#0d1117">G</text>
-    <text x="184" y="207" fill="#0d1117">B</text>
-    <text x="224" y="207" fill="#0d1117">2</text>
-    <text x="234" y="207" fill="#0d1117">5</text>
-    <text x="244" y="207" fill="#0d1117">.</text>
-    <text x="254" y="207" fill="#0d1117">2</text>
-    <text x="264" y="207" fill="#0d1117">%</text>
-    <text x="294" y="207" fill="#0d1117">━</text>
-    <text x="304" y="207" fill="#0d1117">━</text>
-    <text x="314" y="207" fill="#0d1117">━</text>
-    <text x="324" y="207" fill="#0d1117">─</text>
-    <text x="334" y="207" fill="#0d1117">─</text>
-    <text x="344" y="207" fill="#0d1117">─</text>
-    <text x="354" y="207" fill="#0d1117">─</text>
-    <text x="364" y="207" fill="#0d1117">─</text>
-    <text x="374" y="207" fill="#0d1117">─</text>
-    <text x="384" y="207" fill="#0d1117">─</text>
-    <text x="414" y="207" fill="#0d1117">→</text>
-    <text x="434" y="207" fill="#0d1117">C</text>
-    <text x="444" y="207" fill="#0d1117">a</text>
-    <text x="454" y="207" fill="#0d1117">c</text>
-    <text x="464" y="207" fill="#0d1117">h</text>
-    <text x="474" y="207" fill="#0d1117">e</text>
-    <text x="484" y="207" fill="#0d1117">s</text>
+    <text x="204" y="207" fill="#0d1117">1</text>
+    <text x="214" y="207" fill="#0d1117">2</text>
+    <text x="224" y="207" fill="#0d1117">.</text>
+    <text x="234" y="207" fill="#0d1117">6</text>
+    <text x="244" y="207" fill="#0d1117">G</text>
+    <text x="254" y="207" fill="#0d1117">B</text>
+    <text x="294" y="207" fill="#0d1117">2</text>
+    <text x="304" y="207" fill="#0d1117">5</text>
+    <text x="314" y="207" fill="#0d1117">.</text>
+    <text x="324" y="207" fill="#0d1117">2</text>
+    <text x="334" y="207" fill="#0d1117">%</text>
+    <text x="364" y="207" fill="#0d1117">━</text>
+    <text x="374" y="207" fill="#0d1117">━</text>
+    <text x="384" y="207" fill="#0d1117">━</text>
+    <text x="394" y="207" fill="#0d1117">─</text>
+    <text x="404" y="207" fill="#0d1117">─</text>
+    <text x="414" y="207" fill="#0d1117">─</text>
+    <text x="424" y="207" fill="#0d1117">─</text>
+    <text x="434" y="207" fill="#0d1117">─</text>
+    <text x="444" y="207" fill="#0d1117">─</text>
+    <text x="454" y="207" fill="#0d1117">─</text>
+    <text x="484" y="207" fill="#0d1117">→</text>
+    <text x="504" y="207" fill="#0d1117">C</text>
+    <text x="514" y="207" fill="#0d1117">a</text>
+    <text x="524" y="207" fill="#0d1117">c</text>
+    <text x="534" y="207" fill="#0d1117">h</text>
+    <text x="544" y="207" fill="#0d1117">e</text>
+    <text x="554" y="207" fill="#0d1117">s</text>
     <text x="54" y="229" fill="#c9d1d9">[</text>
     <text x="74" y="229" fill="#c9d1d9">]</text>
-    <text x="144" y="229" fill="#c9d1d9">7</text>
-    <text x="154" y="229" fill="#c9d1d9">.</text>
-    <text x="164" y="229" fill="#c9d1d9">3</text>
-    <text x="174" y="229" fill="#c9d1d9">G</text>
-    <text x="184" y="229" fill="#c9d1d9">B</text>
-    <text x="224" y="229" fill="#c9d1d9">1</text>
-    <text x="234" y="229" fill="#c9d1d9">4</text>
-    <text x="244" y="229" fill="#c9d1d9">.</text>
-    <text x="254" y="229" fill="#c9d1d9">6</text>
-    <text x="264" y="229" fill="#c9d1d9">%</text>
-    <text x="294" y="229" fill="#c9d1d9">━</text>
-    <text x="304" y="229" fill="#c9d1d9">─</text>
-    <text x="314" y="229" fill="#c9d1d9">─</text>
-    <text x="324" y="229" fill="#c9d1d9">─</text>
-    <text x="334" y="229" fill="#c9d1d9">─</text>
-    <text x="344" y="229" fill="#c9d1d9">─</text>
-    <text x="354" y="229" fill="#c9d1d9">─</text>
-    <text x="364" y="229" fill="#c9d1d9">─</text>
+    <text x="214" y="229" fill="#c9d1d9">7</text>
+    <text x="224" y="229" fill="#c9d1d9">.</text>
+    <text x="234" y="229" fill="#c9d1d9">3</text>
+    <text x="244" y="229" fill="#c9d1d9">G</text>
+    <text x="254" y="229" fill="#c9d1d9">B</text>
+    <text x="294" y="229" fill="#c9d1d9">1</text>
+    <text x="304" y="229" fill="#c9d1d9">4</text>
+    <text x="314" y="229" fill="#c9d1d9">.</text>
+    <text x="324" y="229" fill="#c9d1d9">6</text>
+    <text x="334" y="229" fill="#c9d1d9">%</text>
+    <text x="364" y="229" fill="#c9d1d9">━</text>
     <text x="374" y="229" fill="#c9d1d9">─</text>
     <text x="384" y="229" fill="#c9d1d9">─</text>
-    <text x="414" y="229" fill="#c9d1d9">→</text>
-    <text x="434" y="229" fill="#c9d1d9">A</text>
-    <text x="444" y="229" fill="#c9d1d9">r</text>
-    <text x="454" y="229" fill="#c9d1d9">c</text>
-    <text x="464" y="229" fill="#c9d1d9">h</text>
-    <text x="474" y="229" fill="#c9d1d9">i</text>
-    <text x="484" y="229" fill="#c9d1d9">v</text>
-    <text x="494" y="229" fill="#c9d1d9">e</text>
-    <text x="504" y="229" fill="#c9d1d9">s</text>
-    <text x="54" y="251" fill="#c9d1d9">[</text>
-    <text x="64" y="251" fill="#c9d1d9">!</text>
-    <text x="74" y="251" fill="#c9d1d9">]</text>
-    <text x="174" y="251" fill="#c9d1d9">0</text>
-    <text x="184" y="251" fill="#c9d1d9">B</text>
-    <text x="234" y="251" fill="#c9d1d9">0</text>
-    <text x="244" y="251" fill="#c9d1d9">.</text>
-    <text x="254" y="251" fill="#c9d1d9">0</text>
-    <text x="264" y="251" fill="#c9d1d9">%</text>
-    <text x="294" y="251" fill="#c9d1d9">─</text>
-    <text x="304" y="251" fill="#c9d1d9">─</text>
-    <text x="314" y="251" fill="#c9d1d9">─</text>
-    <text x="324" y="251" fill="#c9d1d9">─</text>
-    <text x="334" y="251" fill="#c9d1d9">─</text>
-    <text x="344" y="251" fill="#c9d1d9">─</text>
-    <text x="354" y="251" fill="#c9d1d9">─</text>
+    <text x="394" y="229" fill="#c9d1d9">─</text>
+    <text x="404" y="229" fill="#c9d1d9">─</text>
+    <text x="414" y="229" fill="#c9d1d9">─</text>
+    <text x="424" y="229" fill="#c9d1d9">─</text>
+    <text x="434" y="229" fill="#c9d1d9">─</text>
+    <text x="444" y="229" fill="#c9d1d9">─</text>
+    <text x="454" y="229" fill="#c9d1d9">─</text>
+    <text x="484" y="229" fill="#c9d1d9">→</text>
+    <text x="504" y="229" fill="#c9d1d9">A</text>
+    <text x="514" y="229" fill="#c9d1d9">r</text>
+    <text x="524" y="229" fill="#c9d1d9">c</text>
+    <text x="534" y="229" fill="#c9d1d9">h</text>
+    <text x="544" y="229" fill="#c9d1d9">i</text>
+    <text x="554" y="229" fill="#c9d1d9">v</text>
+    <text x="564" y="229" fill="#c9d1d9">e</text>
+    <text x="574" y="229" fill="#c9d1d9">s</text>
+    <text x="54" y="251" fill="#c9d1d9">只</text>
+    <text x="74" y="251" fill="#c9d1d9">读</text>
+    <text x="244" y="251" fill="#c9d1d9">0</text>
+    <text x="254" y="251" fill="#c9d1d9">B</text>
+    <text x="304" y="251" fill="#c9d1d9">0</text>
+    <text x="314" y="251" fill="#c9d1d9">.</text>
+    <text x="324" y="251" fill="#c9d1d9">0</text>
+    <text x="334" y="251" fill="#c9d1d9">%</text>
     <text x="364" y="251" fill="#c9d1d9">─</text>
     <text x="374" y="251" fill="#c9d1d9">─</text>
     <text x="384" y="251" fill="#c9d1d9">─</text>
-    <text x="434" y="251" fill="#c9d1d9">C</text>
-    <text x="444" y="251" fill="#c9d1d9">l</text>
-    <text x="454" y="251" fill="#c9d1d9">o</text>
-    <text x="464" y="251" fill="#c9d1d9">u</text>
-    <text x="474" y="251" fill="#c9d1d9">d</text>
-    <text x="484" y="251" fill="#c9d1d9">-</text>
-    <text x="494" y="251" fill="#c9d1d9">P</text>
-    <text x="504" y="251" fill="#c9d1d9">l</text>
-    <text x="514" y="251" fill="#c9d1d9">a</text>
-    <text x="524" y="251" fill="#c9d1d9">c</text>
-    <text x="534" y="251" fill="#c9d1d9">e</text>
-    <text x="544" y="251" fill="#c9d1d9">h</text>
-    <text x="554" y="251" fill="#c9d1d9">o</text>
-    <text x="564" y="251" fill="#c9d1d9">l</text>
-    <text x="574" y="251" fill="#c9d1d9">d</text>
-    <text x="584" y="251" fill="#c9d1d9">e</text>
-    <text x="594" y="251" fill="#c9d1d9">r</text>
-    <text x="614" y="251" fill="#c9d1d9">云</text>
-    <text x="634" y="251" fill="#c9d1d9">占</text>
-    <text x="654" y="251" fill="#c9d1d9">位</text>
-    <text x="674" y="251" fill="#c9d1d9">:</text>
-    <text x="684" y="251" fill="#c9d1d9">1</text>
-    <text x="694" y="251" fill="#c9d1d9">2</text>
+    <text x="394" y="251" fill="#c9d1d9">─</text>
+    <text x="404" y="251" fill="#c9d1d9">─</text>
+    <text x="414" y="251" fill="#c9d1d9">─</text>
+    <text x="424" y="251" fill="#c9d1d9">─</text>
+    <text x="434" y="251" fill="#c9d1d9">─</text>
+    <text x="444" y="251" fill="#c9d1d9">─</text>
+    <text x="454" y="251" fill="#c9d1d9">─</text>
+    <text x="504" y="251" fill="#c9d1d9">C</text>
+    <text x="514" y="251" fill="#c9d1d9">l</text>
+    <text x="524" y="251" fill="#c9d1d9">o</text>
+    <text x="534" y="251" fill="#c9d1d9">u</text>
+    <text x="544" y="251" fill="#c9d1d9">d</text>
+    <text x="554" y="251" fill="#c9d1d9">-</text>
+    <text x="564" y="251" fill="#c9d1d9">P</text>
+    <text x="574" y="251" fill="#c9d1d9">l</text>
+    <text x="584" y="251" fill="#c9d1d9">a</text>
+    <text x="594" y="251" fill="#c9d1d9">c</text>
+    <text x="604" y="251" fill="#c9d1d9">e</text>
+    <text x="614" y="251" fill="#c9d1d9">h</text>
+    <text x="624" y="251" fill="#c9d1d9">o</text>
+    <text x="634" y="251" fill="#c9d1d9">l</text>
+    <text x="644" y="251" fill="#c9d1d9">d</text>
+    <text x="654" y="251" fill="#c9d1d9">e</text>
+    <text x="664" y="251" fill="#c9d1d9">r</text>
+    <text x="684" y="251" fill="#c9d1d9">云</text>
+    <text x="704" y="251" fill="#c9d1d9">占</text>
+    <text x="724" y="251" fill="#c9d1d9">位</text>
+    <text x="744" y="251" fill="#c9d1d9">:</text>
+    <text x="754" y="251" fill="#c9d1d9">1</text>
+    <text x="764" y="251" fill="#c9d1d9">2</text>
     <text x="34" y="515" fill="#c9d1d9">/</text>
     <text x="44" y="515" fill="#c9d1d9">t</text>
     <text x="54" y="515" fill="#c9d1d9">m</text>
@@ -297,30 +314,38 @@
     <text x="324" y="515" fill="#c9d1d9">h</text>
     <text x="334" y="515" fill="#c9d1d9">e</text>
     <text x="344" y="515" fill="#c9d1d9">s</text>
-    <text x="34" y="537" fill="#c9d1d9">纯</text>
-    <text x="54" y="537" fill="#c9d1d9">浏</text>
-    <text x="74" y="537" fill="#c9d1d9">览</text>
-    <text x="94" y="537" fill="#c9d1d9">不</text>
-    <text x="114" y="537" fill="#c9d1d9">会</text>
-    <text x="134" y="537" fill="#c9d1d9">修</text>
-    <text x="154" y="537" fill="#c9d1d9">改</text>
-    <text x="174" y="537" fill="#c9d1d9">文</text>
-    <text x="194" y="537" fill="#c9d1d9">件</text>
-    <text x="214" y="537" fill="#c9d1d9">；</text>
-    <text x="234" y="537" fill="#c9d1d9">当</text>
-    <text x="254" y="537" fill="#c9d1d9">前</text>
-    <text x="274" y="537" fill="#c9d1d9">画</text>
-    <text x="294" y="537" fill="#c9d1d9">面</text>
-    <text x="314" y="537" fill="#c9d1d9">只</text>
-    <text x="334" y="537" fill="#c9d1d9">使</text>
-    <text x="354" y="537" fill="#c9d1d9">用</text>
-    <text x="374" y="537" fill="#c9d1d9">固</text>
-    <text x="394" y="537" fill="#c9d1d9">定</text>
-    <text x="414" y="537" fill="#c9d1d9">合</text>
-    <text x="434" y="537" fill="#c9d1d9">成</text>
-    <text x="454" y="537" fill="#c9d1d9">数</text>
-    <text x="474" y="537" fill="#c9d1d9">据</text>
-    <text x="494" y="537" fill="#c9d1d9">。</text>
+    <text x="34" y="537" fill="#c9d1d9">已</text>
+    <text x="54" y="537" fill="#c9d1d9">直</text>
+    <text x="74" y="537" fill="#c9d1d9">接</text>
+    <text x="94" y="537" fill="#c9d1d9">选</text>
+    <text x="114" y="537" fill="#c9d1d9">择</text>
+    <text x="134" y="537" fill="#c9d1d9">此</text>
+    <text x="154" y="537" fill="#c9d1d9">项</text>
+    <text x="174" y="537" fill="#c9d1d9">。</text>
+    <text x="34" y="559" fill="#c9d1d9">纯</text>
+    <text x="54" y="559" fill="#c9d1d9">浏</text>
+    <text x="74" y="559" fill="#c9d1d9">览</text>
+    <text x="94" y="559" fill="#c9d1d9">不</text>
+    <text x="114" y="559" fill="#c9d1d9">会</text>
+    <text x="134" y="559" fill="#c9d1d9">修</text>
+    <text x="154" y="559" fill="#c9d1d9">改</text>
+    <text x="174" y="559" fill="#c9d1d9">文</text>
+    <text x="194" y="559" fill="#c9d1d9">件</text>
+    <text x="214" y="559" fill="#c9d1d9">；</text>
+    <text x="234" y="559" fill="#c9d1d9">当</text>
+    <text x="254" y="559" fill="#c9d1d9">前</text>
+    <text x="274" y="559" fill="#c9d1d9">画</text>
+    <text x="294" y="559" fill="#c9d1d9">面</text>
+    <text x="314" y="559" fill="#c9d1d9">只</text>
+    <text x="334" y="559" fill="#c9d1d9">使</text>
+    <text x="354" y="559" fill="#c9d1d9">用</text>
+    <text x="374" y="559" fill="#c9d1d9">固</text>
+    <text x="394" y="559" fill="#c9d1d9">定</text>
+    <text x="414" y="559" fill="#c9d1d9">合</text>
+    <text x="434" y="559" fill="#c9d1d9">成</text>
+    <text x="454" y="559" fill="#c9d1d9">数</text>
+    <text x="474" y="559" fill="#c9d1d9">据</text>
+    <text x="494" y="559" fill="#c9d1d9">。</text>
     <text x="34" y="581" fill="#c9d1d9">↑</text>
     <text x="44" y="581" fill="#c9d1d9">↓</text>
     <text x="64" y="581" fill="#c9d1d9">移</text>
@@ -340,37 +365,49 @@
     <text x="304" y="581" fill="#c9d1d9">返</text>
     <text x="324" y="581" fill="#c9d1d9">回</text>
     <text x="354" y="581" fill="#c9d1d9">·</text>
-    <text x="374" y="581" fill="#c9d1d9">S</text>
-    <text x="384" y="581" fill="#c9d1d9">p</text>
-    <text x="394" y="581" fill="#c9d1d9">a</text>
-    <text x="404" y="581" fill="#c9d1d9">c</text>
-    <text x="414" y="581" fill="#c9d1d9">e</text>
-    <text x="434" y="581" fill="#c9d1d9">选</text>
-    <text x="454" y="581" fill="#c9d1d9">择</text>
-    <text x="484" y="581" fill="#c9d1d9">·</text>
-    <text x="504" y="581" fill="#c9d1d9">A</text>
-    <text x="524" y="581" fill="#c9d1d9">全</text>
-    <text x="544" y="581" fill="#c9d1d9">选</text>
-    <text x="574" y="581" fill="#c9d1d9">·</text>
-    <text x="594" y="581" fill="#c9d1d9">O</text>
-    <text x="614" y="581" fill="#c9d1d9">F</text>
-    <text x="624" y="581" fill="#c9d1d9">i</text>
-    <text x="634" y="581" fill="#c9d1d9">n</text>
-    <text x="644" y="581" fill="#c9d1d9">d</text>
-    <text x="654" y="581" fill="#c9d1d9">e</text>
-    <text x="664" y="581" fill="#c9d1d9">r</text>
-    <text x="684" y="581" fill="#c9d1d9">·</text>
-    <text x="704" y="581" fill="#c9d1d9">D</text>
-    <text x="714" y="581" fill="#c9d1d9">e</text>
-    <text x="724" y="581" fill="#c9d1d9">l</text>
-    <text x="734" y="581" fill="#c9d1d9">e</text>
-    <text x="744" y="581" fill="#c9d1d9">t</text>
-    <text x="754" y="581" fill="#c9d1d9">e</text>
-    <text x="774" y="581" fill="#c9d1d9">汇</text>
-    <text x="794" y="581" fill="#c9d1d9">总</text>
-    <text x="824" y="581" fill="#c9d1d9">·</text>
-    <text x="844" y="581" fill="#c9d1d9">Q</text>
-    <text x="864" y="581" fill="#c9d1d9">退</text>
-    <text x="884" y="581" fill="#c9d1d9">出</text>
+    <text x="374" y="581" fill="#c9d1d9">R</text>
+    <text x="394" y="581" fill="#c9d1d9">刷</text>
+    <text x="414" y="581" fill="#c9d1d9">新</text>
+    <text x="444" y="581" fill="#c9d1d9">·</text>
+    <text x="464" y="581" fill="#c9d1d9">I</text>
+    <text x="484" y="581" fill="#c9d1d9">详</text>
+    <text x="504" y="581" fill="#c9d1d9">情</text>
+    <text x="534" y="581" fill="#c9d1d9">·</text>
+    <text x="554" y="581" fill="#c9d1d9">E</text>
+    <text x="574" y="581" fill="#c9d1d9">问</text>
+    <text x="594" y="581" fill="#c9d1d9">题</text>
+    <text x="624" y="581" fill="#c9d1d9">·</text>
+    <text x="644" y="581" fill="#c9d1d9">O</text>
+    <text x="664" y="581" fill="#c9d1d9">F</text>
+    <text x="674" y="581" fill="#c9d1d9">i</text>
+    <text x="684" y="581" fill="#c9d1d9">n</text>
+    <text x="694" y="581" fill="#c9d1d9">d</text>
+    <text x="704" y="581" fill="#c9d1d9">e</text>
+    <text x="714" y="581" fill="#c9d1d9">r</text>
+    <text x="734" y="581" fill="#c9d1d9">·</text>
+    <text x="754" y="581" fill="#c9d1d9">S</text>
+    <text x="764" y="581" fill="#c9d1d9">p</text>
+    <text x="774" y="581" fill="#c9d1d9">a</text>
+    <text x="784" y="581" fill="#c9d1d9">c</text>
+    <text x="794" y="581" fill="#c9d1d9">e</text>
+    <text x="814" y="581" fill="#c9d1d9">选</text>
+    <text x="834" y="581" fill="#c9d1d9">择</text>
+    <text x="864" y="581" fill="#c9d1d9">·</text>
+    <text x="884" y="581" fill="#c9d1d9">A</text>
+    <text x="904" y="581" fill="#c9d1d9">全</text>
+    <text x="924" y="581" fill="#c9d1d9">选</text>
+    <text x="954" y="581" fill="#c9d1d9">·</text>
+    <text x="974" y="581" fill="#c9d1d9">D</text>
+    <text x="984" y="581" fill="#c9d1d9">e</text>
+    <text x="994" y="581" fill="#c9d1d9">l</text>
+    <text x="1004" y="581" fill="#c9d1d9">e</text>
+    <text x="1014" y="581" fill="#c9d1d9">t</text>
+    <text x="1024" y="581" fill="#c9d1d9">e</text>
+    <text x="1044" y="581" fill="#c9d1d9">汇</text>
+    <text x="1064" y="581" fill="#c9d1d9">总</text>
+    <text x="1094" y="581" fill="#c9d1d9">·</text>
+    <text x="1114" y="581" fill="#c9d1d9">Q</text>
+    <text x="1134" y="581" fill="#c9d1d9">退</text>
+    <text x="1154" y="581" fill="#c9d1d9">出</text>
   </g>
 </svg>

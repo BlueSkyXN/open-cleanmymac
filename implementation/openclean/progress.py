@@ -33,6 +33,8 @@ class TaskProgressSnapshot:
     complete: bool
     failed: bool = False
     cancelled: bool = False
+    # 只有真实开始执行的任务才置位；首个未完成任务不冒充正在运行。
+    started: bool = False
 
     @property
     def terminal(self) -> bool:
@@ -57,7 +59,12 @@ class ProgressSnapshot:
     @property
     def active_label(self) -> str:
         active = next(
-            (task.label for task in self.tasks if not task.terminal), ""
+            (
+                task.label
+                for task in self.tasks
+                if task.started and not task.terminal
+            ),
+            None,
         )
         if active:
             return active
@@ -65,6 +72,8 @@ class ProgressSnapshot:
             return "已取消"
         if any(task.failed for task in self.tasks):
             return "失败"
+        if any(not task.terminal for task in self.tasks):
+            return "准备中"
         return ""
 
 
@@ -76,6 +85,7 @@ class _TaskState:
     complete: bool = False
     failed: bool = False
     cancelled: bool = False
+    started: bool = False
 
     @property
     def terminal(self) -> bool:
@@ -93,6 +103,9 @@ class TaskProgress:
         if count < 0:
             raise ValueError("进度增量不能为负数")
         self._owner._advance(self.identifier, count)
+
+    def start(self) -> None:
+        self._owner._start(self.identifier)
 
     def set_fraction(self, fraction: float) -> None:
         self._owner._set_fraction(self.identifier, fraction)
@@ -158,6 +171,16 @@ class WeightedProgress:
     def snapshot(self) -> ProgressSnapshot:
         with self._lock:
             return self._snapshot_locked()
+
+    def _start(self, identifier: str) -> None:
+        with self._lock:
+            state = self._states[identifier]
+            if state.terminal:
+                return
+            state.started = True
+            self._sequence += 1
+            snapshot = self._snapshot_locked() if self._callback is not None else None
+        self._emit(snapshot)
 
     def _advance(self, identifier: str, count: int) -> None:
         with self._lock:
@@ -226,6 +249,7 @@ class WeightedProgress:
                 complete=state.complete,
                 failed=state.failed,
                 cancelled=state.cancelled,
+                started=state.started,
             )
             for state in self._states.values()
         )

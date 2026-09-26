@@ -168,7 +168,7 @@ class ConfigAndRootCliTests(unittest.TestCase):
         with mock.patch.object(sys, "stdin", stdin), contextlib.redirect_stdout(
             stdout
         ), contextlib.redirect_stderr(stderr), mock.patch(
-            "builtins.input", side_effect=["invalid", "m", "1", "", "q", "q"]
+            "builtins.input", side_effect=["invalid", "m", "1", "", "2", "", "q", "q"]
         ), mock.patch(
             "openclean.cli.choose_menu", side_effect=TUIUnavailable("no tty")
         ):
@@ -178,14 +178,15 @@ class ConfigAndRootCliTests(unittest.TestCase):
         self.assertIn("无效选择", stderr.getvalue())
         self.assertIn("openclean", stdout.getvalue())
         self.assertIn("主菜单", stdout.getvalue())
+        self.assertIn("命令速查", stdout.getvalue())
         self.assertIn(CAT_ART, stdout.getvalue())
         self.assertIn("改用行式菜单", stderr.getvalue())
 
     def test_root_dispatch_preserves_defaults_and_pauses_after_wrapper_returns(self) -> None:
-        expected = [["clean"], ["purge"], ["analyze"], ["config"], ["cat"],
+        expected = [["clean"], ["purge"], ["analyze", str(Path.home())], ["config"], ["cat"],
                     ["optimize", "ram"], ["optimize", "purgeable"]]
         choices = [MenuChoice(action, 0) for action in
-                   ("clean", "purge", "analyze", "config", "more", "cat", "back",
+                   ("clean", "purge", "analyze", "scope_home", "back", "config", "more", "cat", "back",
                     "optimize", "ram", "purgeable", "back", "quit")]
         events = []
 
@@ -241,6 +242,30 @@ class ConfigAndRootCliTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(_run_root_menu(), 0)
                 command.assert_not_called()
+
+    def test_analyze_scope_selection_dispatches_only_explicit_path(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            for action, expected in (("scope_home", root), ("scope_cwd", root),
+                                     ("scope_custom", root / "with spaces"), ("scope_root", Path("/"))):
+                choices = [MenuChoice("analyze", 2), MenuChoice(action, 0),
+                           MenuChoice("back", 4), MenuChoice("quit", 2)]
+                answers = [str(expected), ""] if action == "scope_custom" else [""]
+                with self.subTest(action=action), mock.patch("openclean.cli.choose_menu", side_effect=choices), \
+                        mock.patch("openclean.cli.main", return_value=0) as command, \
+                        mock.patch("builtins.input", side_effect=answers), \
+                        mock.patch.object(Path, "home", return_value=root), \
+                        mock.patch.object(Path, "cwd", return_value=root):
+                    self.assertEqual(_run_root_menu(), 0)
+                command.assert_called_once_with(["analyze", str(expected)])
+
+    def test_analyze_empty_custom_path_and_back_do_not_scan(self) -> None:
+        choices = [MenuChoice("analyze", 2), MenuChoice("scope_custom", 2),
+                   MenuChoice("back", 4), MenuChoice("quit", 2)]
+        with mock.patch("openclean.cli.choose_menu", side_effect=choices), \
+                mock.patch("builtins.input", return_value=""), mock.patch("openclean.cli.main") as command:
+            self.assertEqual(_run_root_menu(), 0)
+        command.assert_not_called()
 
     def test_noninteractive_commands_never_enter_menu_or_wait_for_input(self) -> None:
         for argv in ([], ["cat", "--json"], ["optimize", "ram", "--json"]):

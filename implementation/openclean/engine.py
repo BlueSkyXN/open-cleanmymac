@@ -11,7 +11,8 @@ import stat
 import threading
 import time
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -79,6 +80,8 @@ class Control:
         self._cancel = threading.Event()
         self._pause = threading.Event()
         self._pause.set()  # set = running
+        # SIGINT handler 只赋值，不在可能被中断的锁上再次加锁。
+        self.interrupt_requested = False
 
     def cancel(self):
         self._cancel.set()
@@ -91,9 +94,19 @@ class Control:
         self._pause.set()
 
     def checkpoint(self):
-        self._pause.wait()          # 阻塞直到 resume
-        if self._cancel.is_set():
+        if self.interrupt_requested:
             raise Cancelled()
+        self._pause.wait()          # 阻塞直到 resume
+        if self._cancel.is_set() or self.interrupt_requested:
+            raise Cancelled()
+
+    def run_task(self, action, *args, **kwargs):
+        """运行实际工作；交互控制可观察其生命周期，普通 CLI 不增加状态。"""
+        return action(*args, **kwargs)
+
+    def delegating(self):
+        """协调线程等待子任务时不代表仍有文件操作在进行。"""
+        return nullcontext()
 
 
 class IgnoreRules(ProtectionGate):
@@ -153,6 +166,7 @@ def _measure_dir(
     progress: TaskProgress | None = None,
     device_boundary: int | None = None,
     hardlinks: dict[tuple[int, int], tuple[int, int]] | None = None,
+    on_path: Callable[[Path], None] | None = None,
 ) -> _DirectoryMeasurement:
     measurement = _DirectoryMeasurement()
     root_facts = _inspect_path(
@@ -179,7 +193,10 @@ def _measure_dir(
             return measurement
     directories = [root_facts]
     while directories:
+        ctl.checkpoint()
         directory = directories.pop()
+        if on_path is not None:
+            on_path(directory.path)
         current_directory = _inspect_path(
             directory.path,
             issues,
@@ -756,157 +773,172 @@ def _scan_point(
     protection: Predicate,
     progress: TaskProgress | None = None,
     guards: CleanupGuardContext | None = None,
+    *,
+    include_empty: bool = False,
+    on_path: Callable[[Path], None] | None = None,
 ) -> ScanResult:
     result = ScanResult()
     guards = guards or _scan_guard_context(protection)
-    for candidate in _scan_point_candidates(
-        sp, ctl, protection, result.issues, progress
-    ):
-        facts = candidate.facts
-        hardlinks: dict[tuple[int, int], tuple[int, int]] = {}
-        is_cloud_file = facts.is_probable_cloud_placeholder
-        if is_cloud_file:
-            logical_size = (
-                facts.logical_size if stat.S_ISREG(facts.stat.st_mode) else 0
-            )
-            allocated_size = 0
-            size = 0
-            cloud_file_count = 1
-            cloud_logical_size = logical_size
-            excluded_paths = 0
-            cross_device_paths = 0
-        elif stat.S_ISDIR(facts.stat.st_mode):
-            measurement = _measure_dir(
-                facts.path,
-                ctl,
-                set(),
-                protection,
-                result.issues,
-                sp.category,
-                progress,
-                facts.stat.st_dev if sp.stay_on_device else None,
-                hardlinks,
-            )
-            size = measurement.size
-            logical_size = measurement.logical_size
-            allocated_size = measurement.allocated_size
-            cloud_file_count = measurement.cloud_file_count
-            cloud_logical_size = measurement.cloud_logical_size
-            is_cloud_file = False
-            excluded_paths = measurement.excluded_paths
-            cross_device_paths = measurement.cross_device_paths
-        else:
-            is_cloud_file = False
-            logical_size = facts.logical_size
-            allocated_size = 0 if is_cloud_file else facts.allocated_size
-            size = allocated_size
-            cloud_file_count = 1 if is_cloud_file else 0
-            cloud_logical_size = logical_size if is_cloud_file else 0
-            excluded_paths = 0
-            cross_device_paths = 0
-            if facts.stat.st_nlink > 1:
-                hardlinks[(facts.stat.st_dev, facts.stat.st_ino)] = (logical_size, allocated_size)
-        if size > 0 or cloud_file_count > 0:
-            note = sp.note
-            if excluded_paths:
-                suffix = f"包含 {excluded_paths} 个忽略/保护路径，默认不选"
-                note = f"{note}；{suffix}" if note else suffix
-            if cross_device_paths:
-                suffix = (
-                    f"包含 {cross_device_paths} 个跨卷挂载路径，"
-                    "未计入容量且不可执行"
+    try:
+        for candidate in _scan_point_candidates(
+            sp, ctl, protection, result.issues, progress
+        ):
+            facts = candidate.facts
+            if on_path is not None:
+                on_path(facts.path)
+            hardlinks: dict[tuple[int, int], tuple[int, int]] = {}
+            is_cloud_file = facts.is_probable_cloud_placeholder
+            if is_cloud_file:
+                logical_size = (
+                    facts.logical_size if stat.S_ISREG(facts.stat.st_mode) else 0
                 )
-                note = f"{note}；{suffix}" if note else suffix
-            if cloud_file_count:
-                suffix = (
-                    f"包含 {cloud_file_count} 个云占位文件（逻辑大小 "
-                    f"{human(cloud_logical_size)}），不计入可回收容量且默认不选"
-                )
-                note = f"{note}；{suffix}" if note else suffix
-            environment_override = candidate.path_source == "environment"
-            safety = (
-                "critical"
-                if cloud_file_count
-                else "confirm"
-                if environment_override and sp.safety == "safe"
-                else sp.safety
-            )
-            if environment_override:
-                suffix = (
-                    "来自环境变量覆盖路径；不会批量选择，执行必须逐项明确选择"
-                )
-                note = f"{note}；{suffix}" if note else suffix
-            if sp.requires_privilege and "特权帮助器" not in note:
-                suffix = "需要尚未实现的特权帮助器，当前仅只读报告"
-                note = f"{note}；{suffix}" if note else suffix
-            actionable = (
-                excluded_paths == 0
-                and cross_device_paths == 0
-                and cloud_file_count == 0
-                and not sp.requires_privilege
-            )
-            if excluded_paths:
-                action_block_reason = "包含忽略或保护路径"
-            elif cross_device_paths:
-                action_block_reason = "包含跨卷挂载路径"
-            elif cloud_file_count:
-                action_block_reason = "包含云占位文件"
-            elif sp.requires_privilege:
-                action_block_reason = "需要尚未实现的特权帮助器"
-            else:
-                action_block_reason = ""
-            default_selected = (
-                safety == "safe"
-                if sp.default_selected is None
-                else sp.default_selected
-            )
-            result.items.append(
-                Item(
+                allocated_size = 0
+                size = 0
+                cloud_file_count = 1
+                cloud_logical_size = logical_size
+                excluded_paths = 0
+                cross_device_paths = 0
+            elif stat.S_ISDIR(facts.stat.st_mode):
+                measurement = _measure_dir(
                     facts.path,
-                    size,
+                    ctl,
+                    set(),
+                    protection,
+                    result.issues,
                     sp.category,
-                    safety,
-                    note,
-                    logical_size=logical_size,
-                    allocated_size=allocated_size,
-                    is_cloud_file=is_cloud_file,
-                    cloud_file_count=cloud_file_count,
-                    cloud_logical_size=cloud_logical_size,
-                    actionable=actionable,
-                    action_block_reason=action_block_reason,
-                    requires_privilege=sp.requires_privilege,
-                    identity=facts.identity,
-                    preselected=(
-                        default_selected
-                        and actionable
-                        and size > 0
-                    ),
-                    excluded_paths=excluded_paths,
-                    cross_device_paths=cross_device_paths,
-                    domain=sp.domain,
-                    path_source=candidate.path_source,
-                    requires_explicit_selection=environment_override,
-                    running_process_markers=sp.running_process_markers,
-                    cleanup_scope=(
-                        "darwin-user-cache"
-                        if sp.path_provider == "darwin-user-cache"
-                        else ""
-                    ),
-                    cleanup_root=(
-                        candidate.root.path
-                        if sp.path_provider == "darwin-user-cache"
-                        else None
-                    ),
-                    cleanup_root_identity=(
-                        candidate.root.identity
-                        if sp.path_provider == "darwin-user-cache"
-                        else None
-                    ),
+                    progress,
+                    facts.stat.st_dev if sp.stay_on_device else None,
+                    hardlinks,
+                    on_path=on_path,
                 )
-            )
-            result.items[-1] = _apply_scan_guards(result.items[-1], guards, result)
-            if hardlinks:
-                result._hardlinks[result.items[-1]] = hardlinks
+                size = measurement.size
+                logical_size = measurement.logical_size
+                allocated_size = measurement.allocated_size
+                cloud_file_count = measurement.cloud_file_count
+                cloud_logical_size = measurement.cloud_logical_size
+                is_cloud_file = False
+                excluded_paths = measurement.excluded_paths
+                cross_device_paths = measurement.cross_device_paths
+            else:
+                is_cloud_file = False
+                logical_size = facts.logical_size
+                allocated_size = 0 if is_cloud_file else facts.allocated_size
+                size = allocated_size
+                cloud_file_count = 1 if is_cloud_file else 0
+                cloud_logical_size = logical_size if is_cloud_file else 0
+                excluded_paths = 0
+                cross_device_paths = 0
+                if facts.stat.st_nlink > 1:
+                    hardlinks[(facts.stat.st_dev, facts.stat.st_ino)] = (logical_size, allocated_size)
+            if size > 0 or cloud_file_count > 0 or include_empty:
+                note = sp.note
+                if excluded_paths:
+                    suffix = f"包含 {excluded_paths} 个忽略/保护路径，默认不选"
+                    note = f"{note}；{suffix}" if note else suffix
+                if cross_device_paths:
+                    suffix = (
+                        f"包含 {cross_device_paths} 个跨卷挂载路径，"
+                        "未计入容量且不可执行"
+                    )
+                    note = f"{note}；{suffix}" if note else suffix
+                if cloud_file_count:
+                    suffix = (
+                        f"包含 {cloud_file_count} 个云占位文件（逻辑大小 "
+                        f"{human(cloud_logical_size)}），不计入可回收容量且默认不选"
+                    )
+                    note = f"{note}；{suffix}" if note else suffix
+                environment_override = candidate.path_source == "environment"
+                safety = (
+                    "critical"
+                    if cloud_file_count
+                    else "confirm"
+                    if environment_override and sp.safety == "safe"
+                    else sp.safety
+                )
+                if environment_override:
+                    suffix = (
+                        "来自环境变量覆盖路径；不会批量选择，执行必须逐项明确选择"
+                    )
+                    note = f"{note}；{suffix}" if note else suffix
+                if sp.requires_privilege and "特权帮助器" not in note:
+                    suffix = "需要尚未实现的特权帮助器，当前仅只读报告"
+                    note = f"{note}；{suffix}" if note else suffix
+                actionable = (
+                    excluded_paths == 0
+                    and cross_device_paths == 0
+                    and cloud_file_count == 0
+                    and not sp.requires_privilege
+                )
+                if excluded_paths:
+                    action_block_reason = "包含忽略或保护路径"
+                elif cross_device_paths:
+                    action_block_reason = "包含跨卷挂载路径"
+                elif cloud_file_count:
+                    action_block_reason = "包含云占位文件"
+                elif sp.requires_privilege:
+                    action_block_reason = "需要尚未实现的特权帮助器"
+                else:
+                    action_block_reason = ""
+                default_selected = (
+                    safety == "safe"
+                    if sp.default_selected is None
+                    else sp.default_selected
+                )
+                result.items.append(
+                    Item(
+                        facts.path,
+                        size,
+                        sp.category,
+                        safety,
+                        note,
+                        logical_size=logical_size,
+                        allocated_size=allocated_size,
+                        is_cloud_file=is_cloud_file,
+                        cloud_file_count=cloud_file_count,
+                        cloud_logical_size=cloud_logical_size,
+                        actionable=actionable,
+                        action_block_reason=action_block_reason,
+                        requires_privilege=sp.requires_privilege,
+                        identity=facts.identity,
+                        preselected=(
+                            default_selected
+                            and actionable
+                            and size > 0
+                        ),
+                        excluded_paths=excluded_paths,
+                        cross_device_paths=cross_device_paths,
+                        domain=sp.domain,
+                        path_source=candidate.path_source,
+                        requires_explicit_selection=environment_override,
+                        running_process_markers=sp.running_process_markers,
+                        cleanup_scope=(
+                            "darwin-user-cache"
+                            if sp.path_provider == "darwin-user-cache"
+                            else ""
+                        ),
+                        cleanup_root=(
+                            candidate.root.path
+                            if sp.path_provider == "darwin-user-cache"
+                            else None
+                        ),
+                        cleanup_root_identity=(
+                            candidate.root.identity
+                            if sp.path_provider == "darwin-user-cache"
+                            else None
+                        ),
+                    )
+                )
+                if not size and not cloud_file_count:
+                    result.items[-1] = replace(
+                        result.items[-1], actionable=False, preselected=False,
+                        action_block_reason=action_block_reason or "零占用项仅供浏览",
+                    )
+                result.items[-1] = _apply_scan_guards(result.items[-1], guards, result)
+                if hardlinks:
+                    result._hardlinks[result.items[-1]] = hardlinks
+    except Cancelled:
+        # 已完成候选仍可报告；正在计量的候选不能冒充完整结果。
+        result.cancelled = True
     return result
 
 
@@ -962,6 +994,7 @@ def _scan_dynamic_point_with_progress(
 ) -> ScanResult:
     try:
         ctl.checkpoint()
+        progress.start()
         progress.advance()
         if point.scanner == "docker":
             result = scan_docker_resources()
@@ -1090,7 +1123,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
     graph_specs = [
         GraphTaskSpec(
             task_id,
-            lambda point=point, task_id=task_id: _scan_point_with_progress(
+            lambda point=point, task_id=task_id: ctl.run_task(_scan_point_with_progress,
                 point,
                 ctl,
                 ignore,
@@ -1104,7 +1137,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
         GraphTaskSpec(
             task_id,
             lambda point=point, task_id=task_id: (
-                _scan_dynamic_point_with_progress(
+                ctl.run_task(_scan_dynamic_point_with_progress,
                     point,
                     ctl,
                     ignore,
@@ -1128,7 +1161,8 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
         }
     )
     dynamic_id_set = set(dynamic_ids)
-    graph_result = execute_task_graph(graph_specs, workers=workers)
+    with ctl.delegating():
+        graph_result = execute_task_graph(graph_specs, workers=workers, on_abort=ctl.cancel)
     result = ScanResult(issues=list(setup_issues))
     for outcome in graph_result.outcomes:
         point = task_points[outcome.identifier]
@@ -1183,6 +1217,7 @@ def _scan_point_with_progress(
     progress: TaskProgress,
     guards: CleanupGuardContext,
 ) -> ScanResult:
+    progress.start()
     try:
         result = _scan_point(
             point, ctl, ignore, progress, guards
@@ -1195,7 +1230,11 @@ def _scan_point_with_progress(
         progress.fail()
         raise
     else:
-        progress.complete()
+        if result.cancelled:
+            progress.cancel()
+            ctl.cancel()
+        else:
+            progress.complete()
         return result
 
 
@@ -1209,35 +1248,46 @@ def _scan_points_with_progress(
     guards: CleanupGuardContext,
 ) -> ScanResult:
     result = ScanResult()
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {
-            ex.submit(
-                _scan_point_with_progress,
-                point,
-                ctl,
-                ignore,
-                progress.task(task_id),
-                guards,
-            ): point
-            for point, task_id in zip(points, task_ids, strict=True)
-        }
-        for future, scan_point in futures.items():
-            try:
-                task_result = future.result()
-                result.extend(task_result)
-            except Cancelled:
-                result.cancelled = True
-                ctl.cancel()
-                progress.cancel()
-                break
-            except Exception as exc:  # noqa: BLE001 - isolate worker failures
-                result.issues.append(
-                    ScanIssue(
-                        code="task_failed",
-                        message=f"{type(exc).__name__}: {exc}",
-                        task=scan_point.category,
+    with ctl.delegating(), ThreadPoolExecutor(max_workers=workers) as ex:
+        try:
+            futures = {
+                ex.submit(
+                    ctl.run_task,
+                    _scan_point_with_progress,
+                    point,
+                    ctl,
+                    ignore,
+                    progress.task(task_id),
+                    guards,
+                ): point
+                for point, task_id in zip(points, task_ids, strict=True)
+            }
+            for future, scan_point in futures.items():
+                try:
+                    # macOS 可能把 SIGINT 送达工作线程；有限等待让主线程
+                    # 定期返回解释器处理信号，避免阻塞在无期限的锁等待中。
+                    while not future.done():
+                        wait((future,), timeout=0.05)
+                    task_result = future.result()
+                    result.extend(task_result)
+                except Cancelled:
+                    result.cancelled = True
+                    ctl.cancel()
+                    progress.cancel()
+                    break
+                except Exception as exc:  # noqa: BLE001 - isolate worker failures
+                    result.issues.append(
+                        ScanIssue(
+                            code="task_failed",
+                            message=f"{type(exc).__name__}: {exc}",
+                            task=scan_point.category,
+                        )
                     )
-                )
+        except BaseException:
+            ctl.cancel()
+            raise
+    if result.cancelled:
+        progress.cancel()
     return _deduplicate_hardlinks(result)
 
 
@@ -1687,6 +1737,7 @@ def scan_project_artifacts(
     reference_time = time.time() if now is None else now
     preselect_seconds = preselect_age_days * 24 * 60 * 60
     guards = _scan_guard_context(ignore)
+    discovery_progress.start()
     try:
         project_roots = _discover_project_roots(
             roots,
@@ -1842,6 +1893,7 @@ def scan_project_artifacts(
                 continue
             walk_project(project_root, child_facts.path, depth + 1)
 
+    artifact_progress.start()
     try:
         for project_root in sorted(project_roots, key=str):
             walk_project(project_root, project_root, 0)

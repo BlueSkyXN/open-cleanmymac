@@ -96,6 +96,7 @@ def execute_task_graph(
     specs: Iterable[TaskSpec[T]],
     *,
     workers: int,
+    on_abort: Callable[[], None] | None = None,
 ) -> TaskGraphResult[T]:
     """并发执行依赖已满足的任务；失败只阻断其下游依赖。"""
     if workers < 1:
@@ -110,7 +111,7 @@ def execute_task_graph(
     outcomes: dict[str, TaskOutcome[T]] = {}
     running: dict[Future[T], str] = {}
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    def run_ready(executor):
         while pending or running:
             for task in tasks:
                 identifier = task.identifier
@@ -134,7 +135,8 @@ def execute_task_graph(
 
             if not running:
                 continue
-            completed, _ = wait(running, return_when=FIRST_COMPLETED)
+            # 有限等待确保主线程能处理送达其他线程的进程信号。
+            completed, _ = wait(running, timeout=0.05, return_when=FIRST_COMPLETED)
             for future in sorted(
                 completed,
                 key=lambda candidate: order[running[candidate]],
@@ -152,6 +154,15 @@ def execute_task_graph(
                         identifier=identifier,
                         value=value,
                     )
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        try:
+            run_ready(executor)
+        except BaseException:
+            # 必须在 executor.__exit__ 等待前传递中断，避免 CLI 卡在收尾。
+            if on_abort is not None:
+                on_abort()
+            raise
 
     return TaskGraphResult(
         tuple(outcomes[task.identifier] for task in tasks)

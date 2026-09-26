@@ -86,7 +86,14 @@ flowchart TD
 | `cleanup.py` | 选择、预检、Trash 操作、执行报告 | 特权提升 |
 | `macos.py` | Trash、Darwin cache、mount、Time Machine | 通用业务编排 |
 | `docker.py` | 只读容量、target binding、三条 prune 映射 | 任意 Docker 命令或 volume 删除 |
+| `display_mode.py` | 集中模式路由：显式参数优先于 TTY 探测、冲突前置 | 执行资格、选择语义 |
 | `tui.py` / `space_tui.py` | 审阅与确认 | 绕过 `cleanup.py` |
+| `scan_tui.py` | 统一扫描页与扫描线程会话（clean/purge/analyze 共用） | 重开扫描、执行授权 |
+| `space_session.py` | Analyze 工作线程生命周期、有界会话导航缓存 | 持久索引、执行授权 |
+
+Analyze 的主线程只负责终端，工作线程复用现有计量与保护逻辑；静态保护路径表在同次上下文内
+复用。分析按有界批次执行，最终依发现顺序合并并统一处理硬链接归属。TUI 的零占用浏览行不
+扩大 CLI/JSON 候选；提交前重新分析选择来源，执行前仍走共享实时预检。缓存不是操作凭证。
 
 `application_languages.py`、`startup_items.py` 和 `storage_diagnostics.py` 返回统一
 `Item`/`ScanIssue`，但不能自行删除目标。

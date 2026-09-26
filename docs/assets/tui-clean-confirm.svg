@@ -3,7 +3,7 @@
   <title>Clean TUI · 只读汇总</title>
   <desc>未指定 --yes 时，生产 Clean TUI 明确说明只输出选择预览。
 
- Clean · 扫描结果 / 汇总确认
+ Clean · 扫描结果 / 选择预览
 
  选择 2 项，共 6.6GB
 
@@ -46,10 +46,10 @@
     <text x="154" y="75" fill="#c9d1d9" text-decoration="underline">结</text>
     <text x="174" y="75" fill="#c9d1d9" text-decoration="underline">果</text>
     <text x="204" y="75" fill="#c9d1d9" text-decoration="underline">/</text>
-    <text x="224" y="75" fill="#c9d1d9" text-decoration="underline">汇</text>
-    <text x="244" y="75" fill="#c9d1d9" text-decoration="underline">总</text>
-    <text x="264" y="75" fill="#c9d1d9" text-decoration="underline">确</text>
-    <text x="284" y="75" fill="#c9d1d9" text-decoration="underline">认</text>
+    <text x="224" y="75" fill="#c9d1d9" text-decoration="underline">选</text>
+    <text x="244" y="75" fill="#c9d1d9" text-decoration="underline">择</text>
+    <text x="264" y="75" fill="#c9d1d9" text-decoration="underline">预</text>
+    <text x="284" y="75" fill="#c9d1d9" text-decoration="underline">览</text>
     <text x="34" y="119" fill="#c9d1d9">选</text>
     <text x="54" y="119" fill="#c9d1d9">择</text>
     <text x="84" y="119" fill="#c9d1d9">2</text>
