@@ -27,6 +27,7 @@ ASSET_NAMES = (
     "tui-clean-review.svg",
     "tui-clean-confirm.svg",
     "tui-analyze.svg",
+    "tui-analyze-loading.svg",
     "cli-scan.svg",
     "tui-clean-review-light.svg",
     "cli-scan-light.svg",
@@ -305,6 +306,22 @@ def _render_clean_confirmation() -> str:
     )
 
 
+def _render_analyze_loading() -> str:
+    from openclean.analyzer import AnalysisUpdate
+    from openclean.models import Item
+    from openclean.space_tui import _draw_loading
+
+    root = Path("/tmp/openclean-demo/space")
+    update = AnalysisUpdate(2, 8, (
+        Item(root / "Projects", 31_000_000_000, "空间占用"),
+        Item(root / "Archives", 7_800_000_000, "空间占用"),
+    ))
+    screen = GridScreen()
+    _draw_loading(screen, root, update, elapsed=1.2)
+    return _svg(screen, title="Analyze TUI · 扫描中",
+                description="合成扫描进度；未知总量不显示精确百分比，Q 可取消。")
+
+
 def _render_analyze() -> str:
     from openclean.analyzer import SpaceAnalysis, SpaceEntry
     from openclean.models import Item
@@ -435,6 +452,7 @@ def render_assets() -> dict[str, str]:
             "tui-clean-review.svg": _render_clean_review(),
             "tui-clean-confirm.svg": _render_clean_confirmation(),
             "tui-analyze.svg": _render_analyze(),
+            "tui-analyze-loading.svg": _render_analyze_loading(),
             "cli-scan.svg": _render_cli_scan(),
             "tui-clean-review-light.svg": _render_clean_review("light"),
             "cli-scan-light.svg": _render_cli_scan("light"),

@@ -5,7 +5,7 @@
 macOS 磁盘清理 CLI · 安装后的命令名为 **`openclean`**
 
 [![CI](https://github.com/BlueSkyXN/open-cleanmymac/actions/workflows/ci.yml/badge.svg)](https://github.com/BlueSkyXN/open-cleanmymac/actions/workflows/ci.yml)
-[![Version 0.24.0a2 Alpha](https://img.shields.io/badge/version-0.24.0a2_Alpha-orange)](CHANGELOG.md)
+[![Version 0.24.0a3 Alpha](https://img.shields.io/badge/version-0.24.0a3_Alpha-orange)](CHANGELOG.md)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple&logoColor=white)](docs/PREVIEW.md)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
@@ -46,10 +46,10 @@ fail-closed，不会伪报成功。
 上图由当前 Clean TUI 的生产绘制函数生成，使用固定合成候选。更多画面见
 [docs/PREVIEW.md](docs/PREVIEW.md)。
 
-> 当前版本 `0.24.0a2`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
+> 当前发布版本 `0.24.0a3`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
 > 完整范围与 JSON/Run 版本见 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
 
-后续源码（未发布）补充了通用缓存的动态应用归属保护，细化 Purge 的清理后果说明，
+`0.24.0a3` 补充了通用缓存的动态应用归属保护，细化 Purge 的清理后果说明，
 并补齐已有 Antigravity/chrome-devtools-mcp 数据根中的精确浏览器缓存路径。
 WorkBuddy 两代 BundleMigration ID 均纳入版本保护，待安装更新不会因应用退出而成为普通缓存。
 Codex Electron 精确缓存以 confirm、默认不选展示，浏览器 CacheStorage 单独作只读诊断。
@@ -64,14 +64,14 @@ CLI 文本报告将候选与完整路径分行，并区分发现、可操作、�
 未知归属不等于可安全删除；Purge 的年龄表示产物及其内容的修改时间，不代表项目闲置。
 命令、JSON schema v2、默认选择和既有静态规则保持兼容，详见 [CHANGELOG](CHANGELOG.md)。
 
-未发布源码另修复清理保护与计量问题：Purge 只识别 `.vitepress/cache`、`.vitepress/dist`，
+`0.24.0a3` 同时修复清理保护与计量问题：Purge 只识别 `.vitepress/cache`、`.vitepress/dist`，
 不再移动整个配置/源码目录；Clean/Purge/Analyze 与执行器共用应用和 updater 范围保护，
 包含保护对象的父目录、子目录及环境变量入口不能绕过，执行前重新检查扫描后新增的状态。
 updater 根及同路径合并保留版本复核和 `critical` 确认；硬链接共享容量只计一次，
 保留各路径的独立选择。规则编码错误和规则/配置 JSON 嵌套过深均返回结构化错误回执。
 旧发行包不包含这些修复。
 
-未发布源码同时修复 Analyze 漏报：已列出的文件或目录在计量前消失时，保留其它结果并返回
+`0.24.0a3` 还修复了 Analyze 漏报：已列出的文件或目录在计量前消失时，保留其它结果并返回
 不完整状态与非零退出码。应用保护范围比较减少重复路径解析，不增加状态缓存；
 清理回执区分操作计量与实际腾出的空间，不再将永久删除计量称为“永久释放”。
 
@@ -82,13 +82,13 @@ updater 根及同路径合并保留版本复核和 `critical` 确认；硬链接
 
 ### 安装 GitHub 预发行包
 
-`0.24.0a2` 为 Alpha，不是全功能稳定版。通过 GitHub CLI 下载 wheel 与校验文件：
+`0.24.0a3` 为 Alpha，不是全功能稳定版。通过 GitHub CLI 下载 wheel 与校验文件：
 
 ```bash
-gh release download v0.24.0a2 --repo BlueSkyXN/open-cleanmymac --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
+gh release download v0.24.0a3 --repo BlueSkyXN/open-cleanmymac --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
 shasum -a 256 -c SHA256SUMS
 python3 -m venv .venv
-.venv/bin/python -m pip install --no-deps ./open_cleanmymac-0.24.0a2-py3-none-any.whl
+.venv/bin/python -m pip install --no-deps ./open_cleanmymac-0.24.0a3-py3-none-any.whl
 .venv/bin/openclean --version
 .venv/bin/openclean strategy list --json
 ```
@@ -151,6 +151,12 @@ Trash）。逐项状态、来源和有意排除项见
 子任务结束后按 Enter 返回菜单。主菜单只进入审阅/预览，不自动附加 `--yes`；
 Optimize 显示不可用原因，不执行维护。非 TTY 无参数启动仍只输出帮助。
 
+当前源码（尚未发布）的 Analyze 从主菜单进入时先选择家目录、当前目录、自定义目录或启动盘；
+直接运行 `openclean analyze` 仍默认 `/`。扫描立即显示工作状态，`Q` 取消审阅、`Ctrl-C`
+中断并恢复终端；返回已访问目录复用有界会话缓存，`R` 刷新。`I` 查看当前项详情，`E` 查看
+全部问题，只读原因单独显示。提交选择前重新扫描相关层级，变化或不可执行项会撤销；
+执行仍需 `--yes`、critical 二次确认和实时保护复核。历史安装包不会自动获得这些源码改进。
+
 Clean/Purge 的逐项列表按 `I` 查看只读详情，方向键滚动、Esc 返回，选择保持不变。
 详情显示已有年龄、句柄、保留期、SQLite、updater 等证据，不额外扫描。
 只读诊断不是可清理对象；内部空闲页、年龄桶或逻辑上限也不是已经释放的空间。
@@ -166,8 +172,10 @@ openclean config [--analytics on|off]
 openclean cat [--json]
 ```
 
-连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 界面。JSON、管道、
-`--no-interactive` 或任何参数化选择 flag 走非交互流程。完整参数、选择语义和 JSON
+连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 界面（含扫描页：Space
+请求暂停/继续、Q 取消审阅）。JSON、管道、`--no-interactive` 或任何参数化选择 flag
+走非交互流程；`--interactive` 显式要求全屏界面，需要 stdin/stdout 均连接终端。
+模式矩阵与冲突规则见 [docs/MODES.md](docs/MODES.md)；完整参数、选择语义和 JSON
 schema v2 以 `openclean <command> --help` 和
 [implementation/README.md](implementation/README.md) 为准。
 

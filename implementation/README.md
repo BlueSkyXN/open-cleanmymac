@@ -169,7 +169,8 @@ JSON schema v2 新增 `command=large`，已有命令格式不变。`items` 复�
 无参数 `openclean` 在 TTY 下打开五项主菜单：Clean、Purge、Analyze、Optimize、Config。
 方向键移动、Enter 进入，`M` 打开 More（Cat/返回）。主菜单 `Q/Esc` 退出，次级菜单返回；
 子任务完成后保留结果，按 Enter 返回原菜单。终端初始化失败退回行式菜单。
-菜单调度保留子命令默认范围，不附加 `--yes`；Optimize 只展示现有 refusal。
+主菜单 Analyze 先选择家目录、当前目录、自定义目录或启动盘，再传递明确路径；其余任务默认范围不变。
+直接运行 `analyze` 的默认路径仍为 `/`；菜单不附加 `--yes`，Optimize 只展示现有 refusal。
 非 TTY 无参数仍输出帮助并退出 0，显式命令与 JSON 不进入菜单。
 
 - 没有 `--yes` 时，`clean`/`purge`/`analyze` 即使带选择参数也只预览。
@@ -194,10 +195,16 @@ JSON schema v2 新增 `command=large`，已有命令格式不变。`items` 复�
 - updater 候选统一为 critical 且要求精确选择；`pending_update`、`installed_app_missing`
   和 `version_unknown` 不可执行，同版/旧版残留在执行前仍会重新比较版本。
 
-连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 界面。JSON、管道、
-`--no-interactive` 和任何参数化选择 flag 不打开 TUI。TUI 的选择只是选择；实际执行仍
-要求启动命令带 `--yes`，并在汇总页再次按 `Y`。快捷键见
-[docs/PREVIEW.md](../docs/PREVIEW.md)。
+连接 TTY 时，`clean`、`purge` 和 `analyze` 默认进入 curses 界面（先扫描页后审阅页）。
+JSON、管道、`--no-interactive` 和任何参数化选择 flag 不打开 TUI；`--interactive`
+显式要求全屏界面，需要 stdin/stdout 均连接终端，且不能与 `--json` 或参数化选择
+组合（冲突在扫描前以 `invalid_mode_options` 拒绝，exit 2）。TUI 的选择只是选择；
+实际执行仍要求启动命令带 `--yes`，并在汇总页再次按 `Y`。模式矩阵与集中路由见
+[docs/MODES.md](../docs/MODES.md)；快捷键见 [docs/PREVIEW.md](../docs/PREVIEW.md)。
+
+扫描页在 clean/purge/analyze 间复用同一交互：`Space` 请求暂停/继续（“已暂停”只在实际
+工作线程全部到达暂停点后显示，阻塞 I/O 期间保持“暂停已请求”），`Q` 取消审阅（exit 0），
+`Ctrl-C` 中断（exit 130）；取消后等待 worker 完成收尾，不重开扫描。
 
 Clean/Purge 的逐项列表新增 `I` 只读详情：方向键滚动、Esc/左键返回原位置，`Q` 取消审阅。
 Space/Enter 仍在逐项列表切换选择，详情页不改变选择。详情只读取当前 Item 的路径/identifier、
@@ -227,8 +234,19 @@ TUI 默认 `OPENCLEAN_THEME=auto` 使用终端自身的前景/背景，焦点整
 
 长文本按显示列省略，Clean/Purge 仍可按 I 查看完整路径；快捷键按整组换行。
 窗口小于 48 列 × 14 行时保留选择并提示调整尺寸，只接受退出，不处理隐藏的确认按键。
-Analyze 用文件名和占比条减少重复路径，焦点路径与首个阻断问题显示在底部；尚无完整
-issues 浏览器，交互退出码的完整性限制仍见 TODO。
+Analyze 在扫描前显示加载页，后台分批计量；主线程处理按键，进度限频，不以启发百分比冒充实际完成率。
+`Q` 取消审阅，`Ctrl-C` 中断返回 130；取消先传递到扫描检查点，再等待工作线程收尾。
+不可中断的系统调用或已有外部查询仍需等待其返回/超时，不把发出取消显示为已经停止。
+返回上级复用当前会话的目录视图与光标，`R` 重新扫描；缓存最多 16 个视图、累计 20,000 条，
+超大结果可显示但不缓存，退出即丢弃。缓存不是新的执行凭证：提交前重新分析各选择来源，
+身份、大小、风险或可执行性变化时撤销相应选择，最终执行仍由原有预检与实时保护负责。
+
+`I` 查看当前项路径、容量、风险和说明；`E` 查看全部 issues，方向键滚动、Esc 返回。
+不可执行项显示“只读”，焦点阻断原因和用户操作反馈分别显示；本页不可操作时标为仅浏览。
+TUI 补充空目录/零占用浏览行，这些行不可选择，不改变非交互或 JSON 的候选集合。
+权限失败的未知容量显示“未测”，不冒充真实 0 B。提交结果的完整性同时考虑当前页面和
+所选项重新分析的来源；不完整正常提交返回 1。用户主动 Q 放弃审阅仍返回 0，不代表扫描完整。
+Analyze 的公共参数、JSON schema v2、`--top` 显示截断和 critical 执行条件保持不变。
 
 ## JSON schema v2
 

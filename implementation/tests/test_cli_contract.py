@@ -106,6 +106,33 @@ class CliContractTests(unittest.TestCase):
                 diagnostic_kind="crashpad_pairing",
             )
 
+    def test_empty_result_distinguishes_complete_from_incomplete(self) -> None:
+        from openclean.models import ScanIssue
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rules = _rules(root)
+            complete_empty = ScanResult()
+            incomplete_empty = ScanResult(
+                issues=[ScanIssue("permission_denied", "fixture denied", "developer")]
+            )
+            for result, expected in (
+                (complete_empty, "扫描完成，没有发现候选"),
+                (incomplete_empty, "扫描不完整，部分位置无法读取"),
+            ):
+                with self.subTest(expected=expected):
+                    stdout = io.StringIO()
+                    with mock.patch(
+                        "openclean.cli.scan_domains", return_value=result
+                    ), contextlib.redirect_stdout(stdout):
+                        status = main(
+                            ["scan", "--domain", "developer", "--rules", str(rules)]
+                        )
+                    output = stdout.getvalue()
+                    self.assertEqual(status, 0 if result.complete else 1)
+                    self.assertIn(expected, output)
+                    self.assertNotIn("未发现可清理项", output)
+
     def test_help_is_stdout_only_and_explains_safety_contracts(self) -> None:
         cases = (
             (("--help",), "macOS 清理工具"),

@@ -7,9 +7,15 @@ import unicodedata
 
 MIN_WIDTH = 48
 MIN_HEIGHT = 14
+# 面向用户的列表用中文短语；内部枚举和 JSON 字段不改名。
+SAFETY_LABELS = {"safe": "可选择", "confirm": "需确认", "critical": "需重点确认"}
 _colors_enabled = False
 _theme = "auto"
 ROLE_PAIRS = {"title": 1, "warning": 3, "danger": 4, "selected": 5}
+
+
+def safety_label(safety: str) -> str:
+    return SAFETY_LABELS.get(safety, safety)
 # 使用 256 色索引，避开可自定义的前 16 个 ANSI 色及粗体映射为亮色的设置。
 # auto 始终沿用终端默认前景/背景，不从 TERM、COLORFGBG 或 macOS 外观猜测背景。
 COLOR_SCHEMES = {

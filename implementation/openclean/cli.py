@@ -8,8 +8,10 @@ import argparse
 import json
 import hashlib
 import re
+import signal
 import stat
 import sys
+import threading
 from collections.abc import Iterable
 from dataclasses import asdict
 from decimal import Decimal
@@ -27,6 +29,7 @@ from .cleanup import (
 )
 from .config import ConfigError, ConfigStore
 from .core.errors import AgentRuntimeError
+from .display_mode import DisplayModeError, resolve_display_mode
 from .engine import (
     Control,
     IgnoreRules,
@@ -52,13 +55,15 @@ from .progress import TerminalProgressRenderer
 from .redaction import redact_json_payload
 from .runtime.inspect_service import inspect_target, validated_home
 from .runtime.run_store import RunStore, finding_to_dict, default_run_store_dir
+from .scan_tui import ScanScreenFailure, start_scan_screen
 from .scanpoints import DOMAINS
 from .space_tui import SpaceTUIUnavailable, review_space
-from .terminal_ui import pad_cells, safe_text
+from .terminal_ui import pad_cells, safe_text, safety_label
 from .strategies.registry import StrategyRegistry, pack_hash
 from .tui import (
-    MENU_ITEMS, MENU_TITLES, MenuChoice, ReviewGroup, TUIUnavailable,
-    choose_menu, item_diagnostic_summary, review_cleanup,
+    CHEATSHEET_LINES, CHEATSHEET_NOTES, MENU_ITEMS, MENU_TITLES, MenuChoice,
+    ReviewGroup, TUIUnavailable, choose_menu, item_diagnostic_summary,
+    review_cleanup,
 )
 
 ALL_DOMAINS = list(DOMAINS.keys()) + ["project"]
@@ -77,6 +82,28 @@ CLEAN_DOMAIN_LABELS = {
 CLI_SCHEMA_VERSION = 2
 MINIMUM_PYTHON = (3, 11)
 CAT_ART = " /\\_/\\\n( o.o )\n > ^ <"
+
+
+def _run_interruptible_scan(scan_control, action, *args, **kwargs):
+    """非交互扫描协作处理中断，避免 KeyboardInterrupt 打断线程锁操作。"""
+    if threading.current_thread() is not threading.main_thread():
+        return action(*args, **kwargs)
+    previous = signal.getsignal(signal.SIGINT)
+    if previous is not signal.default_int_handler:
+        # 嵌入调用方自定义的信号策略仍由调用方管理。
+        return action(*args, **kwargs)
+
+    def request_interrupt(signum, frame):
+        scan_control.interrupt_requested = True
+
+    signal.signal(signal.SIGINT, request_interrupt)
+    try:
+        return action(*args, **kwargs)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        if scan_control.interrupt_requested:
+            scan_control.cancel()
+            raise KeyboardInterrupt
 
 
 class CliUsageError(Exception):
@@ -271,6 +298,24 @@ def _add_rules_path_option(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_interactive_mode_group(parser: argparse.ArgumentParser) -> None:
+    """三个显式模式参数互斥；判定集中在 resolve_display_mode。"""
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--interactive",
+        action="store_true",
+        help=(
+            "显式进入全屏 TUI；需要 stdin/stdout 均连接终端，"
+            "不能与 --json 或参数化选择同时使用"
+        ),
+    )
+    group.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="即使连接 TTY 也使用文本/参数化流程",
+    )
+
+
 def _add_cleanup_execution_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--yes",
@@ -314,11 +359,7 @@ def _add_cleanup_execution_options(parser: argparse.ArgumentParser) -> None:
             "不继承默认预选，confirm/critical 仍需对应授权"
         ),
     )
-    parser.add_argument(
-        "--no-interactive",
-        action="store_true",
-        help="即使连接 TTY 也使用文本/参数化流程",
-    )
+    _add_interactive_mode_group(parser)
 
 
 def _load_ignore_rules(args: argparse.Namespace) -> IgnoreRules:
@@ -383,17 +424,34 @@ def _prepare_cleanup_selection(
     return with_cleanup_selection(result, selected), selected
 
 
-def _use_cleanup_tui(args: argparse.Namespace) -> bool:
-    return (
-        not args.json
-        and not args.no_interactive
-        and not args.force
-        and not args.select_all_safe
-        and not args.include_confirm
-        and not args.include_critical
-        and not args.select
-        and sys.stdin.isatty()
-        and sys.stdout.isatty()
+def _parameterized_selection(args: argparse.Namespace, command: str) -> bool:
+    """存在参数化选择来源时，自动 TUI 不应截获交互。"""
+    if command == "analyze":
+        return bool(args.select)
+    classic = bool(
+        getattr(args, "select", [])
+        or getattr(args, "select_all_safe", False)
+        or getattr(args, "include_confirm", False)
+        or getattr(args, "include_critical", False)
+        or getattr(args, "force", False)
+    )
+    if command == "clean":
+        return classic or bool(
+            getattr(args, "run", None) or getattr(args, "finding", [])
+        )
+    return classic
+
+
+def _display_mode(args: argparse.Namespace, command: str) -> str:
+    """集中的模式判定入口；冲突在扫描前抛 DisplayModeError。"""
+    return resolve_display_mode(
+        json_output=bool(getattr(args, "json", False)),
+        interactive=bool(getattr(args, "interactive", False)),
+        line_interactive=bool(getattr(args, "line_interactive", False)),
+        no_interactive=bool(getattr(args, "no_interactive", False)),
+        parameterized_selection=_parameterized_selection(args, command),
+        stdin_isatty=sys.stdin.isatty(),
+        stdout_isatty=sys.stdout.isatty(),
     )
 
 
@@ -429,9 +487,10 @@ def _resolve_cleanup_selection(
     groups: tuple[ReviewGroup, ...],
     *,
     title: str,
+    mode: str = "tui",
 ) -> tuple[ScanResult, list[Item], bool, bool]:
     """返回结果快照、选择、是否允许执行、是否由用户取消。"""
-    if _use_cleanup_tui(args):
+    if mode == "tui":
         try:
             review = review_cleanup(
                 groups,
@@ -439,7 +498,8 @@ def _resolve_cleanup_selection(
                 allow_execution=args.yes,
             )
         except TUIUnavailable as exc:
-            if args.yes:
+            # 显式 --interactive 不静默换模式；无审阅执行风险同样拒绝回退。
+            if args.yes or getattr(args, "interactive", False):
                 raise SelectionError(
                     f"{exc}；为避免无审阅执行，请改用 --no-interactive"
                 ) from exc
@@ -456,6 +516,15 @@ def _resolve_cleanup_selection(
             )
     marked, selected = _prepare_cleanup_selection(result, args)
     return marked, selected, args.yes, False
+
+
+def _empty_result_message(result) -> str:
+    """区分扫描完成无候选、不完整与用户取消；只有完整扫描才说“未发现”。"""
+    if result.cancelled:
+        return "用户取消；本次扫描未完整执行。"
+    if result.complete:
+        return "扫描完成，没有发现候选。"
+    return "扫描不完整，部分位置无法读取；完整问题见下方列表。"
 
 
 def _print_issues(result) -> None:
@@ -708,6 +777,18 @@ def _line_menu(menu: str) -> MenuChoice:
         print("无效选择。", file=sys.stderr)
 
 
+def _print_cheatsheet() -> None:
+    print("\nopenclean · 命令速查")
+    for heading, examples in CHEATSHEET_LINES:
+        print(f"\n{heading}")
+        for example in examples:
+            print(f"  {example}")
+    print()
+    for note in CHEATSHEET_NOTES:
+        print(note)
+    print()
+
+
 def _run_root_menu() -> int:
     actions = {
         "clean": ["clean"], "purge": ["purge"], "analyze": ["analyze"],
@@ -734,10 +815,30 @@ def _run_root_menu() -> int:
         cursors[menu] = choice.cursor
         if choice.action == "quit":
             return 0
-        if choice.action in {"more", "optimize", "back"}:
-            menu = "root" if choice.action == "back" else choice.action
+        if choice.action == "cheatsheet":
+            _print_cheatsheet()
             continue
-        command = actions[choice.action]
+        if choice.action in {"more", "optimize", "back", "analyze"}:
+            menu = ("root" if choice.action == "back" else
+                    "analyze_scope" if choice.action == "analyze" else choice.action)
+            continue
+        if choice.action.startswith("scope_"):
+            try:
+                if choice.action == "scope_custom":
+                    path = input("待分析目录（空输入返回）：").strip()
+                    if not path:
+                        continue
+                else:
+                    path = {"scope_home": Path.home, "scope_cwd": Path.cwd,
+                            "scope_root": lambda: Path("/")}[choice.action]()
+                command = ["analyze", str(normalize_path(path))]
+            except (EOFError, KeyboardInterrupt):
+                return 0
+            except (OSError, ValueError) as exc:
+                print(f"无法选择分析范围：{exc}", file=sys.stderr)
+                continue
+        else:
+            command = actions[choice.action]
         status = main(command)
         if status:
             print(f"{' '.join(command)} 返回退出码 {status}；请查看上述结果。", file=sys.stderr)
@@ -778,7 +879,8 @@ def _scan_summary(result: ScanResult) -> dict[str, object]:
 def _print_text_item(name: str, item: Item, *, selected: bool = False, extra: str = "") -> None:
     marker = "[!]" if not item.actionable else "[x]" if selected else "[ ]"
     state = "只读诊断" if item.diagnostic_kind else "不可执行" if not item.actionable else "需逐项选择" if item.requires_explicit_selection else "可审阅"
-    print(f"  {marker} {pad_cells(name, 30)} {human(item.size):>10}  {item.safety:<8} {state}{safe_text(extra)}")
+    print(f"  {marker} {pad_cells(name, 30)} {human(item.size):>10}  "
+          f"{pad_cells(safety_label(item.safety), 10)} {state}{safe_text(extra)}")
     print(f"      {safe_text(_item_location(item))}")
     annotations = _item_annotations(item).strip()
     if annotations:
@@ -949,7 +1051,7 @@ def _print_clean_report(
         return
 
     if not domains:
-        print("未发现可清理项。")
+        print(_empty_result_message(result))
         _print_issues(result)
         return
     title = (
@@ -1123,6 +1225,13 @@ def _print_analyze_report(
             f"{marker} {human(entry.item.size):>10}  {entry.percent:6.1f}%  "
             f"{entry.item.path}{cloud}{_item_annotations(entry.item)}"
         )
+    if not entries:
+        if analysis.cancelled:
+            print("用户取消；本次分析未完整执行。")
+        elif analysis.complete:
+            print("扫描完成，此目录没有可显示的一级项目。")
+        else:
+            print("分析不完整，部分位置无法读取；完整问题见下方列表。")
     print("─" * 88)
     if len(entries) < len(analysis.entries):
         print(
@@ -1599,6 +1708,14 @@ def main(argv: list[str] | None = None) -> int:
     _add_rule_options(analyze)
     analyze_mode = analyze.add_mutually_exclusive_group()
     analyze_mode.add_argument(
+        "--interactive",
+        action="store_true",
+        help=(
+            "显式进入全屏 TUI；需要 stdin/stdout 均连接终端，"
+            "不能与 --json 或 --select 同时使用"
+        ),
+    )
+    analyze_mode.add_argument(
         "--no-interactive",
         action="store_true",
         help="即使连接 TTY 也只输出当前层级报告",
@@ -1906,7 +2023,8 @@ def main(argv: list[str] | None = None) -> int:
             if regular:
                 renderer = _progress_renderer(args.json)
                 try:
-                    regular_result = scan_domains(
+                    regular_result = _run_interruptible_scan(
+                        ctl, scan_domains,
                         regular,
                         ctl,
                         ignore,
@@ -1922,7 +2040,8 @@ def main(argv: list[str] | None = None) -> int:
                 if roots:
                     renderer = _progress_renderer(args.json)
                     try:
-                        pr = scan_project_artifacts(
+                        pr = _run_interruptible_scan(
+                            ctl, scan_project_artifacts,
                             roots,
                             ctl,
                             ignore,
@@ -1945,7 +2064,7 @@ def main(argv: list[str] | None = None) -> int:
 
         items_result = finalize_overlapping_result(items_result)
         if not items_result.items and not args.json:
-            print("未发现可清理项。")
+            print(_empty_result_message(items_result))
             _print_issues(items_result)
         else:
             _print_report(
@@ -1992,6 +2111,10 @@ def main(argv: list[str] | None = None) -> int:
                 "（category/--select/--all/--force）混用。",
                 exit_code=2,
             )
+        try:
+            clean_mode = _display_mode(args, "clean")
+        except DisplayModeError as exc:
+            return _fail(args, "clean", exc.code, f"clean：{exc}")
         if _agent_run:
             try:
                 return _cmd_clean_finding(args)
@@ -2020,30 +2143,78 @@ def main(argv: list[str] | None = None) -> int:
                 "rules_error",
                 f"规则加载失败：{exc}",
             )
-        ctl = Control()
-        renderer = _progress_renderer(args.json)
-        try:
-            result = finalize_overlapping_result(
-                scan_domains(
-                    domains,
-                    ctl,
-                    ignore,
-                    args.workers,
-                    on_progress=renderer,
+        scan_outcome = None
+        if clean_mode == "tui":
+            try:
+                scan_outcome = start_scan_screen(
+                    lambda control, publish: scan_domains(
+                        domains,
+                        control,
+                        ignore,
+                        args.workers,
+                        on_progress=publish,
+                    ),
+                    title="Clean · 扫描",
+                    scope=" · ".join(
+                        CLEAN_DOMAIN_LABELS[domain] for domain in domains
+                    ),
                 )
-            )
-        except KeyboardInterrupt:
-            ctl.cancel()
-            return _fail(
-                args,
-                "clean",
-                "cancelled",
-                "已取消。",
-                exit_code=130,
-            )
-        finally:
-            if renderer is not None:
-                renderer.finish()
+            except TUIUnavailable as exc:
+                if args.interactive:
+                    return _fail(
+                        args,
+                        "clean",
+                        "interactive_unavailable",
+                        f"clean：{exc}；显式 --interactive 失败，未执行其他模式。",
+                    )
+                # 初始化失败发生在扫描开始前：回退既有文本流程重跑一次同步扫描。
+                print(f"扫描界面不可用，改用文本流程：{exc}", file=sys.stderr)
+            except ScanScreenFailure as exc:
+                return _fail(
+                    args,
+                    "clean",
+                    "scan_screen_failed",
+                    f"clean：{exc}；扫描已取消并完成收尾。",
+                    exit_code=1,
+                )
+            except KeyboardInterrupt:
+                return _fail(
+                    args, "clean", "cancelled", "已取消。", exit_code=130,
+                )
+            if scan_outcome is not None:
+                if scan_outcome.status == "cancelled":
+                    print("已取消审阅；未执行清理。")
+                    return 0
+                if scan_outcome.error is not None:
+                    raise scan_outcome.error
+        if scan_outcome is None:
+            ctl = Control()
+            renderer = _progress_renderer(args.json)
+            try:
+                result = finalize_overlapping_result(
+                    _run_interruptible_scan(
+                        ctl, scan_domains,
+                        domains,
+                        ctl,
+                        ignore,
+                        args.workers,
+                        on_progress=renderer,
+                    )
+                )
+            except KeyboardInterrupt:
+                ctl.cancel()
+                return _fail(
+                    args,
+                    "clean",
+                    "cancelled",
+                    "已取消。",
+                    exit_code=130,
+                )
+            finally:
+                if renderer is not None:
+                    renderer.finish()
+        else:
+            result = finalize_overlapping_result(scan_outcome.result)
         try:
             result, selected, execution_confirmed, cancelled = (
                 _resolve_cleanup_selection(
@@ -2051,6 +2222,7 @@ def main(argv: list[str] | None = None) -> int:
                     args,
                     _clean_review_groups(result),
                     title="Clean · 扫描结果",
+                    mode=clean_mode,
                 )
             )
         except SelectionError as exc:
@@ -2095,6 +2267,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "analyze":
         try:
+            analyze_mode = _display_mode(args, "analyze")
+        except DisplayModeError as exc:
+            return _fail(args, "analyze", exc.code, f"analyze：{exc}")
+        try:
             ignore = _load_ignore_rules(args)
         except KnowledgeBaseError as exc:
             return _fail(
@@ -2103,27 +2279,21 @@ def main(argv: list[str] | None = None) -> int:
                 "rules_error",
                 f"规则加载失败：{exc}",
             )
-        if args.line_interactive:
-            if args.json or args.yes or args.select:
+        if analyze_mode == "line":
+            if args.yes or args.select:
                 return _fail(
                     args,
                     "analyze",
                     "invalid_mode_options",
                     "--line-interactive 是只读导航模式，不能与 "
-                    "--json、--yes 或 --select 同时使用。",
+                    "--yes 或 --select 同时使用。",
                 )
             return run_space_browser(
                 args.path,
                 protection=ignore,
                 top=args.top,
             )
-        if (
-            not args.json
-            and not args.no_interactive
-            and not args.select
-            and sys.stdin.isatty()
-            and sys.stdout.isatty()
-        ):
+        if analyze_mode == "tui":
             try:
                 review = review_space(
                     args.path,
@@ -2131,7 +2301,16 @@ def main(argv: list[str] | None = None) -> int:
                     top=args.top,
                     allow_execution=args.yes,
                 )
+            except ScanScreenFailure as exc:
+                return _fail(args, "analyze", "scan_screen_failed", str(exc), exit_code=1)
             except SpaceTUIUnavailable as exc:
+                if args.interactive:
+                    return _fail(
+                        args,
+                        "analyze",
+                        "interactive_unavailable",
+                        f"analyze：{exc}；显式 --interactive 失败，未执行其他模式。",
+                    )
                 if args.yes:
                     print(
                         f"{exc}；为避免无审阅执行，请改用 "
@@ -2152,6 +2331,8 @@ def main(argv: list[str] | None = None) -> int:
                     "invalid_path",
                     str(exc),
                 )
+            except KeyboardInterrupt:
+                return _fail(args, "analyze", "cancelled", "已取消。", exit_code=130)
             if review.cancelled:
                 return 0
             selected = list(review.selected)
@@ -2161,7 +2342,8 @@ def main(argv: list[str] | None = None) -> int:
                 else None
             )
             _print_space_tui_result(selected, cleanup)
-            return 0 if cleanup is None or cleanup.complete else 1
+            _print_issues(ScanResult(issues=list(review.issues)))
+            return 0 if review.complete and (cleanup is None or cleanup.complete) else 1
         if args.yes and not args.select:
             return _fail(
                 args,
@@ -2171,7 +2353,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         ctl = Control()
         try:
-            analysis = analyze_path(
+            analysis = _run_interruptible_scan(
+                ctl, analyze_path,
                 args.path,
                 protection=ignore,
                 control=ctl,
@@ -2225,6 +2408,10 @@ def main(argv: list[str] | None = None) -> int:
                 "invalid_selection_options",
                 f"purge：{error}。",
             )
+        try:
+            purge_mode = _display_mode(args, "purge")
+        except DisplayModeError as exc:
+            return _fail(args, "purge", exc.code, f"purge：{exc}")
         if args.path is not None:
             root = args.path.expanduser()
             if not root.exists() or not root.is_dir() or root.is_symlink():
@@ -2248,29 +2435,75 @@ def main(argv: list[str] | None = None) -> int:
                 "rules_error",
                 f"规则加载失败：{exc}",
             )
-        ctl = Control()
-        renderer = _progress_renderer(args.json)
-        try:
-            result = scan_project_artifacts(
-                roots,
-                ctl,
-                ignore,
-                max_depth=args.max_depth,
-                include_unmarked_roots=include_unmarked_roots,
-                on_progress=renderer,
-            )
-        except KeyboardInterrupt:
-            ctl.cancel()
-            return _fail(
-                args,
-                "purge",
-                "cancelled",
-                "已取消。",
-                exit_code=130,
-            )
-        finally:
-            if renderer is not None:
-                renderer.finish()
+        purge_outcome = None
+        if purge_mode == "tui":
+            try:
+                purge_outcome = start_scan_screen(
+                    lambda control, publish: scan_project_artifacts(
+                        roots,
+                        control,
+                        ignore,
+                        max_depth=args.max_depth,
+                        include_unmarked_roots=include_unmarked_roots,
+                        on_progress=publish,
+                    ),
+                    title="Purge · 扫描",
+                    scope=" · ".join(str(root) for root in roots) or "默认项目目录",
+                )
+            except TUIUnavailable as exc:
+                if args.interactive:
+                    return _fail(
+                        args,
+                        "purge",
+                        "interactive_unavailable",
+                        f"purge：{exc}；显式 --interactive 失败，未执行其他模式。",
+                    )
+                print(f"扫描界面不可用，改用文本流程：{exc}", file=sys.stderr)
+            except ScanScreenFailure as exc:
+                return _fail(
+                    args,
+                    "purge",
+                    "scan_screen_failed",
+                    f"purge：{exc}；扫描已取消并完成收尾。",
+                    exit_code=1,
+                )
+            except KeyboardInterrupt:
+                return _fail(
+                    args, "purge", "cancelled", "已取消。", exit_code=130,
+                )
+            if purge_outcome is not None:
+                if purge_outcome.status == "cancelled":
+                    print("已取消审阅；未执行清理。")
+                    return 0
+                if purge_outcome.error is not None:
+                    raise purge_outcome.error
+        if purge_outcome is None:
+            ctl = Control()
+            renderer = _progress_renderer(args.json)
+            try:
+                result = _run_interruptible_scan(
+                    ctl, scan_project_artifacts,
+                    roots,
+                    ctl,
+                    ignore,
+                    max_depth=args.max_depth,
+                    include_unmarked_roots=include_unmarked_roots,
+                    on_progress=renderer,
+                )
+            except KeyboardInterrupt:
+                ctl.cancel()
+                return _fail(
+                    args,
+                    "purge",
+                    "cancelled",
+                    "已取消。",
+                    exit_code=130,
+                )
+            finally:
+                if renderer is not None:
+                    renderer.finish()
+        else:
+            result = purge_outcome.result
         try:
             result, selected, execution_confirmed, cancelled = (
                 _resolve_cleanup_selection(
@@ -2278,6 +2511,7 @@ def main(argv: list[str] | None = None) -> int:
                     args,
                     _purge_review_groups(result),
                     title="Purge · 项目构建产物",
+                    mode=purge_mode,
                 )
             )
         except SelectionError as exc:

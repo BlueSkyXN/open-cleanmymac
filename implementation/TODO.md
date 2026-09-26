@@ -5,7 +5,7 @@
 [安全](../SECURITY.md) · [规格索引](../specs/_index.md) ·
 [实现说明](README.md)
 
-当前版本：`openclean 0.24.0a2`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
+当前发布版本：`openclean 0.24.0a3`，对齐 CleanMyMac CLI v1.0.0 Public Beta 的公开命令面。
 本清单只保留尚未完成或需要外部验收的工作。已完成功能以
 [docs/CAPABILITIES.md](../docs/CAPABILITIES.md)、CHANGELOG 和 exact-head CI 为准。
 CleanMyMac Desktop 的应用卸载、恶意软件扫描等不是本项目 CLI 对齐目标。
@@ -146,13 +146,37 @@ Countable total、每任务 Control 聚合和 observer 仅是条件增强；需�
 - Codex 相邻原子写 temp 与 disabled feature cache 仍未做通用判定；目标缺失、JSON 截断或
   当前配置关闭都不能单独证明可删除，后续必须先定义 primary/backup/feature ownership。
 
-### 10. 空间 TUI 不完整结果呈现
+### 10. Analyze 响应与规模验收
 
-curses 空间 TUI（`space_tui.py`）已显示不完整标记、问题数量和首个阻断原因，但尚未提供
-完整 issues 浏览；交互式 analyze 的退出码仍只看执行结果、不检查 `analysis.complete`。
-同一不完整分析在 `--json` 路径返回退出码 1，
-`--line-interactive` 会把 issues 打到 stderr。补齐时对齐 Clean/Purge 交互式路径对
-`result.complete` 的判定，并先解决 curses 自由导航对应"哪一次分析"的语义。
+当前源码已增加加载反馈、协作取消、有界批次、会话导航缓存、完整 issues 和选择提交前复核。
+正常提交根据当前页面与所选来源完整性返回状态；Q 主动取消审阅保持 0，SIGINT 为 130。
+公共 JSON 与清理范围保持；本地基准脚本为 `scripts/benchmark_analyze.py`，所有夹具位于临时 HOME。
+代码与隔离测试不替代指定真实目录、卷和文件状态下的验收；公开发行与系统安装状态另核对。
+后续根据优化后的数据评估原生只读扫描内核，不预定 Rust 迁移、不引入持久索引或常驻服务。
+
+### 11. CLI/TUI 模式契约与统一扫描交互
+
+依据 `local/diagnostics/20260922-cmm-ux/` 的总方案与接口契约，CLI-00/01 与 UX-01～03 已落地：
+集中模式路由（`display_mode.py`）与 `--interactive`、Analyze 三态选择标记与两层范围汇总、
+clean/purge/analyze 统一扫描页（Space 暂停/继续、检查点确认、Q/Ctrl-C 收尾、任务 started
+真实状态）、More 命令速查与终态措辞区分。契约见 `docs/MODES.md` 与 specs/06 REQ-FLOW-001b。
+尚未完成、不阻塞本轮交付的后续项：
+
+- “显式子命令默认文本 CLI、TUI 显式进入”的默认路由迁移：需要单独的兼容性决策，
+  同步 README/help/规格/CHANGELOG 后实施；当前保持 TTY 自动 TUI。
+- UX-04 长列表可选“重点视图”（V 切换、虚拟展开行）与主菜单 Config 只读总览。
+- 对应提交的云端 CI 仍待触发；本地构建和临时环境安装验证不依赖先提交代码，
+  不能用本地结果替代 exact-head CI。
+- 本地扫描页计时工具为 `scripts/benchmark_scan_ui.py`，覆盖三命令各 ≥20 次 Q/SIGINT、
+  暂停反馈、线程收尾、四档窗口与终端恢复；应用入口到首帧和包含 Python 启动的耗时分别记录。
+  本机进程启动到首帧存在超过 200 ms 的样本，不能承诺所有场景整体启动都达标。
+  这些受控 worker 样本不替代真实磁盘、阻塞系统调用和安装包的单独验收。
+
+当前源码补齐了多 worker 暂停确认、真实处理路径、动态任务开始状态和扫描后 UI 失败不重扫；
+SIGINT 在任务提交及等待两个阶段都先传播取消再收尾，有限周期等待覆盖信号送达工作线程的情况。
+非交互扫描先记录 SIGINT 请求，通过检查点退出，再统一输出 130，避免异步异常打断线程锁。
+本地验证与构建记录保存在私有诊断目录，
+完成度以当前源码的原始结果为准，不沿用历史测试数量。
 
 ## 后续识别增强（不属于本轮交付范围）
 

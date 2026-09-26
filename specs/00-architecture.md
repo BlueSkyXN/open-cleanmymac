@@ -32,6 +32,9 @@ REQ-OC-007：无参数 TTY 显示 Clean/Purge/Analyze/Optimize/Config，方向�
 M 打开 More（Cat/返回）。根 Q/Esc 退出，次级返回；子任务结果停留后按 Enter 返回原菜单。
 CLI 在退出当前 curses wrapper 后分派子命令，不嵌套会话，不自动加 `--yes`。
 
+主菜单 Analyze 先选择家目录、当前目录、自定义目录或启动盘，确认后传递明确路径；取消选择不扫描。
+此范围选择只属于菜单流程，显式 `analyze [path]` 省略路径时仍为 `/`，非 TTY/JSON 不额外提问。
+
 初始化失败退回行式菜单；小终端和 resize 不崩溃。子任务非零状态不能包装成成功。
 非 TTY 无参数输出帮助并退出 0；显式命令、JSON、帮助、版本不进入根菜单。
 VAL-OC-007：屏幕 stub 与隔离 PTY 覆盖导航、返回、失败退路、取消和终端恢复；多字体视觉验收另报。

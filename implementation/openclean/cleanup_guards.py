@@ -66,6 +66,7 @@ class CleanupGuardContext:
         self._process_checked = False
         self._snapshot: ProcessSnapshot | None = None
         self._process_error = ""
+        self._static_roots = tuple(self._build_registered_roots())
 
     def _probe(self, path: Path) -> FileFacts | None:
         anchor = scan_symlink_anchor(path, home=self.home)
@@ -94,7 +95,7 @@ class CleanupGuardContext:
             return True
         return root_parts[:len(parts)] == parts and self._probe(root) is not None
 
-    def _registered_roots(self, darwin_cache_root: Path | None) -> Iterator[tuple[Path, tuple[str, ...]]]:
+    def _build_registered_roots(self) -> Iterator[tuple[Path, tuple[str, ...]]]:
         for rule in APPLICATION_PATH_RULES:
             yield self.home / rule.relative_path, rule.process_markers
         for points in DOMAINS.values():
@@ -104,6 +105,10 @@ class CleanupGuardContext:
                 for raw in point.paths:
                     root = self.home / raw[2:] if raw.startswith("~/") else normalize_path(raw)
                     yield root, point.running_process_markers
+
+    def _registered_roots(self, darwin_cache_root: Path | None) -> Iterator[tuple[Path, tuple[str, ...]]]:
+        # 只复用静态路径；_overlaps / _probe 仍读取当前文件状态。
+        yield from self._static_roots
         if darwin_cache_root is not None:
             for name, markers in DARWIN_CACHE_PROCESS_MARKERS.items():
                 yield darwin_cache_root / name, markers

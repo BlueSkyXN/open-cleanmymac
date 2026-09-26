@@ -6,14 +6,14 @@
 
  扫描结果 · 只读报告
  ──────────────────────────────────────────────────────────────────────────────
-   [!] Docker Local Volumes               11.9GB  critical 不可执行
+   [!] Docker Local Volumes               11.9GB  需重点确认 不可执行
        docker:volumes
        [不可执行: Local Volumes 永远拒绝 prune]
-   [x] pip / uv caches                     5.0GB  safe     可审阅
+   [x] pip / uv caches                     5.0GB  可选择     可审阅
        /tmp/openclean-demo/pip
-   [x] Homebrew downloads                  1.6GB  safe     可审阅
+   [x] Homebrew downloads                  1.6GB  可选择     可审阅
        /tmp/openclean-demo/homebrew
-   [ ] 环境变量缓存                      820.2MB  confirm  需逐项选择
+   [ ] 环境变量缓存                      820.2MB  需确认     需逐项选择
        /tmp/openclean-demo/custom-cache
        [需 --select 精确选择]
  ──────────────────────────────────────────────────────────────────────────────
@@ -141,18 +141,15 @@
     <text x="474" y="141" fill="#24292f">9</text>
     <text x="484" y="141" fill="#24292f">G</text>
     <text x="494" y="141" fill="#24292f">B</text>
-    <text x="524" y="141" fill="#24292f">c</text>
-    <text x="534" y="141" fill="#24292f">r</text>
-    <text x="544" y="141" fill="#24292f">i</text>
-    <text x="554" y="141" fill="#24292f">t</text>
-    <text x="564" y="141" fill="#24292f">i</text>
-    <text x="574" y="141" fill="#24292f">c</text>
-    <text x="584" y="141" fill="#24292f">a</text>
-    <text x="594" y="141" fill="#24292f">l</text>
-    <text x="614" y="141" fill="#24292f">不</text>
-    <text x="634" y="141" fill="#24292f">可</text>
-    <text x="654" y="141" fill="#24292f">执</text>
-    <text x="674" y="141" fill="#24292f">行</text>
+    <text x="524" y="141" fill="#24292f">需</text>
+    <text x="544" y="141" fill="#24292f">重</text>
+    <text x="564" y="141" fill="#24292f">点</text>
+    <text x="584" y="141" fill="#24292f">确</text>
+    <text x="604" y="141" fill="#24292f">认</text>
+    <text x="634" y="141" fill="#24292f">不</text>
+    <text x="654" y="141" fill="#24292f">可</text>
+    <text x="674" y="141" fill="#24292f">执</text>
+    <text x="694" y="141" fill="#24292f">行</text>
     <text x="94" y="163" fill="#24292f">d</text>
     <text x="104" y="163" fill="#24292f">o</text>
     <text x="114" y="163" fill="#24292f">c</text>
@@ -215,13 +212,12 @@
     <text x="474" y="207" fill="#24292f">0</text>
     <text x="484" y="207" fill="#24292f">G</text>
     <text x="494" y="207" fill="#24292f">B</text>
-    <text x="524" y="207" fill="#24292f">s</text>
-    <text x="534" y="207" fill="#24292f">a</text>
-    <text x="544" y="207" fill="#24292f">f</text>
-    <text x="554" y="207" fill="#24292f">e</text>
-    <text x="614" y="207" fill="#24292f">可</text>
-    <text x="634" y="207" fill="#24292f">审</text>
-    <text x="654" y="207" fill="#24292f">阅</text>
+    <text x="524" y="207" fill="#24292f">可</text>
+    <text x="544" y="207" fill="#24292f">选</text>
+    <text x="564" y="207" fill="#24292f">择</text>
+    <text x="634" y="207" fill="#24292f">可</text>
+    <text x="654" y="207" fill="#24292f">审</text>
+    <text x="674" y="207" fill="#24292f">阅</text>
     <text x="94" y="229" fill="#24292f">/</text>
     <text x="104" y="229" fill="#24292f">t</text>
     <text x="114" y="229" fill="#24292f">m</text>
@@ -270,13 +266,12 @@
     <text x="474" y="251" fill="#24292f">6</text>
     <text x="484" y="251" fill="#24292f">G</text>
     <text x="494" y="251" fill="#24292f">B</text>
-    <text x="524" y="251" fill="#24292f">s</text>
-    <text x="534" y="251" fill="#24292f">a</text>
-    <text x="544" y="251" fill="#24292f">f</text>
-    <text x="554" y="251" fill="#24292f">e</text>
-    <text x="614" y="251" fill="#24292f">可</text>
-    <text x="634" y="251" fill="#24292f">审</text>
-    <text x="654" y="251" fill="#24292f">阅</text>
+    <text x="524" y="251" fill="#24292f">可</text>
+    <text x="544" y="251" fill="#24292f">选</text>
+    <text x="564" y="251" fill="#24292f">择</text>
+    <text x="634" y="251" fill="#24292f">可</text>
+    <text x="654" y="251" fill="#24292f">审</text>
+    <text x="674" y="251" fill="#24292f">阅</text>
     <text x="94" y="273" fill="#24292f">/</text>
     <text x="104" y="273" fill="#24292f">t</text>
     <text x="114" y="273" fill="#24292f">m</text>
@@ -320,18 +315,14 @@
     <text x="474" y="295" fill="#24292f">2</text>
     <text x="484" y="295" fill="#24292f">M</text>
     <text x="494" y="295" fill="#24292f">B</text>
-    <text x="524" y="295" fill="#24292f">c</text>
-    <text x="534" y="295" fill="#24292f">o</text>
-    <text x="544" y="295" fill="#24292f">n</text>
-    <text x="554" y="295" fill="#24292f">f</text>
-    <text x="564" y="295" fill="#24292f">i</text>
-    <text x="574" y="295" fill="#24292f">r</text>
-    <text x="584" y="295" fill="#24292f">m</text>
-    <text x="614" y="295" fill="#24292f">需</text>
-    <text x="634" y="295" fill="#24292f">逐</text>
-    <text x="654" y="295" fill="#24292f">项</text>
-    <text x="674" y="295" fill="#24292f">选</text>
-    <text x="694" y="295" fill="#24292f">择</text>
+    <text x="524" y="295" fill="#24292f">需</text>
+    <text x="544" y="295" fill="#24292f">确</text>
+    <text x="564" y="295" fill="#24292f">认</text>
+    <text x="634" y="295" fill="#24292f">需</text>
+    <text x="654" y="295" fill="#24292f">逐</text>
+    <text x="674" y="295" fill="#24292f">项</text>
+    <text x="694" y="295" fill="#24292f">选</text>
+    <text x="714" y="295" fill="#24292f">择</text>
     <text x="94" y="317" fill="#24292f">/</text>
     <text x="104" y="317" fill="#24292f">t</text>
     <text x="114" y="317" fill="#24292f">m</text>

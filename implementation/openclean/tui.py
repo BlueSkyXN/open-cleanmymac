@@ -8,7 +8,7 @@ from .engine import human
 from .models import Item
 from .terminal_ui import (
     clip_cells, draw_footer, draw_small_screen, draw_text, init_styles,
-    pad_cells, small_screen, wrap_cells,
+    pad_cells, safety_label, small_screen, wrap_cells,
 )
 
 
@@ -39,7 +39,18 @@ MENU_ITEMS = {
         ("optimize", "Optimize  查看维护能力（当前不可用）"),
         ("config", "Config    查看 CLI 偏好"),
     ),
-    "more": (("cat", "Cat       召唤一位朋友"), ("back", "返回主菜单")),
+    "more": (
+        ("cheatsheet", "命令速查  常用 CLI 示例"),
+        ("cat", "Cat       召唤一位朋友"),
+        ("back", "返回主菜单"),
+    ),
+    "analyze_scope": (
+        ("scope_home", "家目录"),
+        ("scope_cwd", "当前目录"),
+        ("scope_custom", "输入自定义目录"),
+        ("scope_root", "启动盘 /（范围较大）"),
+        ("back", "返回主菜单"),
+    ),
     "optimize": (
         ("ram", "RAM        不可用：无已验证的安全公开执行器"),
         ("purgeable", "Purgeable  不可用：无已验证的安全公开执行器"),
@@ -49,8 +60,28 @@ MENU_ITEMS = {
 MENU_TITLES = {
     "root": "openclean · 主菜单（审阅/预览，不执行清理）",
     "more": "openclean · More",
+    "analyze_scope": "Analyze · 选择分析范围",
     "optimize": "openclean · Optimize（Enter 查看原因，不执行维护）",
 }
+
+# 速查只展示可用命令示例，不自动拼接执行，不添加默认 --yes/--force。
+CHEATSHEET_LINES = (
+    ("人工文本 CLI（兼容期在 TTY 下加 --no-interactive）", (
+        "openclean analyze . --no-interactive      分析当前目录",
+        "openclean clean dev --no-interactive      查看开发缓存",
+        "openclean purge . --no-interactive        预览项目产物",
+    )),
+    ("机器输出（JSON，适合脚本与 Agent）", (
+        "openclean analyze . --json               输出 JSON",
+    )),
+    ("忽略项", (
+        "openclean ignore list                   查看忽略项",
+    )),
+)
+CHEATSHEET_NOTES = (
+    "显式全屏界面：clean/purge/analyze 支持 --interactive（需连接终端）。",
+    "执行清理仍需 --yes 与确认；完整参数见 openclean --help。",
+)
 
 
 @dataclass(frozen=True)
@@ -75,6 +106,32 @@ def _draw_menu(screen, menu: str, cursor: int) -> None:
     ending = "M 更多 · Q/Esc 退出" if menu == "root" else "Q/Esc 返回"
     draw_footer(screen, f"↑↓ 移动 · Enter 进入 · {ending} · 参数：openclean --help")
     screen.refresh()
+
+
+def _draw_cheatsheet(screen) -> bool:
+    """绘制命令速查；返回 True 表示用户按 Q 退出，False 表示返回 More。"""
+    screen.erase()
+    height, width = screen.getmaxyx()
+    _safe_add(screen, 0, 1, "openclean · 命令速查", width, "title")
+    row = 2
+    for heading, examples in CHEATSHEET_LINES:
+        if row >= height - len(CHEATSHEET_NOTES) - 3:
+            break
+        _safe_add(screen, row, 1, heading, width, "warning")
+        row += 1
+        for example in examples:
+            if row >= height - len(CHEATSHEET_NOTES) - 3:
+                break
+            _safe_add(screen, row, 3, example, width)
+            row += 1
+        row += 1
+    for note in CHEATSHEET_NOTES:
+        _safe_add(screen, row, 1, note, width, "muted")
+        row += 1
+    draw_footer(screen, "Esc/Enter/← 返回 More · Q 退出")
+    screen.refresh()
+    key = screen.getch()
+    return key in {ord("q"), ord("Q")}
 
 
 def _run_menu(screen, *, menu: str, cursor: int) -> MenuChoice:
@@ -103,6 +160,10 @@ def _run_menu(screen, *, menu: str, cursor: int) -> MenuChoice:
         elif key == curses.KEY_DOWN:
             cursor = min(len(items) - 1, cursor + 1)
         elif key in {curses.KEY_ENTER, 10, 13}:
+            if menu == "more" and items[cursor][0] == "cheatsheet":
+                if _draw_cheatsheet(screen):
+                    return MenuChoice("back", cursor)
+                continue
             return MenuChoice(items[cursor][0], cursor)
 
 
@@ -292,6 +353,19 @@ def _draw_groups(
     screen.refresh()
 
 
+def _group_scope_summary(group: ReviewGroup, selected_keys: set) -> str:
+    """当前分类内已选对象的数量与既有计量。"""
+    selected = [
+        item for item in group.items if _item_key(item) in selected_keys
+    ]
+    if not selected:
+        return "本分类暂无已选目标"
+    return (
+        f"本分类已选 {len(selected)} 项 · "
+        f"{human(sum(item.size for item in selected))}"
+    )
+
+
 def _draw_items(
     screen,
     groups: tuple[ReviewGroup, ...],
@@ -311,6 +385,8 @@ def _draw_items(
     )
     footer = draw_footer(screen, "↑↓ 移动 · Space/Enter 切换 · I 只读详情 · A 批量选择 · ←/Esc 返回 · Q 退出")
     category_width = min(24, max(12, width // 5))
+    _safe_add(screen, row, 1, _group_scope_summary(group, selected_keys), width, "muted")
+    row += 1
     _safe_add(screen, row, 1, "      " + pad_cells("类别", category_width) + "       大小  状态 / 路径", width, "muted")
     row += 1
     visible = max(1, footer - row - 3)
@@ -319,11 +395,13 @@ def _draw_items(
         item = group.items[index]
         prefix = "▸" if index == cursor else " "
         location = str(item.path) if item.path is not None else item.identifier
-        status = "不可执行" if not item.actionable else "逐项选择" if item.requires_explicit_selection else item.safety
+        status = ("不可执行" if not item.actionable else
+                  "需逐项选择" if item.requires_explicit_selection else
+                  safety_label(item.safety))
         line = (
             f"{prefix} [{_marker(item, selected_keys)}] "
             f"{pad_cells(clip_cells(item.category, category_width), category_width)} {human(item.size):>10}  "
-            f"{pad_cells(status, 8)} {location}"
+            f"{pad_cells(status, 10)} {location}"
         )
         role = "focus" if index == cursor else "warning" if not item.actionable else "selected" if _item_key(item) in selected_keys else "plain"
         _safe_add(screen, row + index - offset, 1, line, width, role)
@@ -333,7 +411,7 @@ def _draw_items(
         _safe_add(screen, footer - 3, 1, clip_cells(location, width - 3, tail=True), width, "muted")
         state = (f"不可执行：{current.action_block_reason}" if not current.actionable else
                  "需逐项选择 · 批量选择不会包含此项" if current.requires_explicit_selection else
-                 f"{current.safety} · I 查看说明与完整路径")
+                 f"{safety_label(current.safety)} · I 查看说明与完整路径")
         _safe_add(screen, footer - 2, 1, state, width, "warning" if not current.actionable else "plain")
     screen.refresh()
 
@@ -348,7 +426,8 @@ def _draw_confirmation(
     screen.erase()
     height, width = screen.getmaxyx()
     selected = _selected_items(groups, selected_keys)
-    _safe_add(screen, 0, 1, f"{title} / 汇总确认", width, "title")
+    heading = f"{title} / 选择预览" if not allow_execution else f"{title} / 汇总确认"
+    _safe_add(screen, 0, 1, heading, width, "title")
     _safe_add(
         screen,
         2,
