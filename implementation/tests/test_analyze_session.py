@@ -466,8 +466,8 @@ finally:
         control = engine.Control()
         original = engine._apply_scan_guards
 
-        def cancel_after_first(item, guards, result):
-            output = original(item, guards, result)
+        def cancel_after_first(item, guards, result, checkpoint):
+            output = original(item, guards, result, checkpoint=checkpoint)
             control.cancel()
             return output
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,17 @@ SYSTEM_PROTECTED_ROOTS = tuple(
     )
 )
 TRUSTED_SCAN_ALIAS_ROOTS = (Path("/var/folders"),)
+# Darwin sys/unistd.h；Python 的 pathconf_names 未必暴露此扩展。
+_MACOS_PC_CASE_SENSITIVE = 11
+
+
+def filesystem_case_sensitive(path: Path) -> bool:
+    if sys.platform != "darwin":
+        raise OSError("无法查询非 macOS 文件系统的大小写语义")
+    value = os.pathconf(path, _MACOS_PC_CASE_SENSITIVE)
+    if value not in (0, 1):
+        raise OSError("文件系统大小写语义未知")
+    return bool(value)
 
 
 def _same_or_descendant(path: Path, root: Path) -> bool:

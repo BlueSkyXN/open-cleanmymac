@@ -831,9 +831,13 @@ def _run_root_menu() -> int:
                         path = input("待扫描项目目录（空输入返回）：").strip()
                         if not path:
                             continue
+                    elif choice.action == "purge_claude":
+                        project = input("Claude 项目根目录（空输入返回；自定义 worktree 位置请用自定义目录）：").strip()
+                        if not project:
+                            continue
+                        path = normalize_path(project) / ".claude" / "worktrees"
                     else:
-                        tool = "codex" if choice.action == "purge_codex" else "claude"
-                        path = Path.home() / f".{tool}" / "worktrees"
+                        path = Path.home() / ".codex" / "worktrees"
                     root = normalize_path(path)
                     if not root.is_dir() or root.is_symlink():
                         print("项目扫描范围不存在或不是普通目录；未开始扫描。", file=sys.stderr)

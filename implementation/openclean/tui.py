@@ -47,7 +47,7 @@ MENU_ITEMS = {
     "purge_scope": (
         ("purge_default", "默认项目目录（原有五个扫描根）"),
         ("purge_codex", "Codex worktrees（仅构建产物）"),
-        ("purge_claude", "Claude worktrees（仅构建产物）"),
+        ("purge_claude", "Claude worktrees（先选项目）"),
         ("purge_custom", "输入自定义项目目录"),
         ("back", "返回主菜单"),
     ),

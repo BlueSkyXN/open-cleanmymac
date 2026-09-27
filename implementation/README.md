@@ -85,7 +85,11 @@ Purge 的 `note` 区分依赖重装、环境重建、索引和构建后果；恢
 这些解释不代表可重建证明，也不新增 rebuild_cost / 缓存标签评分。
 
 后续内容保护会检查产物内部 `.git`（目录或文件）、`*-keypair.json` 文件名及所属仓库索引。
-Git 跟踪包含仅 staged 的内容；monorepo 向祖先查找索引，linked worktree 支持 `.git` 定位文件。
+Git 跟踪包含仅 staged 的内容；检查允许边界内的每个祖先仓库，不能因最近仓库索引未命中便停止。
+linked worktree 支持 `.git` 定位文件。使用 Darwin `pathconf(_PC_CASE_SENSITIVE)` 查询路径组件所在
+文件系统：全程大小写敏感时使用 `top,literal`，存在不敏感组件时加入 `icase`；不能仅依赖 Git
+`core.ignoreCase`。查询失败/未知则阻断，不创建探测文件；不继承会禁用 pathspec magic 的
+`GIT_LITERAL_PATHSPECS`。路径中的方括号等字符仍按字面处理。
 Git 查询隔离环境配置并关闭 fsmonitor、可选锁与 hooks，不执行构建、不读取密钥正文，输出只需
 确认是否存在跟踪项。每个候选的内容检查最多 200000 次路径/条目检查和 5 秒活动时间；暂停时间
 不计入预算，文件系统 I/O 不是硬超时；Git 子进程结束前仅可显示“暂停已请求”，不假报已暂停。
@@ -99,10 +103,13 @@ Git 查询隔离环境配置并关闭 fsmonitor、可选锁与 hooks，不执行
 
 Zig 仅识别相邻普通 `build.zig` 对应的 `.zig-cache`、`zig-out`，执行前复核标记；不跟随 `-p` 或
 `--cache-dir` 自定义位置。主菜单 Purge 增加默认根、Codex/Claude worktree、自定义目录选项，
-均不自动加 `--yes`；显式 `purge [path]` 与默认五个根保持不变。
+均不自动加 `--yes`；Codex 定位 `~/.codex/worktrees`，Claude 先输入项目根再定位其 `.claude/worktrees`，
+不查询或假设 HOME 下的 Claude worktree。自定义 worktree 位置通过自定义目录入口选择，缺失不创建。
+显式 `purge [path]` 与默认五个根保持不变。
 
-Homebrew 保护覆盖默认及可信 `HOMEBREW_CACHE` 根、子项和父项，识别 brew/brew.rb 命令参数，
-不把任意 ruby/curl 或 `/opt/homebrew/bin/python` 当作 Homebrew 活动。进程未知、在途 `.incomplete`、
+Homebrew 保护覆盖默认及可信 `HOMEBREW_CACHE` 根、子项和父项，识别 brew/brew.rb 执行程序以及
+shell/Ruby 的脚本位置，有限解析 env 和 shell `-c` 的启动命令；不把任意参数中的 brew、查看文档、
+编辑脚本、克隆仓库或 `/opt/homebrew/bin/python` 当作 Homebrew 活动。进程未知、在途 `.incomplete`、
 `.lock` 和 `locks` 目录均阻断；不会删除锁或凭年龄判断陈旧。默认两个 Homebrew prefix 及显式
 `HOMEBREW_PREFIX` 的 `var/homebrew/locks` 范围只保护、不作为新增扫描点。内容检查失败通过
 `cleanup_guard_check_failed` 报告不完整，扫描与执行均重判；环境变化不丢弃已识别候选的归属标记。

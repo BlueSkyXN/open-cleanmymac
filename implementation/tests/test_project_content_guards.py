@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -16,6 +17,7 @@ from openclean.cleanup import execute_cleanup, select_cleanup_items
 from openclean.cli import main
 from openclean.engine import Cancelled, Control, IgnoreRules, scan_project_artifacts
 from openclean.knowledge_base import KnowledgeBase
+from openclean.macos import filesystem_case_sensitive
 from openclean.models import FileFacts
 from openclean.processes import ProcessSnapshot
 from openclean.project_artifacts import assess_project_artifact
@@ -106,6 +108,117 @@ class ProjectContentGuardsTests(unittest.TestCase):
         self.assertIn("Git 索引跟踪", result.items[0].action_block_reason)
         self.assertFalse(result.items[0].actionable)
 
+    def test_inner_repository_does_not_hide_outer_tracked_source(self) -> None:
+        self.init(self.home)
+        source = self.write(self.project / "vendor/source.php")
+        self.age(self.project)
+        before, = scan_project_artifacts([self.project]).items
+        self.assertTrue(before.actionable)
+        self.git(self.home, "add", "--", "project/vendor/source.php")
+        self.init(self.project)
+        self.assertIn("project/vendor/source.php", self.git(self.home, "ls-files", "--cached"))
+        source.write_bytes(b"uncommitted source changes\n" * 512)
+        result = self.scan()
+        item, = result.items
+        self.assertTrue(result.complete)
+        self.assertFalse(item.actionable)
+        self.assertFalse(item.preselected)
+        self.assertIn("Git 索引跟踪", item.action_block_reason)
+        self.assertEqual(self.git(self.project, "ls-files", "--cached", "--", "vendor/"), "")
+        report = execute_cleanup([before], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertEqual(source.read_bytes(), b"uncommitted source changes\n" * 512)
+        self.assertFalse(self.trash.exists())
+
+    def test_outer_repository_probe_failure_is_not_hidden_by_inner_empty_index(self) -> None:
+        self.init(self.home)
+        self.init(self.project)
+        self.write(self.project / "vendor/source.php")
+        (self.home / ".git/index").write_bytes(b"invalid index")
+        result = self.scan()
+        self.assertFalse(result.complete)
+        self.assertFalse(result.items[0].actionable)
+        self.assertIn("project_content_check_failed", {i.code for i in result.issues})
+
+    def test_untracked_artifact_in_nested_repositories_remains_executable(self) -> None:
+        self.init(self.home)
+        self.init(self.project)
+        self.write(self.project / "vendor/output.bin")
+        item, = self.scan().items
+        self.assertTrue(item.actionable)
+        self.assertTrue(item.preselected)
+        report = execute_cleanup([item], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "moved_to_trash")
+        self.assertTrue((self.home / ".git").is_dir())
+        self.assertTrue((self.project / ".git").is_dir())
+
+    def test_case_changed_index_path_blocks_scan_and_execution(self) -> None:
+        self.init(self.home)
+        project = self.home / "Packages/Web[1]"
+        source = self.write(project / "vendor/source.php")
+        (project / "package.json").write_text("{}")
+        self.git(self.home, "add", "--", "Packages/Web[1]/vendor/source.php")
+        upper = self.home / "Packages"
+        upper.rename(self.home / "intermediate-name")
+        (self.home / "intermediate-name").rename(self.home / "packages")
+        project = self.home / "packages/Web[1]"
+        source = project / "vendor/source.php"
+        source.write_bytes(b"uncommitted source changes\n" * 512)
+        self.age(project)
+        self.assertEqual(self.git(self.home, "ls-files", "--cached", "--",
+                                  ":(top,literal)packages/Web[1]/vendor/"), "")
+        # 在大小写敏感 runner 上也测试不敏感分支；macOS 默认卷走真实 pathconf。
+        mode = (mock.patch("openclean.project_artifacts.filesystem_case_sensitive", return_value=False)
+                if filesystem_case_sensitive(self.home) else contextlib.nullcontext())
+        with mode, mock.patch.dict(os.environ, {"GIT_LITERAL_PATHSPECS": "1"}):
+            item, = scan_project_artifacts([project]).items
+            self.assertFalse(item.actionable)
+            self.assertFalse(item.preselected)
+            self.assertIn("Git 索引跟踪", item.action_block_reason)
+            stale = replace(item, actionable=True, preselected=True, action_block_reason="")
+            report = execute_cleanup([stale], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertTrue(source.exists())
+        self.assertFalse(self.trash.exists())
+
+    def test_case_sensitive_path_does_not_match_a_different_index_directory(self) -> None:
+        self.init(self.home)
+        upper = self.home / "Packages/Web[1]"
+        self.write(upper / "vendor/source.php")
+        self.git(self.home, "add", "--", "Packages/Web[1]/vendor/source.php")
+        if not filesystem_case_sensitive(self.home):
+            (self.home / "Packages").rename(self.home / "other-working-directory")
+        lower = self.home / "packages/Web[1]"
+        self.write(lower / "vendor/output.bin")
+        (lower / "package.json").write_text("{}")
+        # 索引中相异大小写的目录不能仅因 icase 扩展而阻断敏感文件系统。
+        with mock.patch("openclean.project_artifacts.filesystem_case_sensitive", return_value=True):
+            item, = scan_project_artifacts([lower]).items
+        self.assertTrue(item.actionable)
+        self.assertEqual(item.action_block_reason, "")
+
+    def test_icase_pathspec_does_not_expand_literal_metacharacters(self) -> None:
+        self.init(self.home)
+        for name in ("Web1", "Web[1]"):
+            project = self.home / name
+            self.write(project / "vendor/source.php")
+            (project / "package.json").write_text("{}")
+        self.git(self.home, "add", "--", "Web1/vendor/source.php")
+        with mock.patch("openclean.project_artifacts.filesystem_case_sensitive", return_value=False):
+            item, = scan_project_artifacts([self.home / "Web[1]"]).items
+        self.assertTrue(item.actionable)
+
+    def test_unknown_filesystem_case_semantics_fail_closed(self) -> None:
+        self.init(self.project)
+        self.write(self.project / "vendor/output.bin")
+        with mock.patch("openclean.project_artifacts.filesystem_case_sensitive", side_effect=OSError("unsupported")):
+            result = self.scan()
+        self.assertFalse(result.complete)
+        self.assertFalse(result.items[0].actionable)
+        with mock.patch("openclean.macos.os.pathconf", return_value=-1):
+            with self.assertRaises(OSError):
+                filesystem_case_sensitive(self.home)
+
     def test_untracked_artifact_in_git_repository_remains_executable(self) -> None:
         self.init(self.project)
         self.git(self.project, "add", "package.json")
@@ -142,7 +255,8 @@ class ProjectContentGuardsTests(unittest.TestCase):
         self.git(self.project, "commit", "-qm", "Fixture")
         for tool in ("codex", "claude"):
             with self.subTest(tool=tool):
-                root = self.home / f".{tool}/worktrees"
+                root = (self.home / ".codex/worktrees" if tool == "codex"
+                        else self.project / ".claude/worktrees")
                 root.mkdir(parents=True)
                 checkout = root / "sample"
                 self.git(self.project, "worktree", "add", "-q", "--detach", str(checkout))

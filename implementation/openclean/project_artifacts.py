@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .filesystem import scandir_entries
-from .macos import scan_symlink_anchor
+from .macos import filesystem_case_sensitive, scan_symlink_anchor
 from .models import normalize_path
 from .path_inspection import InspectionError, PathInspection
 from .predicates import Predicate
@@ -97,17 +97,26 @@ def _git_directory(marker: Path, inspection: PathInspection) -> Path:
 def _tracked_content(
     path: Path, repository: Path, directory: Path, inspection: PathInspection,
 ) -> bool:
+    relative = path.relative_to(repository)
+    sensitive = True
+    current = repository
+    for part in relative.parts:
+        inspection.checked_path(current)
+        sensitive = filesystem_case_sensitive(current) and sensitive
+        current /= part
+    magic = "top,literal" if sensitive else "top,literal,icase"
+    pathspec = f":({magic}){relative.as_posix()}/"
     environment = {
         "PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": str(Path.home()),
         "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_SYSTEM": "/dev/null",
         "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_OPTIONAL_LOCKS": "0",
-        "GIT_TERMINAL_PROMPT": "0", "GIT_LITERAL_PATHSPECS": "1", "GIT_NO_LAZY_FETCH": "1",
+        "GIT_TERMINAL_PROMPT": "0", "GIT_NO_LAZY_FETCH": "1",
     }
     command = [
         "/usr/bin/git", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
         "-c", "core.preloadIndex=false", "-c", "core.hooksPath=/dev/null",
         f"--git-dir={directory}", f"--work-tree={repository}",
-        "ls-files", "--cached", "-z", "--", path.relative_to(repository).as_posix() + "/",
+        "ls-files", "--cached", "-z", "--", pathspec,
     ]
     process = subprocess.Popen(
         command, cwd=repository, env=environment, stdin=subprocess.DEVNULL,
@@ -167,7 +176,7 @@ def assess_project_artifact(
                 return ArtifactAssessment("产物内含嵌套 Git 仓库标记，不能按可重建目录清理")
             if name.endswith("-keypair.json"):
                 return ArtifactAssessment("产物内含部署密钥文件名（*-keypair.json），不能按可重建目录清理")
-        # 最近的项目标记未必是仓库根；monorepo 的索引可能在更高一级。
+        # 内层仓库索引未命中，不能排除外层仓库仍跟踪候选内容。
         anchor = scan_symlink_anchor(path)
         for parent in path.parents:
             if not parent.is_relative_to(anchor):
@@ -181,7 +190,6 @@ def assess_project_artifact(
             directory = _git_directory(marker, inspection)
             if _tracked_content(path, parent, directory, inspection):
                 return ArtifactAssessment("产物内含 Git 索引跟踪内容，不能按可重建目录清理")
-            break
     except (OSError, ValueError) as exc:
         return ArtifactAssessment(f"无法完成项目产物内容检查：{exc}", complete=False)
     return ArtifactAssessment()

@@ -34,6 +34,8 @@ CLI 在退出当前 curses wrapper 后分派子命令，不嵌套会话，不自
 
 主菜单 Analyze 先选择家目录、当前目录、自定义目录或启动盘，确认后传递明确路径；取消选择不扫描。
 主菜单 Purge 先选择默认项目根、Codex/Claude worktrees 或自定义目录；缺失范围不创建，取消不扫描。
+Codex 快捷入口为 `~/.codex/worktrees`；Claude 先输入项目根，定位 `<project-root>/.claude/worktrees`，
+不回退到 HOME；自定义 worktree 位置使用自定义目录入口。
 该范围选择不改变显式 `purge [path]` 的默认根或参数，不自动添加 `--yes`。
 此范围选择只属于菜单流程，显式 `analyze [path]` 省略路径时仍为 `/`，非 TTY/JSON 不额外提问。
 

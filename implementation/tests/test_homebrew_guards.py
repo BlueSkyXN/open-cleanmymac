@@ -70,6 +70,56 @@ class HomebrewGuardsTests(unittest.TestCase):
         self.scanner.return_value = ProcessSnapshot(("/opt/homebrew/bin/python server.py",))
         self.assertTrue(self.item("dev").actionable)
 
+    def test_brew_mentioned_in_nonexecution_arguments_does_not_block_any_entry(self) -> None:
+        commands = (
+            "/usr/bin/man brew",
+            "/usr/bin/vim /opt/homebrew/bin/brew",
+            "/usr/bin/git clone https://github.com/Homebrew/brew",
+            "/bin/sh -c 'man brew'",
+            "/bin/bash -lc 'vim /opt/homebrew/bin/brew'",
+            "/usr/bin/env /usr/bin/man brew",
+            "/usr/bin/ruby -e 'puts ARGV' /opt/homebrew/bin/brew",
+            "/usr/bin/ruby -I brew app.rb",
+            "/usr/bin/ruby -r brew app.rb",
+            "/bin/bash --rcfile brew app.sh",
+            "/bin/sh -s brew",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(running(ProcessSnapshot((command,))))
+                self.scanner.return_value = ProcessSnapshot((command,))
+                for entry in ("dev", "generic", "analyze", "parent", "child"):
+                    self.assertTrue(self.item(entry).actionable)
+        self.live.return_value = ProcessSnapshot(commands)
+        report = execute_cleanup([self.item("dev")], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "moved_to_trash")
+
+    def test_brew_executable_and_interpreter_script_positions_remain_protected(self) -> None:
+        commands = (
+            "/opt/homebrew/bin/brew fetch fixture",
+            "/bin/bash /opt/homebrew/bin/brew install fixture",
+            "/bin/bash -- /usr/local/bin/brew upgrade fixture",
+            "/bin/sh -c '/opt/homebrew/bin/brew fetch fixture'",
+            "/bin/bash -lc 'exec /opt/homebrew/bin/brew fetch fixture'",
+            "/usr/bin/ruby -W1 /opt/homebrew/Library/Homebrew/brew.rb fetch fixture",
+            "/usr/bin/ruby --disable=gems --disable=rubyopt /opt/homebrew/Library/Homebrew/brew.rb install fixture",
+            "/usr/bin/ruby -I /opt/homebrew/lib -r rubygems /opt/homebrew/Library/Homebrew/brew.rb upgrade fixture",
+            "/usr/bin/ruby -- /opt/homebrew/Library/Homebrew/brew.rb fetch fixture",
+            "/usr/bin/env HOMEBREW_NO_AUTO_UPDATE=1 /opt/homebrew/bin/brew fetch fixture",
+            "/usr/bin/env -u RUBYOPT ruby -W1 /opt/homebrew/Library/Homebrew/brew.rb install fixture",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(running(ProcessSnapshot((command,))))
+                self.scanner.return_value = ProcessSnapshot((command,))
+                self.assertFalse(self.item("dev").actionable)
+        self.scanner.return_value = ProcessSnapshot(())
+        item = self.item("dev")
+        self.live.return_value = ProcessSnapshot((commands[5],))
+        report = execute_cleanup([item], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertTrue(self.cache.exists())
+
     def test_partial_download_or_lock_blocks_even_when_brew_has_exited(self) -> None:
         for relative in ("downloads/sample.incomplete", "downloads/sample.lock", "locks/sample"):
             with self.subTest(relative=relative):
