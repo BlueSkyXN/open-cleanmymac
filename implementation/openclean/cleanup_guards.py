@@ -14,7 +14,7 @@ from .application_ownership import (
     ApplicationResolver,
 )
 from .filesystem import lstat_retry, scandir_entries
-from .macos import scan_symlink_anchor
+from .macos import filesystem_name_matches, filesystem_relative_parts, scan_symlink_anchor
 from .models import FileFacts, normalize_path
 from .predicates import Predicate, ProtectionGate
 from .processes import ProcessDetectionError, ProcessSnapshot
@@ -97,6 +97,17 @@ class CleanupGuardContext:
             return True
         return root_parts[:len(parts)] == parts and self._probe(root) is not None
 
+    def _homebrew_scope(self, path: Path, root: Path) -> tuple[Path, tuple[Path, ...]] | None:
+        relative = filesystem_relative_parts(path, root, probe=self._probe)
+        if relative is not None:
+            start = len(root.parts)
+            descendants = tuple(Path(*path.parts[:end]) for end in range(start + 1, len(path.parts) + 1))
+            return path, descendants
+        if (filesystem_relative_parts(root, path, probe=self._probe) is not None
+                and self._probe(root) is not None):
+            return root, ()
+        return None
+
     def _build_registered_roots(self) -> Iterator[tuple[Path, tuple[str, ...]]]:
         for rule in APPLICATION_PATH_RULES:
             yield self.home / rule.relative_path, rule.process_markers
@@ -158,21 +169,22 @@ class CleanupGuardContext:
             if self._probe(path) is None:
                 raise GuardInspectionError("应用保护范围已不存在，需重新扫描")
             for root in homebrew.lock_roots():
-                if self._overlaps(path, root):
+                if self._homebrew_scope(path, root) is not None:
                     reason = "选择范围包含 Homebrew 锁目录，不支持清理"
-            for root in homebrew.cache_roots(self.home):
-                if not self._overlaps(path, root):
+            for root in homebrew.cache_roots(self.home, probe=self._probe):
+                scope = self._homebrew_scope(path, root)
+                if scope is None:
                     continue
                 brew_scope = True
                 markers.extend(homebrew.HOMEBREW_PROCESS_MARKERS)
-                target = root if root.is_relative_to(path) else path
-                if path.is_relative_to(root) and any(
-                    homebrew.is_activity_marker(part) for part in path.relative_to(root).parts
-                ):
+                target, descendants = scope
+                if any(filesystem_name_matches(
+                    child, homebrew.HOMEBREW_ACTIVITY_PATTERNS, probe=self._probe,
+                ) for child in descendants):
                     reason = reason or "选择范围位于 Homebrew 在途下载或锁内部，不支持清理"
                 reason = reason or homebrew.cache_block_reason(target, self.protection, checkpoint)
-            # 环境路径变化后仍保留扫描时已建立的 Homebrew 归属。
-            if all(marker in process_markers for marker in homebrew.HOMEBREW_PROCESS_MARKERS):
+            # 兼容旧候选的两项标记；环境变化不能丢失已建立的 Homebrew 归属。
+            if {"brew", "brew.rb"}.issubset(process_markers):
                 brew_scope = True
                 reason = reason or homebrew.cache_block_reason(path, self.protection, checkpoint)
             roots = tuple(self._registered_roots(darwin_cache_root))

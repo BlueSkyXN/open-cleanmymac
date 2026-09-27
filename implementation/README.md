@@ -97,6 +97,9 @@ Git 查询隔离环境配置并关闭 fsmonitor、可选锁与 hooks，不执行
 `note`，不新增 JSON schema。确认受保护但检查完整的候选可只读展示；批量参数不能重新选中。
 
 显式项目根位于产物/依赖目录或 `.git` 内时返回 `unsafe_project_search_root`，不深入包内识别项目。
+扫描根限制按各祖先目录所属文件系统的大小写语义匹配产物精确名、glob 和限定子目录；
+不敏感卷上的 `NODE_MODULES/pkg`、`.VITEPRESS/DIST` 不能绕过，敏感卷的不同名称不一律封禁。
+查询前沿用 ignore/protect、云占位和 no-follow 保护；查询失败返回阻断，不调用 resolve 跟随链接。
 正常无 Git 项目不要求 Git；有 `.git` 但 Git 不可用、索引损坏或定位不可信时保留产物。
 执行前复用同一检查，整批预检失败保持 all-or-nothing，开始执行后的新阻断如实报告部分结果。
 此内容策略仅针对 project/Purge 候选，不扩张成 Analyze 的全局 Git 禁删规则。
@@ -107,12 +110,17 @@ Zig 仅识别相邻普通 `build.zig` 对应的 `.zig-cache`、`zig-out`，执�
 不查询或假设 HOME 下的 Claude worktree。自定义 worktree 位置通过自定义目录入口选择，缺失不创建。
 显式 `purge [path]` 与默认五个根保持不变。
 
-Homebrew 保护覆盖默认及可信 `HOMEBREW_CACHE` 根、子项和父项，识别 brew/brew.rb 执行程序以及
-shell/Ruby 的脚本位置，有限解析 env 和 shell `-c` 的启动命令；不把任意参数中的 brew、查看文档、
+Homebrew 保护覆盖默认及可信 `HOMEBREW_CACHE` 根、子项和父项，识别 brew/brew.rb/brew.sh 执行程序以及
+shell/Ruby 的脚本位置，覆盖 `/bin/bash -p …/Homebrew/brew.sh` 自动更新期间普通 API 缓存的写入，
+不依赖在途后缀才能识别活动。有限解析 env 和 shell `-c` 的启动命令；不把任意参数中的 brew、查看文档、
 编辑脚本、克隆仓库或 `/opt/homebrew/bin/python` 当作 Homebrew 活动。进程未知、在途 `.incomplete`、
 `.lock` 和 `locks` 目录均阻断；不会删除锁或凭年龄判断陈旧。默认两个 Homebrew prefix 及显式
 `HOMEBREW_PREFIX` 的 `var/homebrew/locks` 范围只保护、不作为新增扫描点。内容检查失败通过
 `cleanup_guard_check_failed` 报告不完整，扫描与执行均重判；环境变化不丢弃已识别候选的归属标记。
+Homebrew 的缓存/锁归属按组件比较：可能的大小写别名先查询父目录大小写能力，再以 no-follow
+probe 核对同一 device/inode/owner，不全局 casefold 或 resolve；身份不同、敏感卷路径保持分离，
+查询未知或链接/云占位/保护规则命中则阻断。锁和在途名称同样遵守所在文件系统的大小写语义。
+不改变输出路径、默认扫描根、环境路径原有授权范围或其它软件的归属推断。
 实际 Homebrew 下载/安装并发验收仍未完成；测试使用模拟进程与临时缓存，不调用真实 brew。
 
 ### AI 浏览器缓存路径补齐

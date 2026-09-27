@@ -36,6 +36,8 @@ Purge 对候选内部的 `.git` 标记、`*-keypair.json` 部署密钥文件名�
 拒绝发现其内部项目；不影响从所属项目识别整项依赖。扫描和执行前必须复核，此策略不等于
 禁止 Analyze 经 critical 授权处理任意 Git 项目。检查允许边界内所有祖先仓库，内层空索引不能
 遮蔽外层跟踪；Git 路径查询须保留字面含义并尊重文件系统大小写语义，未知语义不得放行。
+扫描根的产物/依赖祖先判定也须尊重所在文件系统大小写语义；不得用大小写别名绕过，也不得
+在敏感文件系统上一律把不同名称归为同一路径。查询前保留 no-follow、云占位与保护规则约束。
 
 Zig 只将相邻普通、非云占位 `build.zig` 对应的 `.zig-cache`、`zig-out` 纳入现有产物流程；
 不从自定义构建参数推导额外路径，不泛化 build/dist/bin。worktree 快捷入口只选择明确范围，
@@ -43,7 +45,9 @@ Zig 只将相邻普通、非云占位 `build.zig` 对应的 `.zig-cache`、`zig-
 
 Homebrew 缓存的运行状态保护必须覆盖专用/通用扫描点、Analyze、父子目录及可信环境缓存根。
 进程未知、疑似在途下载与锁标记保留原位，不能通过停止进程或按年龄判断自动解锁；锁目录不
-作为清理对象。验收见 `test_project_content_guards.py`、`test_homebrew_guards.py`。
+作为清理对象。识别 Bash 执行 brew.sh 的自动更新阶段，普通 API 文件没有在途标记也不能在活动时
+清理。Homebrew 范围及锁后代的大小写别名需经文件系统语义和 no-follow 身份复核，未知则阻断。
+验收见 `test_project_content_guards.py`、`test_homebrew_guards.py`。
 
 ## 3. 承接个人经验与已有诊断
 

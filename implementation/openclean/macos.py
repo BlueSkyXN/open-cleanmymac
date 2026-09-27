@@ -1,6 +1,7 @@
 """macOS 运行时路径发现服务。"""
 from __future__ import annotations
 
+import fnmatch
 import os
 import stat
 import subprocess
@@ -9,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .models import ScanIssue, normalize_path
+from .models import FileFacts, ScanIssue, normalize_path
 
 SYSTEM_PROTECTED_ROOTS = tuple(
     Path(path)
@@ -42,6 +43,56 @@ def filesystem_case_sensitive(path: Path) -> bool:
     if value not in (0, 1):
         raise OSError("文件系统大小写语义未知")
     return bool(value)
+
+
+def filesystem_name_matches(
+    path: Path,
+    patterns: tuple[str, ...],
+    *,
+    probe: Callable[[Path], FileFacts | None],
+) -> bool:
+    if any(fnmatch.fnmatchcase(path.name, pattern) for pattern in patterns):
+        return True
+    if not any(fnmatch.fnmatchcase(path.name.casefold(), pattern.casefold()) for pattern in patterns):
+        return False
+    parent = probe(path.parent)
+    if parent is None or not stat.S_ISDIR(parent.stat.st_mode):
+        raise OSError("无法确认名称所属目录的大小写语义")
+    return not filesystem_case_sensitive(path.parent)
+
+
+def filesystem_relative_parts(
+    path: Path,
+    root: Path,
+    *,
+    probe: Callable[[Path], FileFacts | None],
+) -> tuple[str, ...] | None:
+    parts, root_parts = path.parts, root.parts
+    if len(parts) < len(root_parts):
+        return None
+    if parts[:len(root_parts)] == root_parts:
+        return parts[len(root_parts):]
+    if any(left.casefold() != right.casefold() for left, right in zip(parts, root_parts)):
+        return None
+    for index, (left, right) in enumerate(zip(parts, root_parts)):
+        if left == right:
+            continue
+        parent = Path(*parts[:index])
+        facts = probe(parent)
+        if facts is None or not stat.S_ISDIR(facts.stat.st_mode):
+            raise OSError("无法确认范围所属目录的大小写语义")
+        if filesystem_case_sensitive(parent):
+            return None
+        actual, expected = probe(parent / left), probe(parent / right)
+        if actual is None or expected is None:
+            return None
+        # 大小写折叠只筛选可能的别名，不能代替 no-follow 身份核对。
+        if actual.identity != expected.identity:
+            return None
+    actual, expected = probe(Path(*parts[:len(root_parts)])), probe(root)
+    if actual is None or expected is None or actual.identity != expected.identity:
+        return None
+    return parts[len(root_parts):]
 
 
 def _same_or_descendant(path: Path, root: Path) -> bool:

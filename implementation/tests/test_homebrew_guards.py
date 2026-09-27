@@ -6,14 +6,19 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
 from openclean.analyzer import analyze_path
 from openclean.cleanup import execute_cleanup
+from openclean.cleanup_guards import CleanupGuardContext
 from openclean.cli import main
 from openclean.engine import Cancelled, Control, IgnoreRules, scan_points
 from openclean.homebrew import cache_block_reason, running
+from openclean.knowledge_base import KnowledgeBase
+from openclean.macos import filesystem_case_sensitive
+from openclean.models import FileFacts, FileIdentity
 from openclean.processes import ProcessDetectionError, ProcessSnapshot
 from openclean.scanpoints import DEVELOPER_JUNK, SYSTEM_JUNK, ScanPoint
 
@@ -119,6 +124,163 @@ class HomebrewGuardsTests(unittest.TestCase):
         report = execute_cleanup([item], IgnoreRules(), home=self.home)
         self.assertEqual(report.outcomes[0].status, "blocked")
         self.assertTrue(self.cache.exists())
+
+    def test_brew_shell_auto_update_protects_ordinary_api_files_across_entries(self) -> None:
+        self.write(self.cache / "api/formula.jws.json")
+        command = "/bin/bash -p /opt/homebrew/Library/Homebrew/brew.sh install wget"
+        self.assertTrue(running(ProcessSnapshot((command,))))
+        self.assertEqual(cache_block_reason(self.cache, IgnoreRules()), "")
+        self.scanner.return_value = ProcessSnapshot((command,))
+        for entry in ("dev", "generic", "analyze", "parent", "child"):
+            with self.subTest(entry=entry):
+                item = self.item(entry)
+                self.assertFalse(item.actionable)
+                self.assertIn("brew.sh", item.running_process_markers)
+        self.scanner.return_value = ProcessSnapshot(())
+        item = self.item("dev")
+        self.live.return_value = ProcessSnapshot((command,))
+        report = execute_cleanup([item], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertTrue((self.cache / "api/formula.jws.json").exists())
+        self.assertFalse(self.trash.exists())
+
+    def test_brew_shell_started_after_preflight_blocks_final_move(self) -> None:
+        self.write(self.cache / "api/internal/packages.fixture.jws.json")
+        item = self.item("dev")
+        def prepare(_):
+            self.live.return_value = ProcessSnapshot((
+                "/bin/bash -p /opt/homebrew/Library/Homebrew/brew.sh upgrade fixture",
+            ))
+            self.trash.mkdir(mode=0o700)
+            return self.trash
+        report = execute_cleanup([item], IgnoreRules(), home=self.home, trash_resolver=prepare)
+        self.assertEqual(report.outcomes[0].status, "failed")
+        self.assertTrue((self.cache / "api/internal/packages.fixture.jws.json").exists())
+        self.assertEqual(list(self.trash.iterdir()), [])
+
+    def test_brew_shell_mentions_remain_unrelated(self) -> None:
+        for command in (
+            "/usr/bin/man brew.sh",
+            "/usr/bin/vim /opt/homebrew/Library/Homebrew/brew.sh",
+            "/bin/bash --rcfile /opt/homebrew/Library/Homebrew/brew.sh other.sh",
+            "/bin/sh -c 'cat /opt/homebrew/Library/Homebrew/brew.sh'",
+            "/usr/bin/ruby -e 'puts ARGV' /opt/homebrew/Library/Homebrew/brew.sh",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(running(ProcessSnapshot((command,))))
+                self.scanner.return_value = ProcessSnapshot((command,))
+                self.assertTrue(self.item("dev").actionable)
+
+    def test_case_aliases_keep_process_and_incomplete_protection(self) -> None:
+        if filesystem_case_sensitive(self.home):
+            self.skipTest("真实大小写别名需不敏感文件系统")
+        alias = self.home / "library/caches/homebrew"
+        self.assertEqual(alias.stat().st_ino, self.cache.stat().st_ino)
+        for state in ("running", "unknown", "incomplete"):
+            self.scanner.return_value = ProcessSnapshot((
+                "/bin/bash -p /opt/homebrew/Library/Homebrew/brew.sh install wget",
+            ) if state == "running" else ())
+            self.scanner.side_effect = ProcessDetectionError("unknown") if state == "unknown" else None
+            if state == "incomplete":
+                self.write(self.cache / "downloads/fixture.incomplete")
+            for target in (alias, alias / "downloads", alias.parent, alias.parent.parent):
+                with self.subTest(state=state, target=target.name):
+                    item, = scan_points([ScanPoint("alias", (str(target),))], workers=1).items
+                    self.assertFalse(item.actionable)
+                    self.assertIn("brew.sh", item.running_process_markers)
+            analysis = analyze_path(alias)
+            self.assertTrue(analysis.entries)
+            self.assertTrue(all(not entry.item.actionable for entry in analysis.entries))
+        self.scanner.side_effect = None
+        self.scanner.return_value = ProcessSnapshot(())
+        (self.cache / "downloads/fixture.incomplete").unlink()
+        self.assertTrue(all(entry.item.actionable for entry in analyze_path(alias).entries))
+
+    def test_case_alias_execution_rechecks_activity_without_old_markers(self) -> None:
+        if filesystem_case_sensitive(self.home):
+            self.skipTest("真实大小写别名需不敏感文件系统")
+        alias = self.cache.with_name("homebrew")
+        item, = scan_points([ScanPoint("alias", (str(alias),))], workers=1).items
+        self.assertTrue(item.actionable)
+        item = replace(item, running_process_markers=())
+        self.live.return_value = ProcessSnapshot(("/bin/bash -p /opt/homebrew/Library/Homebrew/brew.sh update",))
+        report = execute_cleanup([item], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.live.return_value = ProcessSnapshot(())
+        self.write(self.cache / "downloads/new.incomplete")
+        report = execute_cleanup([item], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertTrue(self.cache.exists())
+        self.assertFalse(self.trash.exists())
+
+    def test_case_alias_environment_and_lock_descendants_are_protected(self) -> None:
+        if filesystem_case_sensitive(self.home):
+            self.skipTest("真实大小写别名需不敏感文件系统")
+        custom = self.home / "Library/Caches/CustomBrew"
+        self.write(custom / "downloads/file.incomplete")
+        with mock.patch.dict(os.environ, {"HOMEBREW_CACHE": str(self.home / "library/caches/custombrew")}):
+            item, = scan_points([ScanPoint("custom", (str(custom),))], workers=1).items
+            self.assertFalse(item.actionable)
+            self.assertIn("brew.sh", item.running_process_markers)
+        protected = self.cache / "locks/nested/payload"
+        self.write(protected)
+        alias = self.cache.with_name("homebrew") / "LOCKS/nested/payload"
+        item, = scan_points([ScanPoint("alias", (str(alias),))], workers=1).items
+        self.assertFalse(item.actionable)
+        self.assertIn("在途下载或锁内部", item.action_block_reason)
+        prefix = self.home / "BrewPrefix"
+        self.write(prefix / "var/homebrew/locks/nested/file")
+        with mock.patch.dict(os.environ, {"HOMEBREW_PREFIX": str(prefix)}):
+            target = self.home / "brewprefix/var/HOMEBREW/LOCKS/nested"
+            item, = scan_points([ScanPoint("locks", (str(target),))], workers=1).items
+            self.assertFalse(item.actionable)
+            self.assertIn("Homebrew 锁目录", item.action_block_reason)
+
+    def test_case_sensitive_or_different_identity_paths_are_not_merged(self) -> None:
+        if filesystem_case_sensitive(self.home):
+            self.write(self.cache.with_name("homebrew") / "downloads/other")
+        alias = self.cache.with_name("homebrew")
+        context = CleanupGuardContext(IgnoreRules(), lambda: ProcessSnapshot(("brew install fixture",)), home=self.home)
+        with mock.patch("openclean.macos.filesystem_case_sensitive", return_value=True):
+            self.assertIsNone(context._homebrew_scope(alias, self.cache))
+        original = context._probe
+        def different(path):
+            facts = original(path)
+            if facts is not None and path == alias:
+                return mock.Mock(stat=facts.stat, identity=FileIdentity(99, 88, 77))
+            return facts
+        with mock.patch("openclean.macos.filesystem_case_sensitive", return_value=False), \
+                mock.patch.object(context, "_probe", side_effect=different):
+            self.assertIsNone(context._homebrew_scope(alias, self.cache))
+        self.assertIsNone(context._homebrew_scope(self.cache.with_name("Homebrew-backup"), self.cache))
+
+    def test_case_scope_unknown_or_unsafe_ancestors_do_not_trigger_protected_reads(self) -> None:
+        if filesystem_case_sensitive(self.home):
+            self.skipTest("真实大小写别名需不敏感文件系统")
+        alias = self.cache.with_name("homebrew")
+        context = CleanupGuardContext(IgnoreRules(), lambda: ProcessSnapshot(()), home=self.home)
+        with mock.patch("openclean.macos.filesystem_case_sensitive", side_effect=OSError("unknown")):
+            assessment = context.assess(alias)
+        self.assertTrue(assessment.block_reason)
+        self.assertTrue(assessment.inspection_error)
+        for kind in ("protected", "cloud", "symlink"):
+            with self.subTest(kind=kind), contextlib.ExitStack() as stack:
+                protection = IgnoreRules()
+                if kind == "protected":
+                    knowledge = KnowledgeBase.from_mapping({"schema_version": 1, "protect": {"paths": [str(self.cache)]}})
+                    protection = IgnoreRules(knowledge_base=knowledge)
+                elif kind == "cloud":
+                    stack.enter_context(mock.patch.object(FileFacts, "is_probable_cloud_placeholder",
+                                                          new=property(lambda facts: facts.path == alias)))
+                else:
+                    moved = self.cache.with_name("elsewhere")
+                    self.cache.rename(moved)
+                    self.cache.symlink_to(moved, target_is_directory=True)
+                context = CleanupGuardContext(protection, lambda: ProcessSnapshot(()), home=self.home)
+                reader = stack.enter_context(mock.patch("openclean.homebrew.cache_block_reason"))
+                assessment = context.assess(alias)
+                self.assertTrue(assessment.block_reason)
+                reader.assert_not_called()
 
     def test_partial_download_or_lock_blocks_even_when_brew_has_exited(self) -> None:
         for relative in ("downloads/sample.incomplete", "downloads/sample.lock", "locks/sample"):

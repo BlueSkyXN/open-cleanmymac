@@ -1713,7 +1713,7 @@ def _discover_project_roots(
 
     for root in search_roots:
         root = normalize_path(root)
-        if reason := project_scope_block_reason(root):
+        if reason := project_scope_block_reason(root, protection, checkpoint=ctl.checkpoint):
             result.issues.append(ScanIssue(
                 code="unsafe_project_search_root", message=reason,
                 task="project-discovery", path=root,

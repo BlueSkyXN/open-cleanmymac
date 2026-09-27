@@ -20,7 +20,7 @@ from openclean.knowledge_base import KnowledgeBase
 from openclean.macos import filesystem_case_sensitive
 from openclean.models import FileFacts
 from openclean.processes import ProcessSnapshot
-from openclean.project_artifacts import assess_project_artifact
+from openclean.project_artifacts import assess_project_artifact, project_scope_block_reason
 
 
 class ProjectContentGuardsTests(unittest.TestCase):
@@ -280,6 +280,87 @@ class ProjectContentGuardsTests(unittest.TestCase):
                 self.assertEqual(result.issues[0].code, "unsafe_project_search_root")
                 self.assertFalse(result.complete)
         self.assertEqual([i.path for i in self.scan().items], [package.parent])
+
+    def test_case_alias_dependency_roots_are_blocked_in_scan_and_cli(self) -> None:
+        if filesystem_case_sensitive(self.home):
+            self.skipTest("真实大小写别名需不敏感文件系统")
+        for real, alias in (("node_modules", "NODE_MODULES"), ("vendor", "VENDOR"),
+                            ("cmake-build-debug", "CMAKE-BUILD-DEBUG"),
+                            (".vitepress/dist", ".VITEPRESS/DIST")):
+            package = self.project / real / "pkg"
+            self.write(package / "package.json")
+            source = self.write(package / "target/runtime.js")
+            root = self.project / alias / "pkg"
+            self.assertEqual(root.stat().st_ino, package.stat().st_ino)
+            with self.subTest(alias=alias):
+                result = scan_project_artifacts([root], include_unmarked_roots=True)
+                self.assertFalse(result.complete)
+                self.assertEqual(result.items, [])
+                self.assertEqual(result.issues[0].code, "unsafe_project_search_root")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    status = main(["purge", str(root), "--all", "--yes", "--json", "--rules", str(self.rules)])
+                self.assertEqual(status, 1)
+                self.assertTrue(source.exists())
+                self.assertFalse(self.trash.exists())
+
+    def test_case_alias_dependency_scope_is_rechecked_for_stale_selection(self) -> None:
+        if filesystem_case_sensitive(self.home):
+            self.skipTest("真实大小写别名需不敏感文件系统")
+        self.write(self.project / "target/runtime.js")
+        item, = self.scan().items
+        nested = self.home / "outer/node_modules/pkg"
+        nested.parent.mkdir(parents=True)
+        self.project.rename(nested)
+        alias = self.home / "outer/NODE_MODULES/pkg"
+        stale = replace(item, path=alias / "target", project_root=alias)
+        report = execute_cleanup([stale], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertTrue((nested / "target/runtime.js").exists())
+        self.assertFalse(self.trash.exists())
+
+    def test_sensitive_scope_and_similar_names_are_not_blanket_blocked(self) -> None:
+        package = self.project / "NODE_MODULES/pkg"
+        self.write(package / "package.json")
+        self.write(package / "target/runtime.js")
+        with mock.patch("openclean.macos.filesystem_case_sensitive", return_value=True):
+            self.assertEqual(project_scope_block_reason(package), "")
+            result = scan_project_artifacts([package], include_unmarked_roots=True)
+        self.assertTrue(result.complete)
+        self.assertTrue(result.items[0].actionable)
+        for name in ("NODE_MODULES-backup", "VENDOR-src", ".VITEPRESS/theme"):
+            with self.subTest(name=name):
+                self.assertEqual(project_scope_block_reason(self.project / name / "pkg"), "")
+        with mock.patch("openclean.macos.filesystem_case_sensitive", return_value=False):
+            self.assertTrue(project_scope_block_reason(package))
+
+    def test_case_scope_unknown_symlink_cloud_and_protected_parents_fail_closed(self) -> None:
+        package = self.project / "NODE_MODULES/pkg"
+        self.write(package / "package.json")
+        self.write(package / "target/runtime.js")
+        with mock.patch("openclean.macos.filesystem_case_sensitive", side_effect=OSError("unknown")):
+            result = scan_project_artifacts([package], include_unmarked_roots=True)
+        self.assertFalse(result.complete)
+        self.assertEqual(result.items, [])
+        self.assertIn("无法完成", result.issues[0].message)
+        for kind in ("protected", "cloud", "symlink"):
+            with self.subTest(kind=kind), contextlib.ExitStack() as stack:
+                protection = IgnoreRules()
+                if kind == "protected":
+                    knowledge = KnowledgeBase.from_mapping({"schema_version": 1, "protect": {"paths": [str(self.project)]}})
+                    protection = IgnoreRules(knowledge_base=knowledge)
+                elif kind == "cloud":
+                    stack.enter_context(mock.patch.object(FileFacts, "is_probable_cloud_placeholder",
+                                                          new=property(lambda facts: facts.path == self.project)))
+                else:
+                    moved = self.home / "elsewhere"
+                    self.project.rename(moved)
+                    self.project.symlink_to(moved, target_is_directory=True)
+                query = stack.enter_context(mock.patch("openclean.macos.filesystem_case_sensitive"))
+                result = scan_project_artifacts([package], ignore=protection, include_unmarked_roots=True)
+                self.assertFalse(result.complete)
+                self.assertEqual(result.items, [])
+                query.assert_not_called()
 
     def test_content_added_after_scan_blocks_entire_batch(self) -> None:
         self.write(self.project / "target/output.bin")

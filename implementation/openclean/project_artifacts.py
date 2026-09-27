@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .filesystem import scandir_entries
-from .macos import filesystem_case_sensitive, scan_symlink_anchor
+from .macos import filesystem_case_sensitive, filesystem_name_matches, scan_symlink_anchor
 from .models import normalize_path
 from .path_inspection import InspectionError, PathInspection
-from .predicates import Predicate
+from .predicates import Predicate, ProtectionGate
 from .scanpoints import (
     PROJECT_ARTIFACT_GLOBS,
     PROJECT_ARTIFACT_NAMES,
@@ -41,12 +41,31 @@ def artifact_name(path: Path) -> str:
     return ""
 
 
-def project_scope_block_reason(path: Path) -> str:
-    for candidate in (normalize_path(path), *normalize_path(path).parents):
-        if artifact_name(candidate):
-            return "扫描根位于依赖或产物目录内；请改选其所属项目，不扫描已安装依赖内部"
-        if candidate.name.casefold() == ".git":
-            return "扫描根位于 Git 元数据目录内"
+def project_scope_block_reason(
+    path: Path, protection: Predicate | None = None, *,
+    checkpoint: Callable[[], None] = lambda: None,
+) -> str:
+    inspection = PathInspection(protection or ProtectionGate(), checkpoint=checkpoint)
+    path = normalize_path(path)
+    try:
+        for candidate in (path, *path.parents):
+            inspection.tick()
+            artifact = filesystem_name_matches(
+                candidate, PROJECT_ARTIFACT_NAMES + PROJECT_ARTIFACT_GLOBS,
+                probe=inspection.checked_path,
+            )
+            if not artifact:
+                for container, children in PROJECT_ARTIFACT_SUBDIRECTORIES.items():
+                    if (filesystem_name_matches(candidate, children, probe=inspection.checked_path)
+                            and filesystem_name_matches(candidate.parent, (container,), probe=inspection.checked_path)):
+                        artifact = True
+                        break
+            if artifact:
+                return "扫描根位于依赖或产物目录内；请改选其所属项目，不扫描已安装依赖内部"
+            if filesystem_name_matches(candidate, (".git",), probe=inspection.checked_path):
+                return "扫描根位于 Git 元数据目录内"
+    except (OSError, ValueError) as exc:
+        return f"无法完成项目扫描根范围检查：{exc}"
     return ""
 
 
@@ -160,7 +179,7 @@ def assess_project_artifact(
     timeout: float = 5.0,
 ) -> ArtifactAssessment:
     path, project_root = normalize_path(path), normalize_path(project_root)
-    if reason := project_scope_block_reason(project_root):
+    if reason := project_scope_block_reason(project_root, protection, checkpoint=checkpoint):
         return ArtifactAssessment(reason)
     if path == project_root or not path.is_relative_to(project_root) or not artifact_name(path):
         return ArtifactAssessment("项目产物范围已不再有效")
