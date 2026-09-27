@@ -44,6 +44,13 @@ MENU_ITEMS = {
         ("cat", "Cat       召唤一位朋友"),
         ("back", "返回主菜单"),
     ),
+    "purge_scope": (
+        ("purge_default", "默认项目目录（原有五个扫描根）"),
+        ("purge_codex", "Codex worktrees（仅构建产物）"),
+        ("purge_claude", "Claude worktrees（仅构建产物）"),
+        ("purge_custom", "输入自定义项目目录"),
+        ("back", "返回主菜单"),
+    ),
     "analyze_scope": (
         ("scope_home", "家目录"),
         ("scope_cwd", "当前目录"),
@@ -61,6 +68,7 @@ MENU_TITLES = {
     "root": "openclean · 主菜单（审阅/预览，不执行清理）",
     "more": "openclean · More",
     "analyze_scope": "Analyze · 选择分析范围",
+    "purge_scope": "Purge · 选择项目范围",
     "optimize": "openclean · Optimize（Enter 查看原因，不执行维护）",
 }
 

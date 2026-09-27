@@ -186,7 +186,7 @@ class ConfigAndRootCliTests(unittest.TestCase):
         expected = [["clean"], ["purge"], ["analyze", str(Path.home())], ["config"], ["cat"],
                     ["optimize", "ram"], ["optimize", "purgeable"]]
         choices = [MenuChoice(action, 0) for action in
-                   ("clean", "purge", "analyze", "scope_home", "back", "config", "more", "cat", "back",
+                   ("clean", "purge", "purge_default", "back", "analyze", "scope_home", "back", "config", "more", "cat", "back",
                     "optimize", "ram", "purgeable", "back", "quit")]
         events = []
 
@@ -258,6 +258,31 @@ class ConfigAndRootCliTests(unittest.TestCase):
                         mock.patch.object(Path, "cwd", return_value=root):
                     self.assertEqual(_run_root_menu(), 0)
                 command.assert_called_once_with(["analyze", str(expected)])
+
+    def test_purge_scope_dispatches_only_selected_worktree_and_no_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            for tool in ("codex", "claude"):
+                target = root / f".{tool}/worktrees"
+                target.mkdir(parents=True)
+                choices = [MenuChoice("purge", 1), MenuChoice(f"purge_{tool}", 1),
+                           MenuChoice("back", 4), MenuChoice("quit", 1)]
+                with self.subTest(tool=tool), mock.patch("openclean.cli.choose_menu", side_effect=choices), \
+                        mock.patch("openclean.cli.main", return_value=0) as command, \
+                        mock.patch("builtins.input", return_value=""), \
+                        mock.patch.object(Path, "home", return_value=root):
+                    self.assertEqual(_run_root_menu(), 0)
+                command.assert_called_once_with(["purge", str(target)])
+
+    def test_missing_worktree_or_empty_custom_purge_scope_does_not_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            choices = [MenuChoice("purge", 1), MenuChoice("purge_codex", 1),
+                       MenuChoice("purge_custom", 3), MenuChoice("back", 4), MenuChoice("quit", 1)]
+            with mock.patch("openclean.cli.choose_menu", side_effect=choices), \
+                    mock.patch("openclean.cli.main") as command, mock.patch("builtins.input", return_value=""), \
+                    mock.patch.object(Path, "home", return_value=Path(raw)), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(_run_root_menu(), 0)
+            command.assert_not_called()
 
     def test_analyze_empty_custom_path_and_back_do_not_scan(self) -> None:
         choices = [MenuChoice("analyze", 2), MenuChoice("scope_custom", 2),

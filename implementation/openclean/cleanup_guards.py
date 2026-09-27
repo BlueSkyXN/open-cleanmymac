@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import homebrew
 from .application_ownership import (
     APPLICATION_PATH_RULES,
     DARWIN_CACHE_PROCESS_MARKERS,
@@ -40,6 +41,7 @@ class CleanupGuards:
     note: str = ""
     process_error: str = ""
     resource_in_use: bool = False
+    inspection_error: str = ""
 
     @property
     def updater(self) -> UpdaterAssessment | None:
@@ -143,15 +145,36 @@ class CleanupGuardContext:
         *,
         process_markers: tuple[str, ...] = (),
         darwin_cache_root: Path | None = None,
+        checkpoint: Callable[[], None] = lambda: None,
     ) -> CleanupGuards:
         path = normalize_path(path)
         markers = list(process_markers)
         notes: list[str] = []
         scopes: list[UpdaterScope] = []
         reason = ""
+        brew_scope = False
+        inspection_error = ""
         try:
             if self._probe(path) is None:
                 raise GuardInspectionError("应用保护范围已不存在，需重新扫描")
+            for root in homebrew.lock_roots():
+                if self._overlaps(path, root):
+                    reason = "选择范围包含 Homebrew 锁目录，不支持清理"
+            for root in homebrew.cache_roots(self.home):
+                if not self._overlaps(path, root):
+                    continue
+                brew_scope = True
+                markers.extend(homebrew.HOMEBREW_PROCESS_MARKERS)
+                target = root if root.is_relative_to(path) else path
+                if path.is_relative_to(root) and any(
+                    homebrew.is_activity_marker(part) for part in path.relative_to(root).parts
+                ):
+                    reason = reason or "选择范围位于 Homebrew 在途下载或锁内部，不支持清理"
+                reason = reason or homebrew.cache_block_reason(target, self.protection, checkpoint)
+            # 环境路径变化后仍保留扫描时已建立的 Homebrew 归属。
+            if all(marker in process_markers for marker in homebrew.HOMEBREW_PROCESS_MARKERS):
+                brew_scope = True
+                reason = reason or homebrew.cache_block_reason(path, self.protection, checkpoint)
             roots = tuple(self._registered_roots(darwin_cache_root))
             for root, owned_markers in roots:
                 if self._overlaps(path, root):
@@ -180,15 +203,19 @@ class CleanupGuardContext:
                     reason = updater.block_reason
         except OSError as exc:
             reason = f"无法完成应用保护范围复核：{exc}"
+            inspection_error = reason
         markers = tuple(dict.fromkeys(markers))
         process_error = ""
         running = False
         if markers:
             snapshot, process_error = self._processes()
-            running = snapshot is not None and snapshot.any_running(markers)
+            other_markers = tuple(m for m in markers if m not in homebrew.HOMEBREW_PROCESS_MARKERS)
+            running = snapshot is not None and (
+                snapshot.any_running(other_markers) or (brew_scope and homebrew.running(snapshot))
+            )
             if snapshot is None:
                 reason = reason or "无法确认相关应用是否正在运行"
             elif running:
                 reason = reason or "相关应用正在运行"
         return CleanupGuards(markers, tuple(scopes), reason,
-                             "；".join(dict.fromkeys(notes)), process_error, running)
+                             "；".join(dict.fromkeys(notes)), process_error, running, inspection_error)

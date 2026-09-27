@@ -38,6 +38,9 @@ from .models import (
 )
 from .predicates import Predicate, ProtectionGate, SubstringPathPredicate
 from .processes import capture_process_snapshot
+from .project_artifacts import (
+    ZIG_ARTIFACTS, artifact_name, assess_project_artifact, project_scope_block_reason,
+)
 from .progress import (
     ProgressSnapshot,
     ProgressTaskSpec,
@@ -726,14 +729,23 @@ def _scan_point_candidates(
             )
 
 
-def _apply_scan_guards(item: Item, guards: CleanupGuardContext, result: ScanResult) -> Item:
+def _apply_scan_guards(
+    item: Item, guards: CleanupGuardContext, result: ScanResult,
+    checkpoint: Callable[[], None] = lambda: None,
+) -> Item:
     if not item.actionable or item.resource_kind != "filesystem" or item.path is None:
         return item
     assessment = guards.assess(
         item.path,
         process_markers=item.running_process_markers,
         darwin_cache_root=item.cleanup_root if item.cleanup_scope == "darwin-user-cache" else None,
+        checkpoint=checkpoint,
     )
+    if assessment.inspection_error:
+        result.issues.append(ScanIssue(
+            code="cleanup_guard_check_failed", message=assessment.inspection_error,
+            task="cleanup-protection", path=item.path,
+        ))
     if assessment.process_error and not any(i.code == "process_detection_failed" for i in result.issues):
         result.issues.insert(0, ScanIssue(
             code="process_detection_failed", message=assessment.process_error,
@@ -933,7 +945,11 @@ def _scan_point(
                         result.items[-1], actionable=False, preselected=False,
                         action_block_reason=action_block_reason or "零占用项仅供浏览",
                     )
-                result.items[-1] = _apply_scan_guards(result.items[-1], guards, result)
+                try:
+                    result.items[-1] = _apply_scan_guards(result.items[-1], guards, result, ctl.checkpoint)
+                except Cancelled:
+                    result.items.pop()
+                    raise
                 if hardlinks:
                     result._hardlinks[result.items[-1]] = hardlinks
     except Cancelled:
@@ -1040,7 +1056,7 @@ def _scan_dynamic_point_with_progress(
                     )
                 ]
             )
-        result.items = [_apply_scan_guards(item, guards, result) for item in result.items]
+        result.items = [_apply_scan_guards(item, guards, result, ctl.checkpoint) for item in result.items]
         ctl.checkpoint()
     except Cancelled:
         progress.cancel()
@@ -1594,11 +1610,7 @@ def _is_artifact_name(name: str) -> bool:
 
 
 def _project_artifact_name(path: Path) -> str:
-    if _is_artifact_name(path.name):
-        return path.name
-    if path.name in PROJECT_ARTIFACT_SUBDIRECTORIES.get(path.parent.name, ()):
-        return f"{path.parent.name}/{path.name}"
-    return ""
+    return artifact_name(path)
 
 
 def _has_project_marker(names: set[str]) -> bool:
@@ -1700,7 +1712,14 @@ def _discover_project_roots(
             visit(Path(entry.path), depth + 1, False)
 
     for root in search_roots:
-        visit(Path(root).expanduser(), 0, True)
+        root = normalize_path(root)
+        if reason := project_scope_block_reason(root):
+            result.issues.append(ScanIssue(
+                code="unsafe_project_search_root", message=reason,
+                task="project-discovery", path=root,
+            ))
+            continue
+        visit(root, 0, True)
     return projects
 
 
@@ -1804,6 +1823,13 @@ def scan_project_artifacts(
                 continue
             artifact_name = _project_artifact_name(child_facts.path)
             if artifact_name:
+                if artifact_name in ZIG_ARTIFACTS:
+                    marker = _inspect_path(
+                        child_facts.path.parent / "build.zig", result.issues,
+                        "project-artifacts", ignore, missing_is_issue=False,
+                    )
+                    if marker is None or not stat.S_ISREG(marker.stat.st_mode) or marker.is_probable_cloud_placeholder:
+                        continue
                 hardlinks: dict[tuple[int, int], tuple[int, int]] = {}
                 if child_facts.is_dataless:
                     measurement = _DirectoryMeasurement(
@@ -1847,43 +1873,56 @@ def scan_project_artifacts(
                     selection_note = f"产物及其内容至少 {preselect_age_days} 天未修改，默认预选"
                 else:
                     selection_note = f"产物或其内容最近 {preselect_age_days} 天内修改，默认不选"
-                result.items.append(
-                    Item(
-                        child_facts.path,
-                        measurement.size,
-                        f"构建产物({artifact_name})",
-                        (
-                            "critical"
-                            if measurement.cloud_file_count
-                            else "safe"
-                        ),
-                        f"{project_artifact_note(artifact_name)}；{selection_note}；不代表整个项目的活跃度",
-                        logical_size=measurement.logical_size,
-                        allocated_size=measurement.allocated_size,
-                        cloud_file_count=measurement.cloud_file_count,
-                        cloud_logical_size=measurement.cloud_logical_size,
-                        actionable=(
-                            measurement.excluded_paths == 0
-                            and measurement.cloud_file_count == 0
-                        ),
-                        action_block_reason=(
-                            "包含忽略或保护路径"
-                            if measurement.excluded_paths
-                            else "包含云占位文件"
-                            if measurement.cloud_file_count
-                            else ""
-                        ),
-                        identity=child_facts.identity,
-                        project_root=project_root,
-                        artifact_name=artifact_name,
-                        latest_mtime=latest_mtime,
-                        age_days=age_days,
-                        preselected=preselected,
-                        excluded_paths=measurement.excluded_paths,
-                        domain="project",
-                    )
+                item = Item(
+                    child_facts.path,
+                    measurement.size,
+                    f"构建产物({artifact_name})",
+                    (
+                        "critical"
+                        if measurement.cloud_file_count
+                        else "safe"
+                    ),
+                    f"{project_artifact_note(artifact_name)}；{selection_note}；不代表整个项目的活跃度",
+                    logical_size=measurement.logical_size,
+                    allocated_size=measurement.allocated_size,
+                    cloud_file_count=measurement.cloud_file_count,
+                    cloud_logical_size=measurement.cloud_logical_size,
+                    actionable=(
+                        measurement.excluded_paths == 0
+                        and measurement.cloud_file_count == 0
+                    ),
+                    action_block_reason=(
+                        "包含忽略或保护路径"
+                        if measurement.excluded_paths
+                        else "包含云占位文件"
+                        if measurement.cloud_file_count
+                        else ""
+                    ),
+                    identity=child_facts.identity,
+                    project_root=project_root,
+                    artifact_name=artifact_name,
+                    latest_mtime=latest_mtime,
+                    age_days=age_days,
+                    preselected=preselected,
+                    excluded_paths=measurement.excluded_paths,
+                    domain="project",
                 )
-                result.items[-1] = _apply_scan_guards(result.items[-1], guards, result)
+                if item.actionable:
+                    assessment = assess_project_artifact(
+                        child_facts.path, project_root, ignore, checkpoint=ctl.checkpoint,
+                    )
+                    if assessment.block_reason:
+                        item = replace(
+                            item, actionable=False, preselected=False,
+                            action_block_reason=assessment.block_reason,
+                            note=f"{project_artifact_note(artifact_name)}；不代表整个项目的活跃度；{assessment.block_reason}；不可执行，默认不选",
+                        )
+                    if not assessment.complete:
+                        result.issues.append(ScanIssue(
+                            code="project_content_check_failed", message=assessment.block_reason,
+                            task="project-artifacts", path=child_facts.path,
+                        ))
+                result.items.append(_apply_scan_guards(item, guards, result, ctl.checkpoint))
                 if hardlinks:
                     result._hardlinks[result.items[-1]] = hardlinks
                 continue

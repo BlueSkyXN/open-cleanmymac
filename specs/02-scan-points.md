@@ -29,6 +29,21 @@ VAL-DETECT-002：新增扫描点必须通过精确选择和默认选择回归，
 
 `analyze` 是独立占用分析入口，不是第六套垃圾规则；大目录仍需明确选择和 critical 确认。
 
+### 项目内容与 Homebrew 活动保护
+
+Purge 对候选内部的 `.git` 标记、`*-keypair.json` 部署密钥文件名及 Git 索引跟踪内容保留原位；
+检查失败、超时或预算不足不能视为无保护内容。显式扫描根位于依赖/产物树或 Git 元数据内时
+拒绝发现其内部项目；不影响从所属项目识别整项依赖。扫描和执行前必须复核，此策略不等于
+禁止 Analyze 经 critical 授权处理任意 Git 项目。
+
+Zig 只将相邻普通、非云占位 `build.zig` 对应的 `.zig-cache`、`zig-out` 纳入现有产物流程；
+不从自定义构建参数推导额外路径，不泛化 build/dist/bin。worktree 快捷入口只选择明确范围，
+不扩大默认项目根、不把 checkout 自身、源码或 `.git` 文件当作清理对象。
+
+Homebrew 缓存的运行状态保护必须覆盖专用/通用扫描点、Analyze、父子目录及可信环境缓存根。
+进程未知、疑似在途下载与锁标记保留原位，不能通过停止进程或按年龄判断自动解锁；锁目录不
+作为清理对象。验收见 `test_project_content_guards.py`、`test_homebrew_guards.py`。
+
 ## 3. 承接个人经验与已有诊断
 
 REQ-DETECT-003：复用下表能力和 [EXPERIENCE](../docs/EXPERIENCE.md) 的来源映射；

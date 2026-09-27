@@ -82,7 +82,31 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 
 Purge 的 `note` 区分依赖重装、环境重建、索引和构建后果；恢复取决于项目配置、源码、工具链
 和依赖源。`age_days` / 默认预选依据产物及其内容的最新 mtime，不评估整个项目是否活跃。
-本次仅改善解释，不改变发现、选择或安全等级，也不新增 rebuild_cost / 缓存标签评分。
+这些解释不代表可重建证明，也不新增 rebuild_cost / 缓存标签评分。
+
+后续内容保护会检查产物内部 `.git`（目录或文件）、`*-keypair.json` 文件名及所属仓库索引。
+Git 跟踪包含仅 staged 的内容；monorepo 向祖先查找索引，linked worktree 支持 `.git` 定位文件。
+Git 查询隔离环境配置并关闭 fsmonitor、可选锁与 hooks，不执行构建、不读取密钥正文，输出只需
+确认是否存在跟踪项。每个候选的内容检查最多 200000 次路径/条目检查和 5 秒活动时间；暂停时间
+不计入预算，文件系统 I/O 不是硬超时；Git 子进程结束前仅可显示“暂停已请求”，不假报已暂停。
+检查失败以 `project_content_check_failed` 标记不完整；阻断原因进入现有 `action_block_reason` 和
+`note`，不新增 JSON schema。确认受保护但检查完整的候选可只读展示；批量参数不能重新选中。
+
+显式项目根位于产物/依赖目录或 `.git` 内时返回 `unsafe_project_search_root`，不深入包内识别项目。
+正常无 Git 项目不要求 Git；有 `.git` 但 Git 不可用、索引损坏或定位不可信时保留产物。
+执行前复用同一检查，整批预检失败保持 all-or-nothing，开始执行后的新阻断如实报告部分结果。
+此内容策略仅针对 project/Purge 候选，不扩张成 Analyze 的全局 Git 禁删规则。
+
+Zig 仅识别相邻普通 `build.zig` 对应的 `.zig-cache`、`zig-out`，执行前复核标记；不跟随 `-p` 或
+`--cache-dir` 自定义位置。主菜单 Purge 增加默认根、Codex/Claude worktree、自定义目录选项，
+均不自动加 `--yes`；显式 `purge [path]` 与默认五个根保持不变。
+
+Homebrew 保护覆盖默认及可信 `HOMEBREW_CACHE` 根、子项和父项，识别 brew/brew.rb 命令参数，
+不把任意 ruby/curl 或 `/opt/homebrew/bin/python` 当作 Homebrew 活动。进程未知、在途 `.incomplete`、
+`.lock` 和 `locks` 目录均阻断；不会删除锁或凭年龄判断陈旧。默认两个 Homebrew prefix 及显式
+`HOMEBREW_PREFIX` 的 `var/homebrew/locks` 范围只保护、不作为新增扫描点。内容检查失败通过
+`cleanup_guard_check_failed` 报告不完整，扫描与执行均重判；环境变化不丢弃已识别候选的归属标记。
+实际 Homebrew 下载/安装并发验收仍未完成；测试使用模拟进程与临时缓存，不调用真实 brew。
 
 ### AI 浏览器缓存路径补齐
 

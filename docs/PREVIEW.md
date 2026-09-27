@@ -31,8 +31,14 @@ PYTHONPATH=. python3 scripts/preview_all.py --json
 
 ## 隔离保证
 
-后续源码的 Purge 候选沿用 note 显示具体清理后果和产物年龄，文本预览、I 详情与 JSON 使用同一份说明，
-不改变选择。动态应用归属的定向测试使用临时应用和模拟 Spotlight/进程快照，覆盖未知、
+后续源码的 Purge 候选沿用 note 显示具体清理后果和产物年龄，文本预览、I 详情与 JSON 使用同一份说明。
+新增内容保护会取消含仓库/跟踪内容/部署密钥的候选执行资格；`test_project_content_guards.py` 使用
+临时 Git 仓库、linked worktree、合成密钥文件名与 Trash 验证扫描和执行前变化，不包含真实凭据。
+`test_homebrew_guards.py` 使用模拟 brew 进程和临时在途下载/锁，验证专用缓存、通用缓存、Analyze、
+父子范围和环境路径保护，不运行真实下载、安装或升级。主菜单 Purge 的 worktree 快捷项只改变
+显式选择的范围；缺失目录不创建，默认根保持不变。
+
+动态应用归属的定向测试使用临时应用和模拟 Spotlight/进程快照，覆盖未知、
 多安装位置和执行前启动；不通过清理真实应用缓存验证保护。具体未发布变化见 CHANGELOG。
 
 AI 浏览器补齐测试在临时 profile 中验证八个新增精确路径及相似路径反例、运行中 Chrome
