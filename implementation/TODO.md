@@ -191,6 +191,10 @@ SIGINT 在任务提交及等待两个阶段都先传播取消再收尾，有限�
   后续可补按应用的未知量/跳过明细，不推断所有 `.lproj` 都可删除。
 - 文本摘要已区分发现、当前可执行、选择和只读/阻断量；进一步建议层仍需逐项条件证据。
   退出应用不保证解锁，重启也不保证净释放。
+- 验收发现（ExFAT，2026-09-28）：同卷 Trash 的独占 rename 在 ExFAT 卷返回
+  `[Errno 45] Operation not supported`，移动被 fail-closed 拒绝且源文件完好——ExFAT 外置盘上的
+  清理当前不可用。后续需单独决策策略：扫描期给出明确不可执行原因、或另立显式授权的删除路径；
+  不为绕过该限制放宽 rename 安全语义。
 - Purge/Homebrew 内容保护已有临时目录回归；真实 Homebrew 并发与特殊卷（case-sensitive APFS、
   ExFAT、外置 `.Trashes`）、真实 Zig/Xcode 构建产物与 APFS Unicode 规范化验收由 `acceptance.yml`
   在一次性 macOS runner 上执行，结果以对应运行日志为准。用户机器上的 Homebrew 及 worktree
