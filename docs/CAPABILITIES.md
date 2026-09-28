@@ -181,9 +181,12 @@ Mole `1b6ac63` 的问题场景仅用作回归线索，
 不是新增删除字典，也不宣称覆盖所有密钥、锁或并发写入方式。
 
 验证入口为 `test_project_content_guards.py`、`test_homebrew_guards.py` 和 `test_config_cli.py`；
-只使用临时目录、合成数据和模拟进程。未进行真实 Homebrew 并发操作、实际 Zig 构建产物清理或用户
-worktree 清理验收。文件系统预算为协作边界，不是每个系统调用的硬超时；内容复查不提供同 UID
-恶意竞态的原子隔离，也不证明剩余未命中内容都能重建。具体实现契约见 implementation/README。
+只使用临时目录、合成数据和模拟进程。真实 Homebrew 并发（`brew update`/`brew fetch` 运行期阻断与
+恢复、真实缓存在途文件）和特殊卷语义（case-sensitive APFS 的 Git 分支、外置卷 `.Trashes` 移动）
+由 `acceptance.yml` 在一次性 macOS runner 上验收，结果以对应运行日志为准，不在文档复制历史结论。
+实际 Zig 构建产物清理及用户 worktree 清理验收仍未进行。文件系统预算为协作边界，不是每个系统调用
+的硬超时；内容复查不提供同 UID 恶意竞态的原子隔离，也不证明剩余未命中内容都能重建。
+具体实现契约见 implementation/README。
 
 ## 验证边界
 

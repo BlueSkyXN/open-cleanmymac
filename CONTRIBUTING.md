@@ -45,6 +45,8 @@ make test-focused TEST_PATTERN=test_agent_identifiers.py
 ## 云端检查门
 
 GitHub Actions 在 macOS / Python 3.11 执行以下检查，以及 wheel 独立安装后的 Agent 预览链路。
+另有 `acceptance.yml` 在一次性 macOS runner 上执行真实环境验收（真实 brew 并发、挂载特殊卷），
+手动或每周触发，不在本地运行，也不进入 PR 检查。
 本地不必重复全量检查；排查相关 CI 失败时才建立 venv、安装 `requirements-dev.txt`，并将
 venv 的 bin 加入 PATH 后复现对应目标。
 

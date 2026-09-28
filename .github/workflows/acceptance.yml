@@ -1,0 +1,39 @@
+name: Acceptance
+
+# 真实环境验收：仅在一次性 macOS runner 上运行，会启动真实 brew 并挂载
+# 磁盘镜像。手动触发或每周定时，不进入 PR 检查路径；结论以每次运行日志为准。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  real-environment:
+    name: ${{ matrix.os }} / ${{ matrix.suite }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+        suite: [homebrew, volumes]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Run real-environment acceptance (${{ matrix.suite }})
+        env:
+          OPENCLEAN_REAL_ENV_ACCEPTANCE: "1"
+        run: python3 implementation/scripts/acceptance_real_env.py --suite ${{ matrix.suite }}
