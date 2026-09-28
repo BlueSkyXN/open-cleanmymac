@@ -11,6 +11,10 @@
 
 ### Added
 
+- Purge 增加有界内容保护：Git 索引跟踪内容、产物内部 `.git` 及 `*-keypair.json` 阻断清理；
+  检查失败不放行，扫描与执行前均复核。无 Git 项目继续可用，支持 monorepo 和 linked worktree。
+- Zig 识别 `.zig-cache`、`zig-out`，要求相邻普通 `build.zig` 并沿用内容保护；不扩大到任意 build/dist/bin。
+- 主菜单 Purge 增加范围选择与 Codex/Claude worktree 快捷入口；显式命令和默认扫描根保持不变。
 - `clean`/`purge`/`analyze` 新增 `--interactive` 显式进入全屏 TUI：需要 stdin/stdout
   均连接终端，不能与 `--json` 或参数化选择组合，冲突在扫描前以 `invalid_mode_options`
   拒绝（exit 2）；显式请求失败不静默改走其他模式。模式判定集中到
@@ -46,6 +50,21 @@
 
 ### Fixed
 
+- Homebrew 识别脚本执行位置上的 `brew.sh`，覆盖 Bash 自动更新阶段直接写入普通 API 缓存文件
+  的情况，不依赖 `.incomplete`/`.lock` 才阻断；文档查看和脚本编辑仍不视为运行。
+- Homebrew 缓存、锁范围及后代按文件系统大小写语义和 no-follow 身份判断；不敏感卷上的小写
+  别名、父项、环境缓存及锁内部选择不能绕过，未知状态阻断，不全局小写化用户路径。
+- Purge 的依赖/产物祖先限制按文件系统大小写语义匹配，阻断 `NODE_MODULES` 等别名；敏感卷、
+  相似名称及限定子目录保持边界，扫描和执行前共享检查。
+- Purge 在内层仓库索引未命中后继续检查允许边界内的外层仓库，防止外层跟踪源码被漏判；Git
+  查询按文件系统大小写语义保留字面匹配，大小写能力未知时阻断，不因磁盘与索引名称差异放行。
+- Claude worktree 快捷入口改为先选择项目根，再扫描其 `.claude/worktrees`；不再固定到 HOME，
+  自定义 worktree 位置继续使用自定义目录入口。Codex 默认快捷位置保持。
+- Homebrew 进程判定只匹配执行程序及 shell/Ruby 的脚本位置，不再因 `man brew`、编辑 brew 脚本
+  或克隆 Homebrew 仓库而误报。Analyze 取消测试同步透传 checkpoint，保留已完成候选的原断言。
+- 显式 Purge 扫描根位于 node_modules 等依赖/产物目录或其后代时拒绝深入，避免将包内产物作为独立项目清理。
+- Homebrew 缓存补充运行状态、在途下载和锁范围保护，覆盖专用/通用扫描点、Analyze、父子目录及
+  可信环境路径；扫描后启动和新增在途文件会阻断执行，不删除锁。探测失败如实报告不完整。
 - 暂停确认等待所有活跃工作线程到达检查点，不因一个线程暂停而掩盖另一个线程的阻塞 I/O；
   协调线程等待子任务不计作文件操作，动态扫描器也在真正开始时报告 started。
 - Analyze 当前处理路径来自实际候选/目录访问，不把排队的批次标成并行执行；

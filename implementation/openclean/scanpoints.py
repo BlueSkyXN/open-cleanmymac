@@ -286,6 +286,8 @@ PROJECT_ARTIFACT_NAMES: tuple[str, ...] = (
     # JVM/其它
     "target", ".gradle", ".kotlin", ".bloop", ".metals", ".stack-work",
     ".ccls-cache", ".cpcache", ".cxx",
+    # Zig：仅在相邻 build.zig 为普通文件时识别。
+    ".zig-cache", "zig-out",
     # Infra
     ".terraform", ".dart_tool",
     # CocoaPods / PHP / CMake 等公开 CLI 文档列出的依赖与构建目录
@@ -312,6 +314,8 @@ def project_artifact_note(name: str) -> str:
         return "工具工作目录；可能需要重新初始化或下载依赖，清理前确认其中没有需要保留的配置或状态"
     if name in {".ccls-cache", ".metals", ".mypy_cache", ".pyre", ".pytype"}:
         return "索引或分析缓存；下次索引、类型检查可能变慢，需重新生成"
+    if name in {".zig-cache", "zig-out"}:
+        return "Zig 本地构建缓存或默认安装产物；重新生成依赖 build.zig、源码和工具链，不包含自定义输出位置"
     if name in {".pytest_cache", ".ruff_cache", "__pycache__", "pycache"}:
         return "检查或运行缓存；可能丢失上次检查记录，下次运行需要重新生成"
     return "构建或工具产物；下次构建可能变慢，重新生成取决于源码、工具链及依赖是否齐备"
@@ -321,6 +325,7 @@ PROJECT_MARKER_NAMES: tuple[str, ...] = (
     "package.json",
     "pyproject.toml",
     "Cargo.toml",
+    "build.zig",
     "Package.swift",
     "Podfile",
     "go.mod",

@@ -186,7 +186,7 @@ class ConfigAndRootCliTests(unittest.TestCase):
         expected = [["clean"], ["purge"], ["analyze", str(Path.home())], ["config"], ["cat"],
                     ["optimize", "ram"], ["optimize", "purgeable"]]
         choices = [MenuChoice(action, 0) for action in
-                   ("clean", "purge", "analyze", "scope_home", "back", "config", "more", "cat", "back",
+                   ("clean", "purge", "purge_default", "back", "analyze", "scope_home", "back", "config", "more", "cat", "back",
                     "optimize", "ram", "purgeable", "back", "quit")]
         events = []
 
@@ -258,6 +258,64 @@ class ConfigAndRootCliTests(unittest.TestCase):
                         mock.patch.object(Path, "cwd", return_value=root):
                     self.assertEqual(_run_root_menu(), 0)
                 command.assert_called_once_with(["analyze", str(expected)])
+
+    def test_purge_scope_dispatches_only_selected_worktree_and_no_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            project = root / "Projects/project with spaces"
+            (root / ".claude/worktrees").mkdir(parents=True)
+            for tool in ("codex", "claude"):
+                target = (root / ".codex/worktrees" if tool == "codex"
+                          else project / ".claude/worktrees")
+                target.mkdir(parents=True)
+                choices = [MenuChoice("purge", 1), MenuChoice(f"purge_{tool}", 1),
+                           MenuChoice("back", 4), MenuChoice("quit", 1)]
+                answers = [str(project), ""] if tool == "claude" else [""]
+                with self.subTest(tool=tool), mock.patch("openclean.cli.choose_menu", side_effect=choices), \
+                        mock.patch("openclean.cli.main", return_value=0) as command, \
+                        mock.patch("builtins.input", side_effect=answers), \
+                        mock.patch.object(Path, "home", return_value=root):
+                    self.assertEqual(_run_root_menu(), 0)
+                command.assert_called_once_with(["purge", str(target)])
+
+    def test_claude_project_scope_cancel_or_missing_does_not_fall_back_to_home(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw).resolve()
+            (home / ".claude/worktrees").mkdir(parents=True)
+            project = home / "Projects/project"
+            project.mkdir(parents=True)
+            for answer in ("", str(project)):
+                choices = [MenuChoice("purge", 1), MenuChoice("purge_claude", 2),
+                           MenuChoice("back", 4), MenuChoice("quit", 1)]
+                with self.subTest(answer=answer), mock.patch("openclean.cli.choose_menu", side_effect=choices), \
+                        mock.patch("openclean.cli.main") as command, \
+                        mock.patch("builtins.input", return_value=answer), \
+                        mock.patch.object(Path, "home", return_value=home), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(_run_root_menu(), 0)
+                command.assert_not_called()
+                self.assertFalse((project / ".claude").exists())
+
+    def test_custom_worktree_location_uses_existing_explicit_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            custom = Path(raw).resolve() / "custom-worktrees"
+            custom.mkdir()
+            choices = [MenuChoice("purge", 1), MenuChoice("purge_custom", 3),
+                       MenuChoice("back", 4), MenuChoice("quit", 1)]
+            with mock.patch("openclean.cli.choose_menu", side_effect=choices), \
+                    mock.patch("openclean.cli.main", return_value=0) as command, \
+                    mock.patch("builtins.input", side_effect=[str(custom), ""]):
+                self.assertEqual(_run_root_menu(), 0)
+            command.assert_called_once_with(["purge", str(custom)])
+
+    def test_missing_worktree_or_empty_custom_purge_scope_does_not_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            choices = [MenuChoice("purge", 1), MenuChoice("purge_codex", 1),
+                       MenuChoice("purge_custom", 3), MenuChoice("back", 4), MenuChoice("quit", 1)]
+            with mock.patch("openclean.cli.choose_menu", side_effect=choices), \
+                    mock.patch("openclean.cli.main") as command, mock.patch("builtins.input", return_value=""), \
+                    mock.patch.object(Path, "home", return_value=Path(raw)), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(_run_root_menu(), 0)
+            command.assert_not_called()
 
     def test_analyze_empty_custom_path_and_back_do_not_scan(self) -> None:
         choices = [MenuChoice("analyze", 2), MenuChoice("scope_custom", 2),

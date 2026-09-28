@@ -818,11 +818,37 @@ def _run_root_menu() -> int:
         if choice.action == "cheatsheet":
             _print_cheatsheet()
             continue
-        if choice.action in {"more", "optimize", "back", "analyze"}:
+        if choice.action in {"more", "optimize", "back", "analyze", "purge"}:
             menu = ("root" if choice.action == "back" else
-                    "analyze_scope" if choice.action == "analyze" else choice.action)
+                    f"{choice.action}_scope" if choice.action in {"analyze", "purge"} else choice.action)
             continue
-        if choice.action.startswith("scope_"):
+        if choice.action.startswith("purge_"):
+            try:
+                if choice.action == "purge_default":
+                    command = ["purge"]
+                else:
+                    if choice.action == "purge_custom":
+                        path = input("待扫描项目目录（空输入返回）：").strip()
+                        if not path:
+                            continue
+                    elif choice.action == "purge_claude":
+                        project = input("Claude 项目根目录（空输入返回；自定义 worktree 位置请用自定义目录）：").strip()
+                        if not project:
+                            continue
+                        path = normalize_path(project) / ".claude" / "worktrees"
+                    else:
+                        path = Path.home() / ".codex" / "worktrees"
+                    root = normalize_path(path)
+                    if not root.is_dir() or root.is_symlink():
+                        print("项目扫描范围不存在或不是普通目录；未开始扫描。", file=sys.stderr)
+                        continue
+                    command = ["purge", str(root)]
+            except (EOFError, KeyboardInterrupt):
+                return 0
+            except (OSError, ValueError) as exc:
+                print(f"无法选择项目范围：{exc}", file=sys.stderr)
+                continue
+        elif choice.action.startswith("scope_"):
             try:
                 if choice.action == "scope_custom":
                     path = input("待分析目录（空输入返回）：").strip()

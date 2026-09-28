@@ -179,6 +179,34 @@ openclean cat [--json]
 schema v2 以 `openclean <command> --help` 和
 [implementation/README.md](implementation/README.md) 为准。
 
+### 项目与 Homebrew 保护增强（当前源码，尚未发布）
+
+Purge 会阻断含 Git 索引跟踪内容、嵌套 `.git` 标记或 `*-keypair.json` 部署密钥文件名的产物；
+检查失败、超时或预算不足也不会放行。Git 检查覆盖允许边界内的各级祖先仓库，并按文件系统
+大小写语义查询，不因内层空索引或路径大小写变化放行。批量预检和逐项移动前重新检查，`--all`/`--yes` 不绕过。
+显式扫描根不能位于依赖/产物目录内部；不敏感卷上的 `NODE_MODULES` 等大小写别名也不能绕过，
+大小写语义未知时阻断。此内容策略只约束 Purge，不把 Analyze 的显式
+critical 选择变成“所有 Git 项目都禁止清理”。
+
+Homebrew 缓存增加运行状态、在途下载及锁保护，覆盖专用/通用缓存、Analyze、父子目录和
+可信 `HOMEBREW_CACHE`。无法确认进程状态时阻断；发现 `.incomplete`、`.lock` 或锁目录时
+保留原位，不按年龄推断已失效。识别执行程序及 shell/Ruby 脚本位置，不因查看 brew 文档、编辑脚本
+或克隆 Homebrew 仓库而误报。覆盖 `/bin/bash -p …/Homebrew/brew.sh` 自动更新阶段，即使写入的是
+普通 API 缓存文件也阻断。缓存/锁范围按文件系统大小写语义和 no-follow 身份识别，大小写别名不
+解除保护；未知语义阻断。停止 Homebrew 不保证解除其它阻断。
+
+主菜单 Purge 可选择默认项目根、Codex/Claude worktrees 或自定义目录；默认扫描根不变，
+快捷入口不会创建缺失目录，也不删除 worktree 本身。Claude 会先要求输入项目根，再定位该项目内的
+`.claude/worktrees`；配置过其它位置时使用自定义目录入口。显式预览示例（第二条在项目根运行）：
+
+```bash
+openclean purge ~/.codex/worktrees --json
+openclean purge ./.claude/worktrees --json
+```
+
+Zig 新增 `.zig-cache`、`zig-out`，仅在相邻 `build.zig` 为普通非云占位文件并通过内容保护时
+纳入候选；不跟随自定义输出路径，不新增无条件 `build/dist/bin` 或 Terragrunt 删除规则。
+
 ## 安全
 
 | 操作 | 是否写入 | 可恢复性 |

@@ -7,13 +7,14 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import homebrew
 from .application_ownership import (
     APPLICATION_PATH_RULES,
     DARWIN_CACHE_PROCESS_MARKERS,
     ApplicationResolver,
 )
 from .filesystem import lstat_retry, scandir_entries
-from .macos import scan_symlink_anchor
+from .macos import filesystem_name_matches, filesystem_relative_parts, scan_symlink_anchor
 from .models import FileFacts, normalize_path
 from .predicates import Predicate, ProtectionGate
 from .processes import ProcessDetectionError, ProcessSnapshot
@@ -40,6 +41,7 @@ class CleanupGuards:
     note: str = ""
     process_error: str = ""
     resource_in_use: bool = False
+    inspection_error: str = ""
 
     @property
     def updater(self) -> UpdaterAssessment | None:
@@ -95,6 +97,17 @@ class CleanupGuardContext:
             return True
         return root_parts[:len(parts)] == parts and self._probe(root) is not None
 
+    def _homebrew_scope(self, path: Path, root: Path) -> tuple[Path, tuple[Path, ...]] | None:
+        relative = filesystem_relative_parts(path, root, probe=self._probe)
+        if relative is not None:
+            start = len(root.parts)
+            descendants = tuple(Path(*path.parts[:end]) for end in range(start + 1, len(path.parts) + 1))
+            return path, descendants
+        if (filesystem_relative_parts(root, path, probe=self._probe) is not None
+                and self._probe(root) is not None):
+            return root, ()
+        return None
+
     def _build_registered_roots(self) -> Iterator[tuple[Path, tuple[str, ...]]]:
         for rule in APPLICATION_PATH_RULES:
             yield self.home / rule.relative_path, rule.process_markers
@@ -143,15 +156,37 @@ class CleanupGuardContext:
         *,
         process_markers: tuple[str, ...] = (),
         darwin_cache_root: Path | None = None,
+        checkpoint: Callable[[], None] = lambda: None,
     ) -> CleanupGuards:
         path = normalize_path(path)
         markers = list(process_markers)
         notes: list[str] = []
         scopes: list[UpdaterScope] = []
         reason = ""
+        brew_scope = False
+        inspection_error = ""
         try:
             if self._probe(path) is None:
                 raise GuardInspectionError("应用保护范围已不存在，需重新扫描")
+            for root in homebrew.lock_roots():
+                if self._homebrew_scope(path, root) is not None:
+                    reason = "选择范围包含 Homebrew 锁目录，不支持清理"
+            for root in homebrew.cache_roots(self.home, probe=self._probe):
+                scope = self._homebrew_scope(path, root)
+                if scope is None:
+                    continue
+                brew_scope = True
+                markers.extend(homebrew.HOMEBREW_PROCESS_MARKERS)
+                target, descendants = scope
+                if any(filesystem_name_matches(
+                    child, homebrew.HOMEBREW_ACTIVITY_PATTERNS, probe=self._probe,
+                ) for child in descendants):
+                    reason = reason or "选择范围位于 Homebrew 在途下载或锁内部，不支持清理"
+                reason = reason or homebrew.cache_block_reason(target, self.protection, checkpoint)
+            # 兼容旧候选的两项标记；环境变化不能丢失已建立的 Homebrew 归属。
+            if {"brew", "brew.rb"}.issubset(process_markers):
+                brew_scope = True
+                reason = reason or homebrew.cache_block_reason(path, self.protection, checkpoint)
             roots = tuple(self._registered_roots(darwin_cache_root))
             for root, owned_markers in roots:
                 if self._overlaps(path, root):
@@ -180,15 +215,19 @@ class CleanupGuardContext:
                     reason = updater.block_reason
         except OSError as exc:
             reason = f"无法完成应用保护范围复核：{exc}"
+            inspection_error = reason
         markers = tuple(dict.fromkeys(markers))
         process_error = ""
         running = False
         if markers:
             snapshot, process_error = self._processes()
-            running = snapshot is not None and snapshot.any_running(markers)
+            other_markers = tuple(m for m in markers if m not in homebrew.HOMEBREW_PROCESS_MARKERS)
+            running = snapshot is not None and (
+                snapshot.any_running(other_markers) or (brew_scope and homebrew.running(snapshot))
+            )
             if snapshot is None:
                 reason = reason or "无法确认相关应用是否正在运行"
             elif running:
                 reason = reason or "相关应用正在运行"
         return CleanupGuards(markers, tuple(scopes), reason,
-                             "；".join(dict.fromkeys(notes)), process_error, running)
+                             "；".join(dict.fromkeys(notes)), process_error, running, inspection_error)

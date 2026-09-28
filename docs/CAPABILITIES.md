@@ -154,6 +154,37 @@ Default/DawnCache、根级 GrShaderCache。未采纳来源线索中的 Default/G
 `test_ai_browser_caches.py` 覆盖正反目录、进程/失败阻断、忽略、symlink、计量去重、
 JSON 预览和临时 Trash 精确执行后保留未选数据；不将隔离测试包装成真实浏览器验收。
 
+## Purge 与 Homebrew 保护增量（未发布）
+
+- Purge 的产物名称不再单独授予资格：内部 `.git`、部署密钥文件名、Git 索引跟踪内容均阻断；
+  失败/超时/预算不足不视为阴性。检查允许边界内全部祖先仓库，字面 pathspec 尊重文件系统大小写
+  能力；未知能力阻断。扫描根不得落入依赖或产物树，大小写别名不能绕过，扫描和执行前均复核。
+- linked worktree 使用已有路径入口；主菜单 Codex 选择 HOME 下 worktrees，Claude 先输入项目根，
+  选择项目内 `.claude/worktrees`，自定义位置用自定义目录入口；不扩大默认根。
+  Zig 的 `.zig-cache`、`zig-out` 要求相邻普通 `build.zig`，不添加 Terragrunt 或通用 build/dist/bin 删除规则。
+- Homebrew 运行状态、疑似在途下载和锁保护复用跨入口范围判定；未知进程状态阻断，锁不作为清理对象。
+  只识别执行程序与解释器脚本位置，包含 Bash 执行 brew.sh 的自动更新阶段，任意参数提及 brew
+  不是归属证明；可信环境路径仍需精确选择。Homebrew 大小写范围比较先查询文件系统能力并核对
+  no-follow 身份；不因大小写别名跳过状态和在途保护，也不扩张成全路径小写化。
+
+独立实现依据为 [Git ls-files](https://git-scm.com/docs/git-ls-files)、
+[Git 环境变量](https://git-scm.com/docs/git#_environment_variables)、
+[Zig Build System](https://ziglang.org/learn/build-system/) 和
+[Homebrew manpage](https://docs.brew.sh/Manpage)。Claude 的项目内默认位置及可配置位置依据
+[官方 Desktop 文档](https://code.claude.com/docs/en/desktop)；大小写能力使用 Darwin `pathconf(2)`
+的 `_PC_CASE_SENSITIVE`，不由 `core.ignoreCase` 推断卷类型。Homebrew 启动形式与普通 API 缓存写入
+依据 Homebrew `4bbad1d87619` 的公开 [bin/brew](https://github.com/Homebrew/brew/blob/4bbad1d8761976f8322bbefe3a482e8b83d299cc/bin/brew) 和
+[update.sh](https://github.com/Homebrew/brew/blob/4bbad1d8761976f8322bbefe3a482e8b83d299cc/Library/Homebrew/cmd/update.sh) 的行为核实，
+不复制其实现；API 文件名随上游版本变化，保护不限定某个 JSON 文件名。
+Mole `1b6ac63` 的问题场景仅用作回归线索，
+不复制其源码或翻译其执行器。`*-keypair.json`、`.incomplete`、`.lock` 采用保守的阻断命名规则，
+不是新增删除字典，也不宣称覆盖所有密钥、锁或并发写入方式。
+
+验证入口为 `test_project_content_guards.py`、`test_homebrew_guards.py` 和 `test_config_cli.py`；
+只使用临时目录、合成数据和模拟进程。未进行真实 Homebrew 并发操作、实际 Zig 构建产物清理或用户
+worktree 清理验收。文件系统预算为协作边界，不是每个系统调用的硬超时；内容复查不提供同 UID
+恶意竞态的原子隔离，也不证明剩余未命中内容都能重建。具体实现契约见 implementation/README。
+
 ## 验证边界
 
 大文件发现见 `test_large_files.py`，隔离预览及 wheel 安装验收也包含 `large`：递归阈值、

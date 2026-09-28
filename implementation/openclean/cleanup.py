@@ -32,6 +32,7 @@ from .macos import (
 from .models import FileFacts, FileIdentity, Item, ScanResult, normalize_path
 from .predicates import Predicate, ProtectionGate
 from .processes import capture_process_snapshot
+from .project_artifacts import assess_project_artifact
 from .startup_items import StartupItemError, startup_item_still_broken
 
 
@@ -492,6 +493,12 @@ def _audit_item(
     _validate_startup_item(item, path)
     if stat.S_ISDIR(stat_result.st_mode):
         _audit_descendants(path, stat_result.st_dev, protection, uid)
+    if item.domain == "project":
+        if item.project_root is None:
+            raise CleanupSafetyError("项目产物缺少所属项目，需重新扫描")
+        artifact = assess_project_artifact(path, item.project_root, protection)
+        if artifact.block_reason:
+            raise CleanupSafetyError(artifact.block_reason)
     assessment = guards.assess(
         path,
         process_markers=item.running_process_markers,
