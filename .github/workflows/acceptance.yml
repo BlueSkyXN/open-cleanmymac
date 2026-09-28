@@ -3,10 +3,6 @@ name: Acceptance
 # 真实环境验收：仅在一次性 macOS runner 上运行，会启动真实 brew 并挂载
 # 磁盘镜像。手动触发或每周定时，不进入 PR 检查路径；结论以每次运行日志为准。
 on:
-  # bootstrap：workflow_dispatch 需要 workflow 已在默认分支；合入前临时用
-  # PR 触发做首次验证，验证通过后移除本触发器，恢复手动 + 每周定时。
-  pull_request:
-    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "17 4 * * 1"
