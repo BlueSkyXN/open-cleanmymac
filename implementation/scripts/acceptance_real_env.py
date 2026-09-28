@@ -144,14 +144,22 @@ def suite_homebrew() -> None:
     print("ACCEPT homebrew：真实 brew 并发与在途文件保护全部通过")
 
 
+def _run_verbose(command: list[str]) -> None:
+    completed = subprocess.run(command, capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise AcceptanceFailure(
+            f"FAIL {' '.join(command)}：exit={completed.returncode} "
+            f"stderr={completed.stderr.strip()[:500]}"
+        )
+
+
 def _attach_volume(image: Path, filesystem: str, volume_name: str) -> Path:
-    subprocess.run(
-        ["hdiutil", "create", "-type", "SPARSE", "-fs", filesystem,
-         "-size", "1g", "-volname", volume_name, "-o", str(image)],
-        check=True, capture_output=True,
-    )
-    subprocess.run(["hdiutil", "attach", "-nobrowse", str(image)], check=True,
-                   capture_output=True)
+    _run_verbose([
+        "hdiutil", "create", "-type", "SPARSE", "-fs", filesystem,
+        "-size", "1g", "-volname", volume_name, "-o", str(image),
+    ])
+    # hdiutil create -o 会在指定名称后追加 .sparseimage 后缀。
+    _run_verbose(["hdiutil", "attach", "-nobrowse", f"{image}.sparseimage"])
     mount = Path("/Volumes") / volume_name
     if not mount.is_dir():
         raise AcceptanceFailure(f"FAIL volume-mount：{mount} 挂载失败")
