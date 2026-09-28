@@ -445,7 +445,8 @@ def suite_exfat() -> None:
     image = Path(tempfile.gettempdir()) / "openclean-exfat-acceptance"
     mount: Path | None = None
     try:
-        mount = _attach_exfat_volume(image, "openclean-exfat")
+        # ExFAT 卷名上限 11 字符（msdos 家族标签规则），超长会被 diskutil 拒绝。
+        mount = _attach_exfat_volume(image, "oc-exfat")
         check(not filesystem_case_sensitive(mount), "exfat-case-insensitive", str(mount))
         project = mount / "work/project"
         _write(project / "package.json", "{}")
