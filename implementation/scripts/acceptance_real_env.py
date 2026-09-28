@@ -176,17 +176,24 @@ def _detach_volume(mount: Path) -> None:
     print(f"WARN volume-detach：{mount} 卸载失败，runner 销毁时自动释放", file=sys.stderr)
 
 
+def _write(path: Path, data: bytes | str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(data, str):
+        path.write_text(data, encoding="utf-8")
+    else:
+        path.write_bytes(data)
+
+
 def _case_sensitive_branches(mount: Path) -> None:
     check(filesystem_case_sensitive(mount), "cs-volume-sensitive", str(mount))
     repo = mount / "repo"
     repo.mkdir()
-    (repo / "package.json").write_text("{}", encoding="utf-8")
+    _write(repo / "package.json", "{}")
     git(repo, "init", "-q")
 
     alpha = repo / "Alpha"
-    (alpha / "package.json").write_text("{}", encoding="utf-8")
-    (alpha / "vendor/source.php").parent.mkdir(parents=True)
-    (alpha / "vendor/source.php").write_bytes(b"tracked source\n" * 64)
+    _write(alpha / "package.json", "{}")
+    _write(alpha / "vendor/source.php", b"tracked source\n" * 64)
     git(repo, "add", "--", "Alpha/vendor/source.php")
     result = scan_project_artifacts([alpha])
     item, = result.items
@@ -195,9 +202,8 @@ def _case_sensitive_branches(mount: Path) -> None:
           item.action_block_reason)
 
     web = repo / "Packages/Web[1]"
-    (web / "package.json").write_text("{}", encoding="utf-8")
-    (web / "vendor/source.php").parent.mkdir(parents=True)
-    (web / "vendor/source.php").write_bytes(b"tracked source\n" * 64)
+    _write(web / "package.json", "{}")
+    _write(web / "vendor/source.php", b"tracked source\n" * 64)
     git(repo, "add", "--", "Packages/Web[1]/vendor/source.php")
     (repo / "Packages").rename(repo / "packages")
     result = scan_project_artifacts([repo])
@@ -216,10 +222,9 @@ def _case_sensitive_branches(mount: Path) -> None:
 
 def _external_volume_trash(mount: Path) -> None:
     project = mount / "work/project"
-    (project / "package.json").write_text("{}", encoding="utf-8")
+    _write(project / "package.json", "{}")
+    _write(project / "node_modules/payload.bin", b"cross-volume payload\n" * 64)
     artifact = project / "node_modules"
-    artifact.mkdir()
-    (artifact / "payload.bin").write_bytes(b"cross-volume payload\n" * 64)
     age_tree(project)
     result = scan_project_artifacts([project])
     item, = result.items
