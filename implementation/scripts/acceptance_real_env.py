@@ -191,13 +191,15 @@ def _run_verbose(command: list[str], *, cwd: Path | None = None) -> None:
         )
 
 
-def _attach_volume(image: Path, filesystem: str, volume_name: str) -> Path:
-    _run_verbose([
-        "hdiutil", "create", "-type", "SPARSE", "-fs", filesystem,
-        "-size", "1g", "-volname", volume_name, "-o", str(image),
-    ])
-    # hdiutil create -o 会在指定名称后追加 .sparseimage 后缀。
-    _run_verbose(["hdiutil", "attach", "-nobrowse", f"{image}.sparseimage"])
+def _attach_volume(image: Path, filesystem: str, volume_name: str, *, sparse: bool = True) -> Path:
+    create = ["hdiutil", "create"]
+    if sparse:
+        create += ["-type", "SPARSE"]
+    create += ["-fs", filesystem, "-size", "1g", "-volname", volume_name, "-o", str(image)]
+    _run_verbose(create)
+    # SPARSE 会在名称后追加 .sparseimage，UDIF 追加 .dmg；ExFAT 不支持 SPARSE。
+    image_file = Path(f"{image}.sparseimage" if sparse else f"{image}.dmg")
+    _run_verbose(["hdiutil", "attach", "-nobrowse", str(image_file)])
     mount = Path("/Volumes") / volume_name
     if not mount.is_dir():
         raise AcceptanceFailure(f"FAIL volume-mount：{mount} 挂载失败")
@@ -303,7 +305,7 @@ def suite_volumes() -> None:
         for mount in reversed(mounts):
             _detach_volume(mount)
         for image in images:
-            for suffix in ("", ".sparseimage"):
+            for suffix in ("", ".sparseimage", ".dmg"):
                 candidate = Path(str(image) + suffix)
                 if candidate.exists():
                     candidate.unlink()
@@ -320,7 +322,11 @@ def suite_zig() -> None:
     ).stdout.strip()
     print(f"INFO zig {version}")
     with tempfile.TemporaryDirectory() as raw:
-        project = Path(raw).resolve()
+        # 执行链以夹具所在目录为 HOME：临时区位于 /private 下，沿用真实 HOME
+        # 会命中"系统保护路径"的 fail-closed 拒绝（与单元测试的隔离 HOME 一致）。
+        home = Path(raw).resolve()
+        project = home / "project"
+        project.mkdir()
         _write(project / "src/main.zig", ZIG_MAIN)
         completed = None
         for variant in ZIG_BUILD_VARIANTS:
@@ -346,7 +352,7 @@ def suite_zig() -> None:
         check(result.complete, "zig-scan-complete")
         selected = select_cleanup_items(result.items, selectors=[str(cache), str(out)])
         check(len(selected) == 2, "zig-selection-size", str(len(selected)))
-        report = execute_cleanup(selected, IgnoreRules(), home=Path.home())
+        report = execute_cleanup(selected, IgnoreRules(), home=home)
         statuses = {outcome.status for outcome in report.outcomes}
         check(statuses == {"moved_to_trash"}, "zig-moved", ",".join(sorted(statuses)))
         check((project / "build.zig").is_file() and (project / "src/main.zig").is_file(),
@@ -359,7 +365,10 @@ def suite_deriveddata() -> None:
     for tool in ("swift", "xcodebuild"):
         _require_tool(tool)
     with tempfile.TemporaryDirectory() as raw:
-        project = Path(raw).resolve()
+        # 同 zig 套件：夹具所在目录作为执行 HOME，避免 /private 临时区的保护性拒绝。
+        home = Path(raw).resolve()
+        project = home / "project"
+        project.mkdir()
         _run_verbose(
             ["swift", "package", "init", "--type", "executable", "--name", "AcceptanceTool"],
             cwd=project,
@@ -390,7 +399,7 @@ def suite_deriveddata() -> None:
         check(items[0].actionable, "deriveddata-actionable", items[0].action_block_reason)
         selected = select_cleanup_items(result.items, selectors=[str(derived)])
         check(len(selected) == 1, "deriveddata-selection-size", str(len(selected)))
-        report = execute_cleanup(selected, IgnoreRules(), home=Path.home())
+        report = execute_cleanup(selected, IgnoreRules(), home=home)
         outcome = report.outcomes[0]
         check(outcome.status == "moved_to_trash", "deriveddata-moved",
               outcome.status + "：" + outcome.message[:120])
@@ -405,7 +414,7 @@ def suite_exfat() -> None:
     image = Path(tempfile.gettempdir()) / "openclean-exfat-acceptance"
     mount: Path | None = None
     try:
-        mount = _attach_volume(image, "ExFAT", "openclean-exfat")
+        mount = _attach_volume(image, "ExFAT", "openclean-exfat", sparse=False)
         check(not filesystem_case_sensitive(mount), "exfat-case-insensitive", str(mount))
         project = mount / "work/project"
         _write(project / "package.json", "{}")
@@ -434,7 +443,7 @@ def suite_exfat() -> None:
     finally:
         if mount is not None:
             _detach_volume(mount)
-        for suffix in ("", ".sparseimage"):
+        for suffix in ("", ".sparseimage", ".dmg"):
             candidate = Path(str(image) + suffix)
             if candidate.exists():
                 candidate.unlink()
@@ -445,8 +454,8 @@ def suite_unicode() -> None:
     composed = "caf\u00e9"
     decomposed = "cafe\u0301"
     with tempfile.TemporaryDirectory(prefix="openclean-unicode-") as raw:
-        base = Path(raw).resolve()
-        project = base / f"proj-{composed}"
+        home = Path(raw).resolve()
+        project = home / f"proj-{composed}"
         project.mkdir()
         _write(project / "package.json", "{}")
         artifact = project / "node_modules"
@@ -469,7 +478,7 @@ def suite_unicode() -> None:
             rejected = True
         check(rejected, "unicode-decomposed-rejected",
               "NFD 形式选择器不得命中 NFC 候选（宁可拒绝不可错选）")
-        report = execute_cleanup(selected, IgnoreRules(), home=Path.home())
+        report = execute_cleanup(selected, IgnoreRules(), home=home)
         check(report.outcomes[0].status == "moved_to_trash", "unicode-moved",
               report.outcomes[0].status)
         check((project / "package.json").is_file(), "unicode-sources-preserved")
