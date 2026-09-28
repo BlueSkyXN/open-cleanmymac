@@ -224,6 +224,37 @@ def _write(path: Path, data: bytes | str) -> None:
         path.write_bytes(data)
 
 
+def _attach_exfat_volume(image: Path, volume_name: str) -> Path:
+    """ExFAT 无法用 hdiutil -fs 直接创建；空白镜像 + diskutil eraseDisk 格式化。"""
+    _run_verbose(["hdiutil", "create", "-size", "1g", "-o", str(image)])
+    image_file = Path(f"{image}.dmg")
+    attach = subprocess.run(
+        ["hdiutil", "attach", "-nomount", str(image_file)], capture_output=True, text=True,
+    )
+    if attach.returncode != 0:
+        raise AcceptanceFailure(
+            f"FAIL hdiutil attach -nomount：{attach.stderr.strip()[:300]}"
+        )
+    devices = [
+        line.split()[0] for line in attach.stdout.splitlines()
+        if line.startswith("/dev/disk")
+    ]
+    if not devices:
+        raise AcceptanceFailure(
+            f"FAIL exfat-device：attach 输出无设备：{attach.stdout.strip()[:200]}"
+        )
+    device = devices[0]
+    try:
+        _run_verbose(["diskutil", "eraseDisk", "ExFAT", volume_name, device])
+    except AcceptanceFailure:
+        subprocess.run(["hdiutil", "detach", device, "-force"], capture_output=True)
+        raise
+    mount = Path("/Volumes") / volume_name
+    if not mount.is_dir():
+        raise AcceptanceFailure(f"FAIL volume-mount：{mount} 挂载失败")
+    return mount
+
+
 def _case_sensitive_branches(mount: Path) -> None:
     check(filesystem_case_sensitive(mount), "cs-volume-sensitive", str(mount))
     repo = mount / "repo"
@@ -414,7 +445,7 @@ def suite_exfat() -> None:
     image = Path(tempfile.gettempdir()) / "openclean-exfat-acceptance"
     mount: Path | None = None
     try:
-        mount = _attach_volume(image, "ExFAT", "openclean-exfat", sparse=False)
+        mount = _attach_exfat_volume(image, "openclean-exfat")
         check(not filesystem_case_sensitive(mount), "exfat-case-insensitive", str(mount))
         project = mount / "work/project"
         _write(project / "package.json", "{}")
