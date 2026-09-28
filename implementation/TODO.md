@@ -191,10 +191,12 @@ SIGINT 在任务提交及等待两个阶段都先传播取消再收尾，有限�
   后续可补按应用的未知量/跳过明细，不推断所有 `.lproj` 都可删除。
 - 文本摘要已区分发现、当前可执行、选择和只读/阻断量；进一步建议层仍需逐项条件证据。
   退出应用不保证解锁，重启也不保证净释放。
-- Purge/Homebrew 内容保护已有临时目录回归；真实 Homebrew fetch/install/upgrade 并发、实际 Zig
-  项目及用户 worktree 的清理验收仍需明确授权。Git 查询与文件系统检查使用有界只读探测，不保证
-  识别所有自定义密钥/状态或原子隔离同 UID 写入。Terragrunt `.terragrunt-cache` 尚未纳入清理，
-  须先核实状态文件、运行与恢复边界；不因 Zig 增量顺手扩大通用 build/dist/bin 范围。
+- Purge/Homebrew 内容保护已有临时目录回归；真实 Homebrew 并发与特殊卷（case-sensitive APFS、
+  外置 `.Trashes`）验收由 `acceptance.yml` 在一次性 macOS runner 上执行，结果以对应运行日志为准。
+  实际 Zig 项目、用户机器上的 Homebrew 及 worktree 清理验收仍需单独授权。Git 查询与文件系统检查
+  使用有界只读探测，不保证识别所有自定义密钥/状态或原子隔离同 UID 写入。Terragrunt
+  `.terragrunt-cache` 尚未纳入清理，须先核实状态文件、运行与恢复边界；不因 Zig 增量顺手扩大
+  通用 build/dist/bin 范围。
 - 通用 Electron 发现、额外项目标记与产物类型绑定、Xcode downloaded runtimes 和
   CoreSymbolication 专项仍是待核实对象，不作为本轮必做功能或可执行清理承诺。
 
