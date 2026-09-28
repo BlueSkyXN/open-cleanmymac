@@ -155,8 +155,9 @@ make test-focused TEST_PATTERN=test_agent_identifiers.py  # 换成受影响测�
 本地默认只跑轻量检查和受影响测试；文档修改只需差异检查。不自动安装或升级开发工具，
 不要求 Python 3.13 或重复全量验证。Python 3.11 是当前基线。
 GitHub Actions 负责 `make ci-check`、构建、归档审计和 wheel 独立安装验证；
-真实环境验收（真实 brew 并发、case-sensitive APFS 与外置卷 `.Trashes`）由 `acceptance.yml`
-在一次性 macOS runner 上手动或每周执行，不在本地运行，结论以运行日志为准。
+真实环境验收（真实 brew 并发、Zig/Xcode 真实构建产物、case-sensitive APFS/ExFAT 与外置卷
+`.Trashes`、Unicode 规范化）由 `acceptance.yml` 在一次性 macOS runner 上手动或每周执行，
+附带只记录不拦截的性能基准 job；不在本地运行，结论以运行日志为准。
 本地仅在排查相关 CI 失败或用户明确要求时按需复现。Ruff 是可选本地工具，精确版本仅供 CI 复现。
 Ruff 门禁以 `implementation/pyproject.toml` 的显式基础错误规则为准；不因工具升级自动扩大风格要求。
 减轻本地验证不改变执行保护条件；云端未运行时报告待验证，不宣称已通过。
