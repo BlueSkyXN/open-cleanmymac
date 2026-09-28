@@ -15,6 +15,9 @@
   runner 上启动真实 `brew update`/`brew fetch` 验证并发阻断与恢复、在真实缓存验证在途文件保护，
   并挂载 case-sensitive APFS 与外置卷验证 Git 大小写分支及 `.Trashes` 跨卷移动。脚本带本机执行
   门禁，结论以运行日志为准，不写入文档。
+- 验收工作流扩充四个真实套件：Zig 工具链真实构建产物、Xcode DerivedData（swift package +
+  xcodebuild）、ExFAT 卷（含 Trash 移动分支的如实记录）与 APFS Unicode 规范化精确选择语义；
+  另为 CI 增加每周 main 防漂移 schedule，并新增只记录不拦截的性能基准 job（artifact 保留 90 天）。
 - Purge 增加有界内容保护：Git 索引跟踪内容、产物内部 `.git` 及 `*-keypair.json` 阻断清理；
   检查失败不放行，扫描与执行前均复核。无 Git 项目继续可用，支持 monorepo 和 linked worktree。
 - Zig 识别 `.zig-cache`、`zig-out`，要求相邻普通 `build.zig` 并沿用内容保护；不扩大到任意 build/dist/bin。
