@@ -43,7 +43,7 @@ PYTHONPATH=. python3 scripts/preview_all.py --json
 未知大小写能力均有拒绝用例。敏感文件系统分支在不敏感 runner 上以能力探测 mock 验证，不冒充真实卷验收。
 
 动态应用归属的定向测试使用临时应用和模拟 Spotlight/进程快照，覆盖未知、
-多安装位置和执行前启动；不通过清理真实应用缓存验证保护。具体未发布变化见 CHANGELOG。
+多安装位置和执行前启动；不通过清理真实应用缓存验证保护。具体版本变化见 CHANGELOG。
 
 应用架构、嵌套语言资源、Chrome 旧组件以及下载/镜像的类型识别由
 `test_application_resources.py` 和 `test_recognition_gaps.py` 使用临时夹具验证，覆盖格式、

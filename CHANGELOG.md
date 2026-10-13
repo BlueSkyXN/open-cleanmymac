@@ -9,6 +9,12 @@
 
 ## [Unreleased]
 
+## [0.24.0a4] - 2026-10-13
+
+Alpha 功能与修复版：补齐应用资源和文件类型只读识别、保存审阅范围与资源明细，
+完善扫描暂停/取消和 Analyze 浏览，并加固 Purge/Homebrew 保护。经典 JSON schema v2
+和清理授权条件保留；新增类型诊断不可执行，Optimize 与生产 Agent 策略仍未启用。
+
 ### Added
 
 - 文件审阅支持 `config --file-root` 保存整组目录、`--clear-file-roots` 恢复默认；

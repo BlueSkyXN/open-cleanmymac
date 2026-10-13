@@ -5,7 +5,7 @@
 macOS 磁盘清理 CLI · 安装后的命令名为 **`openclean`**
 
 [![CI](https://github.com/BlueSkyXN/open-cleanmymac/actions/workflows/ci.yml/badge.svg)](https://github.com/BlueSkyXN/open-cleanmymac/actions/workflows/ci.yml)
-[![Version 0.24.0a3 Alpha](https://img.shields.io/badge/version-0.24.0a3_Alpha-orange)](CHANGELOG.md)
+[![Version 0.24.0a4 Alpha](https://img.shields.io/badge/version-0.24.0a4_Alpha-orange)](CHANGELOG.md)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple&logoColor=white)](docs/PREVIEW.md)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
@@ -46,8 +46,13 @@ fail-closed，不会伪报成功。
 上图由当前 Clean TUI 的生产绘制函数生成，使用固定合成候选。更多画面见
 [docs/PREVIEW.md](docs/PREVIEW.md)。
 
-> 当前发布版本 `0.24.0a3`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
+> 当前版本 `0.24.0a4`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
 > 完整范围与 JSON/Run 版本见 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
+
+`0.24.0a4` 新增应用架构、嵌套语言资源、Chrome 旧组件和下载/镜像只读识别，支持保存
+文件审阅目录及文本/TUI 逐项查看证据。它也包含扫描暂停/取消、Analyze 浏览、项目范围选择
+和 Purge/Homebrew 保护改进，并修复诊断脱敏、同路径选择、Chrome 版本核对和跨文件系统边界。
+版本变化不启用只读诊断的清理动作；完整内容见 [CHANGELOG](CHANGELOG.md)。
 
 `0.24.0a3` 补充了通用缓存的动态应用归属保护，细化 Purge 的清理后果说明，
 并补齐已有 Antigravity/chrome-devtools-mcp 数据根中的精确浏览器缓存路径。
@@ -82,13 +87,13 @@ updater 根及同路径合并保留版本复核和 `critical` 确认；硬链接
 
 ### 安装 GitHub 预发行包
 
-`0.24.0a3` 为 Alpha，不是全功能稳定版。通过 GitHub CLI 下载 wheel 与校验文件：
+`0.24.0a4` 为 Alpha，不是全功能稳定版。通过 GitHub CLI 下载 wheel 与校验文件：
 
 ```bash
-gh release download v0.24.0a3 --repo BlueSkyXN/open-cleanmymac --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
+gh release download v0.24.0a4 --repo BlueSkyXN/open-cleanmymac --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
 shasum -a 256 -c SHA256SUMS
 python3 -m venv .venv
-.venv/bin/python -m pip install --no-deps ./open_cleanmymac-0.24.0a3-py3-none-any.whl
+.venv/bin/python -m pip install --no-deps ./open_cleanmymac-0.24.0a4-py3-none-any.whl
 .venv/bin/openclean --version
 .venv/bin/openclean strategy list --json
 ```
@@ -158,7 +163,7 @@ Trash）。逐项状态、来源和有意排除项见
 子任务结束后按 Enter 返回菜单。主菜单只进入审阅/预览，不自动附加 `--yes`；
 Optimize 显示不可用原因，不执行维护。非 TTY 无参数启动仍只输出帮助。
 
-当前源码（尚未发布）的 Analyze 从主菜单进入时先选择家目录、当前目录、自定义目录或启动盘；
+`0.24.0a4` 的 Analyze 从主菜单进入时先选择家目录、当前目录、自定义目录或启动盘；
 直接运行 `openclean analyze` 仍默认 `/`。扫描立即显示工作状态，`Q` 取消审阅、`Ctrl-C`
 中断并恢复终端；返回已访问目录复用有界会话缓存，`R` 刷新。`I` 查看当前项详情，`E` 查看
 全部问题，只读原因单独显示。提交选择前重新扫描相关层级，变化或不可执行项会撤销；
@@ -190,7 +195,7 @@ openclean cat [--json]
 schema v2 以 `openclean <command> --help` 和
 [implementation/README.md](implementation/README.md) 为准。
 
-### 项目与 Homebrew 保护增强（当前源码，尚未发布）
+### 项目与 Homebrew 保护增强（0.24.0a4）
 
 Purge 会阻断含 Git 索引跟踪内容、嵌套 `.git` 标记或 `*-keypair.json` 部署密钥文件名的产物；
 检查失败、超时或预算不足也不会放行。Git 检查覆盖允许边界内的各级祖先仓库，并按文件系统
