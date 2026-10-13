@@ -72,7 +72,11 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | 签名托管知识库客户端 | `config --update-knowledge` | `external-prerequisite` | 客户端已完成；项目尚无正式 URL、公钥和发布流程 |
 | Docker 容量与固定 prune | `scan/clean dev` | `external-prerequisite` | identifier 精确选择和 target binding 已完成；真实 daemon 验收待完成；Volumes 永远拒绝 |
 | 失效启动项 | `scan/clean junk` | `available` | 仅可确认失效的用户项可执行；系统项需要 helper |
-| ApplicationLanguages | `scan/clean junk` | `read-only` | 固定 `critical + actionable=false`；不修改签名 app |
+| ApplicationLanguages | `scan/clean junk` | `read-only` | 嵌套/混合本地化资源，开发语言未知单列；不修改签名 app |
+| Mach-O 多架构识别 | `scan/clean junk` | `read-only` | slice 逻辑字节单列，未提供裁剪执行器 |
+| Chrome 旧版本组件 | `scan/clean junk` | `read-only` | 应用、组件元数据与 Current 一致才判版本；不删除 |
+| 下载与磁盘镜像 | `scan/clean junk` | `read-only` | 默认 Downloads；scan 可用 --file-root；未挂载不等于不使用 |
+| 扫描覆盖诊断 | JSON diagnostics | `read-only` | 访问失败原因未知时如实标记，不能据此推断未读取容量 |
 | Time Machine 本地快照提示 | `analyze` | `read-only` | 只显示名称/数量；不宣称精确大小，不删除 |
 | dataless/疑似占位保护 | 所有文件扫描/执行 | `available` | 不保证识别全部已 materialized cloud-synced 文件；真实 provider fixture 待验收 |
 | 运行中应用缓存保护 | `scan/clean/purge/analyze` | `available` | 共享范围判定覆盖已知根、后代及包含对象的父项；运行中或所需进程状态未知时不可执行，执行前重新识别 |
@@ -96,6 +100,8 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | universal binary thinning | 无 | `not-implemented` | 当前不实现；修改签名/兼容性风险高 |
 | Desktop GUI、菜单栏、后台 agent | 无 | `out-of-scope` | 当前产品只开发 CLI；curses TUI 属于 CLI |
 | 应用卸载、恶意软件扫描等 Desktop 功能 | 无 | `out-of-scope` | 不属于当前公开 CLI 对齐目标 |
+
+新增类型的计量与 JSON 边界见 [类型识别](RECOGNITION.md)。
 
 ## 实现与验证索引
 

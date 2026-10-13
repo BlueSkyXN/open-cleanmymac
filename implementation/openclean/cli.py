@@ -62,7 +62,7 @@ from .terminal_ui import pad_cells, safe_text, safety_label
 from .strategies.registry import StrategyRegistry, pack_hash
 from .tui import (
     CHEATSHEET_LINES, CHEATSHEET_NOTES, MENU_ITEMS, MENU_TITLES, MenuChoice,
-    ReviewGroup, TUIUnavailable, choose_menu, item_diagnostic_summary,
+    ReviewGroup, TUIUnavailable, choose_menu, item_diagnostic_summary, item_size_label,
     review_cleanup,
 )
 
@@ -537,7 +537,16 @@ def _print_issues(result) -> None:
         else f"扫描提示：{len(result.issues)} 项"
     )
     print(f"\n{heading}", file=sys.stderr)
+    summarized: set[tuple[str, str]] = set()
     for issue in result.issues:
+        if not issue.blocking and issue.code in {"dataless_object_skipped", "cross_filesystem_skipped"}:
+            key = (issue.task, issue.code)
+            if key in summarized:
+                continue
+            summarized.add(key)
+            count = sum((other.task, other.code) == key and not other.blocking for other in result.issues)
+            print(f"- [info:{issue.code}] {issue.task}: {count} 个对象按边界跳过；逐路径明细见 --json", file=sys.stderr)
+            continue
         location = f" ({issue.path})" if issue.path is not None else ""
         level = "warning" if issue.blocking else "info"
         print(
@@ -887,6 +896,24 @@ def _issue_payload(issue) -> dict[str, object]:
     }
 
 
+def _diagnostic_payload(result: ScanResult) -> list[dict[str, object]]:
+    diagnostics = list(result.diagnostics)
+    failures = [issue for issue in result.issues if issue.blocking]
+    if failures:
+        diagnostics.append({
+            "kind": "scan_coverage", "category": "扫描覆盖", "complete": result.complete,
+            "unreadable_path_count": len({str(i.path) for i in failures if i.code == "permission_denied"}),
+            "failures": [{
+                "path": str(i.path) if i.path is not None else None,
+                "task": i.task, "code": i.code,
+                "cause": "undetermined" if i.code == "permission_denied" else i.code,
+                "message": ("读取被系统拒绝；仅凭该错误不能区分 POSIX、TCC、SIP 或沙盒限制"
+                            if i.code == "permission_denied" else i.message),
+            } for i in failures],
+        })
+    return diagnostics
+
+
 def _scan_summary(result: ScanResult) -> dict[str, object]:
     total, reclaimable = result.total, result.actionable_total
     return {
@@ -905,7 +932,7 @@ def _scan_summary(result: ScanResult) -> dict[str, object]:
 def _print_text_item(name: str, item: Item, *, selected: bool = False, extra: str = "") -> None:
     marker = "[!]" if not item.actionable else "[x]" if selected else "[ ]"
     state = "只读诊断" if item.diagnostic_kind else "不可执行" if not item.actionable else "需逐项选择" if item.requires_explicit_selection else "可审阅"
-    print(f"  {marker} {pad_cells(name, 30)} {human(item.size):>10}  "
+    print(f"  {marker} {pad_cells(name, 30)} {item_size_label(item):>10}  "
           f"{pad_cells(safety_label(item.safety), 10)} {state}{safe_text(extra)}")
     print(f"      {safe_text(_item_location(item))}")
     annotations = _item_annotations(item).strip()
@@ -934,6 +961,7 @@ def _print_report(
             "mode": "report",
             "requested_domains": requested_domains,
             **_scan_summary(result),
+            **({"diagnostics": _diagnostic_payload(result)} if result.diagnostics or result.issues else {}),
             "volumes": _volume_summaries(result.items),
             "items": [
                 _item_payload(i)
@@ -984,6 +1012,7 @@ def _print_purge_report(
             "command": "purge",
             "mode": "result" if cleanup is not None else "preview",
             **_scan_summary(result),
+            **({"diagnostics": _diagnostic_payload(result)} if result.diagnostics or result.issues else {}),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),
@@ -1065,6 +1094,7 @@ def _print_clean_report(
             "category": requested_category or "all",
             "mode": "result" if cleanup is not None else "preview",
             **_scan_summary(result),
+            **({"diagnostics": _diagnostic_payload(result)} if result.diagnostics or result.issues else {}),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),
@@ -1675,6 +1705,8 @@ def main(argv: list[str] | None = None) -> int:
             "并配合 --domain project"
         ),
     )
+    sp.add_argument("--file-root", action="append", type=Path,
+                    help="下载/镜像只读审阅根，可重复；替代默认 Downloads，需包含 system 域")
     _add_rule_options(sp)
     sp.add_argument(
         "--workers",
@@ -2020,6 +2052,18 @@ def main(argv: list[str] | None = None) -> int:
                 "invalid_option_combination",
                 "scan：--project-root 需要同时请求 --domain project。",
             )
+        explicit_file_roots = None
+        if args.file_root:
+            if "system" not in domains:
+                return _fail(args, "scan", "invalid_option_combination", "--file-root 需要 system 域")
+            explicit_file_roots = list(dict.fromkeys(normalize_path(p) for p in args.file_root))
+            try:
+                for root in explicit_file_roots:
+                    facts = root.lstat()
+                    if not stat.S_ISDIR(facts.st_mode) or stat.S_ISLNK(facts.st_mode):
+                        raise ValueError(f"文件审阅根必须是非 symlink 目录：{root}")
+            except (OSError, ValueError) as exc:
+                return _fail(args, "scan", "invalid_file_root", str(exc))
         explicit_project_roots: list[Path] | None = None
         if args.project_root:
             try:
@@ -2056,6 +2100,7 @@ def main(argv: list[str] | None = None) -> int:
                         ignore,
                         args.workers,
                         on_progress=renderer,
+                        **({"file_roots": explicit_file_roots} if explicit_file_roots is not None else {}),
                     )
                 finally:
                     if renderer is not None:

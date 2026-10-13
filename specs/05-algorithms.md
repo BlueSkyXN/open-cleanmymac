@@ -62,7 +62,16 @@ Crashpad 的配对数与近期项是排除证据，不把所有 sidecar 或父�
 installed/staged 版本状态决定说明与保护；未知、待升级或缺失安装不能当旧缓存。
 语言包审计不授权改签名应用。universal binary thinning 未实现，本篇不保留可照抄的写入步骤。
 
-## 4. 实现与验收锚点
+## 4. 新应用诊断的单列计量
+
+Mach-O slice 的逻辑长度不能推算为 APFS 独占物理块。应用架构、旧组件、下载与镜像的
+只读子集使用零候选计量，实际值在 `resource_total_bytes` 和 `diagnostics` 中单列；不得
+将逻辑量、资源总量和既有候选总量直接相加。语言审计保留实际子集的已分配计量。
+
+同一应用可同时保留语言与架构诊断；同一文件的下载来源与镜像类型不能产生两份容量。
+新接口细节见 [类型识别](../docs/RECOGNITION.md)。
+
+## 5. 实现与验收锚点
 
 - 基础：[filesystem.py](../implementation/openclean/filesystem.py)、[models.py](../implementation/openclean/models.py)、[test_file_sizing.py](../implementation/tests/test_file_sizing.py)。
 - 重叠/分析：[engine.py](../implementation/openclean/engine.py)、[test_analyzer.py](../implementation/tests/test_analyzer.py)、[test_slim_regressions.py](../implementation/tests/test_slim_regressions.py)。

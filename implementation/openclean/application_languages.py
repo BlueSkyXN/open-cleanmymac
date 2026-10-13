@@ -1,9 +1,4 @@
-"""应用语言包的保守只读审计。
-
-只枚举应用主资源目录下的 ``*.lproj``。候选必须可确认仅包含字符串资源；任何
-未知文件、目录、符号链接、云占位或受保护后代都会使整个语言目录被跳过。由于修改
-应用包可能影响代码签名、完整性和后续更新，本模块产出的候选永远不可执行。
-"""
+"""应用本地化的只读审计，保留字符串子集接口并支持嵌套混合资源。"""
 from __future__ import annotations
 
 import os
@@ -16,6 +11,7 @@ from pathlib import Path
 
 from .models import FileFacts, Item, ScanIssue, ScanResult, normalize_path
 from .predicates import Predicate, ProtectionGate
+from .resource_walk import WalkBudget, walk_resources
 
 _DEFAULTS_PATH = "/usr/bin/defaults"
 _MAX_INFO_PLIST_BYTES = 4 * 1024 * 1024
@@ -201,6 +197,7 @@ def _discover_applications(
     task: str,
 ) -> list[Path]:
     applications: set[Path] = set()
+    inspected = 0
     for raw_root in roots:
         checkpoint()
         on_progress()
@@ -215,6 +212,10 @@ def _discover_applications(
             continue
         if root_facts.is_dataless:
             issues.append(_dataless_issue(root_facts.path, task))
+            continue
+
+        if root.name.casefold().endswith(".app"):
+            applications.add(root)
             continue
 
         # 允许一个普通容器目录（如 /Applications/Utilities），但绝不进入 .app。
@@ -246,6 +247,10 @@ def _discover_applications(
                 continue
             for entry in entries:
                 checkpoint()
+                inspected += 1
+                if inspected > 200_000:
+                    issues.append(ScanIssue("scan_limit_reached", "应用发现达到目录项上限", task, directory))
+                    return sorted(applications, key=str)
                 on_progress()
                 if entry.name.startswith("."):
                     continue
@@ -450,6 +455,8 @@ def scan_application_languages(
     checkpoint: Callable[[], None] | None = None,
     on_progress: Callable[[], None] | None = None,
     preferences_runner: Callable[..., subprocess.CompletedProcess[bytes]] | None = None,
+    include_resources: bool = False,
+    max_entries: int = 200_000,
 ) -> ScanResult:
     """审计未匹配用户语言、且仅含字符串资源的 ``.lproj`` 目录。"""
     check = checkpoint or (lambda: None)
@@ -478,6 +485,10 @@ def scan_application_languages(
             )
     if not languages:
         return result
+
+    if include_resources:
+        return _scan_resource_languages(roots, protection, languages, result, category,
+                                        context_note, check, advance, max_entries)
 
     applications = _discover_applications(
         roots,
@@ -609,4 +620,85 @@ def scan_application_languages(
             )
 
     result.items.sort(key=lambda item: str(item.path))
+    return result
+
+
+def _scan_resource_languages(roots, protection, languages, result, category,
+                             context_note, check, advance, max_entries):
+    """计量 .lproj 内普通资源；路径、类型和开发语言未知状态另附证据。"""
+    from .engine import Cancelled
+
+    budget = WalkBudget(max_entries)
+    seen: set[tuple[int, int]] = set()
+    try:
+        applications = _discover_applications(roots, protection, result.issues, check, advance, category)
+        for application in applications:
+            issue_start = len(result.issues)
+            development = _development_region(application, result.issues, category)
+            if development is None and (not result.issues[issue_start:]
+                                       or any(i.blocking or i.code == "dataless_object_skipped"
+                                              for i in result.issues[issue_start:])):
+                continue
+            # 缺少开发语言时可以报告资源，但不能推断它是冗余语言。
+            if development is None:
+                result.issues[issue_start:] = [ScanIssue(
+                    i.code, "开发语言未知；仅按用户首选语言作资源归属审计", i.task, i.path, i.blocking
+                ) for i in result.issues[issue_start:]]
+            kept = (*languages, "Base", *((development,) if development else ()))
+            localizations: list[dict[str, object]] = []
+            for facts, _fd in walk_resources(
+                application, protection, result, category, budget=budget,
+                checkpoint=check, on_progress=advance,
+                descend=lambda f: not f.path.name.casefold().endswith(".lproj"),
+            ):
+                if not stat.S_ISDIR(facts.stat.st_mode) or not facts.path.name.casefold().endswith(".lproj"):
+                    continue
+                localization = facts.path
+                if _language_is_kept(localization.stem, kept):
+                    continue
+                start = len(result.issues)
+                logical = allocated = count = 0
+                kinds: set[str] = set()
+                for child, _child_fd in walk_resources(localization, protection, result, category,
+                        budget=budget, checkpoint=check, on_progress=advance):
+                    if not stat.S_ISREG(child.stat.st_mode):
+                        continue
+                    identity = (child.stat.st_dev, child.stat.st_ino)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    count += 1
+                    logical += child.logical_size
+                    allocated += child.allocated_size
+                    kinds.add(child.path.suffix.casefold() or "无扩展名")
+                if count:
+                    localizations.append({"path": str(localization), "language": localization.stem,
+                        "logical_bytes": logical, "allocated_bytes": allocated, "file_count": count,
+                        "resource_types": sorted(kinds),
+                        "complete": not any(i.blocking for i in result.issues[start:])})
+                if budget.exhausted:
+                    break
+            if localizations:
+                names = sorted({str(row["language"]) for row in localizations})
+                allocated = sum(int(row["allocated_bytes"]) for row in localizations)
+                logical = sum(int(row["logical_bytes"]) for row in localizations)
+                complete = not any(i.blocking for i in result.issues[issue_start:])
+                note = "；".join(filter(None, (context_note,
+                    f"嵌套及混合本地化资源（{len(names)} 个标识）：{', '.join(names[:12])}"
+                    + ("；完整标识见结构化明细" if len(names) > 12 else ""),
+                    f"开发语言：{development or '未知，不推断冗余'}", _READ_ONLY_REASON)))
+                result.items.append(Item(application, allocated, category, "critical", note=note,
+                    logical_size=logical, allocated_size=allocated, actionable=False,
+                    action_block_reason=_READ_ONLY_REASON, preselected=False,
+                    identity=FileFacts.from_path(application).identity, artifact_name=",".join(names),
+                    total_count=len(names)))
+                result.diagnostics.append({"kind": "application_languages", "anchor_path": str(application),
+                    "category": category, "complete": complete, "development_language": development,
+                    "preferred_languages": list(languages), "logical_bytes": logical,
+                    "allocated_bytes": allocated, "measurement_basis": "localization_subset",
+                    "localizations": localizations})
+            if budget.exhausted:
+                break
+    except Cancelled:
+        result.cancelled = True
     return result

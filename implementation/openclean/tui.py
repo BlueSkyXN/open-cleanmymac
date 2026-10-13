@@ -194,7 +194,16 @@ def _size(value: int | None) -> str:
 def item_diagnostic_summary(item: Item) -> tuple[str, ...]:
     """只格式化已有证据；同时供详情页和 Clean 文本报告使用。"""
     lines: list[str] = []
-    if item.diagnostic_kind == "retention":
+    if item.diagnostic_kind == "application_binaries":
+        lines.extend((
+            f"其它 CPU 架构逻辑量：{_size(item.logical_size)}（不代表可裁剪或可释放）",
+            f"涉及文件已分配占用：{_size(item.resource_total_size)}；多架构文件：{_count(item.total_count)}",
+        ))
+    elif item.diagnostic_kind in {"downloads", "disk_image"}:
+        lines.append(f"审阅文件已分配占用：{_size(item.resource_total_size)}；文件数：{_count(item.total_count)}；不代表垃圾")
+    elif item.diagnostic_kind == "application_updates":
+        lines.append(f"组件已分配占用：{_size(item.resource_total_size)}（单列，不纳入清理总量）")
+    elif item.diagnostic_kind == "retention":
         lines.extend((
             f"文件数：{_count(item.retention_file_count)}",
             "7/14/30 天以上占用（重叠桶，不累加）："
@@ -227,6 +236,14 @@ def item_diagnostic_summary(item: Item) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def item_size_label(item: Item) -> str:
+    if item.diagnostic_kind == "application_binaries":
+        return f"{_size(item.logical_size)} 逻辑"
+    if item.diagnostic_kind in {"application_updates", "downloads", "disk_image"}:
+        return f"{_size(item.resource_total_size)} 单列"
+    return human(item.size)
+
+
 def item_detail_lines(item: Item) -> tuple[str, ...]:
     state = ("只读诊断（不可执行）" if item.diagnostic_kind else
              "可清理候选（不等于已授权）" if item.actionable else "被保护或阻断")
@@ -234,7 +251,7 @@ def item_detail_lines(item: Item) -> tuple[str, ...]:
         f"状态：{state}",
         f"路径 / identifier：{item.path if item.path is not None else item.identifier}",
         f"分类：{item.category}；域：{item.domain or '未知'}；风险：{item.safety}",
-        f"占用：{human(item.size)}（不等于已释放空间）",
+        f"计量：{item_size_label(item)}（不等于已释放空间）",
         f"说明：{item.note or '未知'}",
         f"年龄（天）：{_count(item.age_days)}；打开句柄数：{_count(item.open_handle_count)}",
         f"阻断原因：{item.action_block_reason or ('无' if item.actionable else '未知')}",
@@ -393,9 +410,13 @@ def _draw_items(
     )
     footer = draw_footer(screen, "↑↓ 移动 · Space/Enter 切换 · I 只读详情 · A 批量选择 · ←/Esc 返回 · Q 退出")
     category_width = min(24, max(12, width // 5))
+    size_width = 16 if any(item.diagnostic_kind in {
+        "application_binaries", "application_updates", "downloads", "disk_image"
+    } for item in group.items) else 10
     _safe_add(screen, row, 1, _group_scope_summary(group, selected_keys), width, "muted")
     row += 1
-    _safe_add(screen, row, 1, "      " + pad_cells("类别", category_width) + "       大小  状态 / 路径", width, "muted")
+    _safe_add(screen, row, 1, "      " + pad_cells("类别", category_width)
+              + " " + pad_cells("大小", size_width, right=True) + "  状态 / 路径", width, "muted")
     row += 1
     visible = max(1, footer - row - 3)
     offset = max(0, min(cursor - visible + 1, len(group.items) - visible))
@@ -408,7 +429,8 @@ def _draw_items(
                   safety_label(item.safety))
         line = (
             f"{prefix} [{_marker(item, selected_keys)}] "
-            f"{pad_cells(clip_cells(item.category, category_width), category_width)} {human(item.size):>10}  "
+            f"{pad_cells(clip_cells(item.category, category_width), category_width)} "
+            f"{pad_cells(item_size_label(item), size_width, right=True)}  "
             f"{pad_cells(status, 10)} {location}"
         )
         role = "focus" if index == cursor else "warning" if not item.actionable else "selected" if _item_key(item) in selected_keys else "plain"

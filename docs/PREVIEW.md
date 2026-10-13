@@ -45,6 +45,11 @@ PYTHONPATH=. python3 scripts/preview_all.py --json
 动态应用归属的定向测试使用临时应用和模拟 Spotlight/进程快照，覆盖未知、
 多安装位置和执行前启动；不通过清理真实应用缓存验证保护。具体未发布变化见 CHANGELOG。
 
+应用架构、嵌套语言资源、Chrome 旧组件以及下载/镜像的类型识别由
+`test_application_resources.py` 和 `test_recognition_gaps.py` 使用临时夹具验证，覆盖格式、
+版本依据、计量及只读选择边界。专项测试不代表这些对象已启用清理；输出说明见
+[类型识别与扫描覆盖](RECOGNITION.md)。
+
 AI 浏览器补齐测试在临时 profile 中验证八个新增精确路径及相似路径反例、运行中 Chrome
 阻断、JSON 预览和只移动选中缓存，保留登录态与未选数据；不启动真实浏览器或连接真实 profile。
 

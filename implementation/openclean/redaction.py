@@ -9,6 +9,7 @@ from typing import Any
 
 PATH_VALUE_KEYS = frozenset({
     "path",
+    "anchor_path",
     "paths",
     "root",
     "project_root",
