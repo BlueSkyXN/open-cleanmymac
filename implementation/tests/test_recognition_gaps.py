@@ -153,9 +153,10 @@ class DownloadRecognitionTests(unittest.TestCase):
                 )
             self.assertEqual(status, 0)
             self.assertEqual(scan.call_args.kwargs["file_roots"], [root])
-            self.assertEqual(
-                json.loads(output.getvalue())["diagnostics"], result.diagnostics
-            )
+            diagnostics = json.loads(output.getvalue())["diagnostics"]
+            self.assertEqual([d for d in diagnostics if d["kind"] != "file_review_scope"], result.diagnostics)
+            self.assertEqual(diagnostics[0]["source"], "argument")
+            self.assertEqual(diagnostics[0]["roots"], [str(root)])
 
     def test_small_downloads_and_test_images_are_readonly_and_counted_once(self):
         with tempfile.TemporaryDirectory() as tmp:

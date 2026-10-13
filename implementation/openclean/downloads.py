@@ -30,6 +30,7 @@ def scan_downloads(
     on_progress: Callable[[], None] = lambda: None,
     max_entries: int = 200_000,
     max_files: int = 4096,
+    require_roots: bool = True,
     mount_runner=None,
     format_runner=None,
 ) -> ScanResult:
@@ -50,8 +51,21 @@ def scan_downloads(
                 protection, ProtectionGate
             ) and protection.knowledge_base_ignores(root):
                 continue
-            facts = FileFacts.from_path(root)
-            if facts.stat is None or protection.should_ignore(facts):
+            try:
+                facts = FileFacts(root, root.lstat())
+            except OSError as exc:
+                result.issues.append(ScanIssue(
+                    "permission_denied" if isinstance(exc, PermissionError) else "file_review_root_unavailable",
+                    str(exc), task, root,
+                    require_roots or not isinstance(exc, FileNotFoundError),
+                ))
+                continue
+            if protection.should_ignore(facts):
+                continue
+            if not stat.S_ISDIR(facts.stat.st_mode) or stat.S_ISLNK(facts.stat.st_mode):
+                result.issues.append(ScanIssue(
+                    "invalid_file_root", "文件审阅根不是普通目录或已被替换为链接", task, root,
+                ))
                 continue
             details: list[dict[str, object]] = []
             start = len(result.issues)

@@ -50,6 +50,9 @@ PYTHONPATH=. python3 scripts/preview_all.py --json
 版本依据、计量及只读选择边界。专项测试不代表这些对象已启用清理；输出说明见
 [类型识别与扫描覆盖](RECOGNITION.md)。
 
+保存文件审阅根的设置、覆盖、清除和离线目录行为由 `test_file_review_config.py` 在临时
+HOME 中验证；不会改写真实配置。文件范围只影响只读下载/镜像扫描，不改变执行资格。
+
 AI 浏览器补齐测试在临时 profile 中验证八个新增精确路径及相似路径反例、运行中 Chrome
 阻断、JSON 预览和只移动选中缓存，保留登录态与未选数据；不启动真实浏览器或连接真实 profile。
 

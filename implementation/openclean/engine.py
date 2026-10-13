@@ -1011,6 +1011,7 @@ def _scan_dynamic_point_with_progress(
     protection: Predicate,
     progress: TaskProgress,
     guards: CleanupGuardContext,
+    *, file_roots_required: bool = False,
 ) -> ScanResult:
     try:
         ctl.checkpoint()
@@ -1029,7 +1030,7 @@ def _scan_dynamic_point_with_progress(
             )
         elif point.scanner == "downloads":
             result = scan_downloads(point.paths, protection, checkpoint=ctl.checkpoint,
-                                    on_progress=progress.advance)
+                                    on_progress=progress.advance, require_roots=file_roots_required)
         elif point.scanner == "chrome-versions":
             result = scan_chrome_versions(point.paths, protection, checkpoint=ctl.checkpoint,
                                           on_progress=progress.advance)
@@ -1184,6 +1185,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
                     ignore,
                     progress.task(task_id),
                     guards,
+                    file_roots_required=file_roots is not None,
                 )
             ),
         )

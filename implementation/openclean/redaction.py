@@ -23,6 +23,8 @@ PATH_VALUE_KEYS = frozenset({
     "home",
     "run_store",
     "roots",
+    "file_roots",
+    "effective_file_roots",
     "running_process_markers",
 })
 FREE_TEXT_KEYS = frozenset(
