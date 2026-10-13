@@ -11,6 +11,18 @@
 
 ### Added
 
+- 文件审阅支持 `config --file-root` 保存整组目录、`--clear-file-roots` 恢复默认；
+  scan system 与经典 clean 复用，显式 scan --file-root 优先。离线根报告不完整而不静默回退。
+- 文本 `scan/clean --details` 与 Clean TUI 的 F 资源列表展示同次架构、语言、下载和镜像
+  证据；可逐项查看和翻页，资源行不改变清理选择，未新增清理动作。
+- 新增应用内 Mach-O 多架构只读扫描，校验 fat 表与 slice，报告其它 CPU 架构逻辑字节；
+  扩展语言资源审计至嵌套框架与混合 `.lproj`，开发语言未知不再被误解为没有资源。
+- 新增 Google Chrome 旧 framework 组件识别，核对应用版本、组件元数据和 Current 指针；
+  仅诊断，不修改签名应用或启用旧组件删除。
+- 新增 Downloads 普通文件和磁盘镜像审阅；`scan --file-root` 可重复指定只读根。
+  镜像格式和挂载状态保留未知，开发文件上下文单独显示，不把未挂载或较旧当删除依据。
+- JSON schema v2 增加可选 `diagnostics`，报告专项证据和扫描覆盖；保持 Item/Run 持久化字段。
+  新子集诊断不互相覆盖，架构/旧组件/下载/镜像容量单列，原有清理选择与保护条件保留。
 - 新增真实环境验收工作流 `acceptance.yml`（手动/每周触发，不进 PR 检查）：在一次性 macOS
   runner 上启动真实 `brew update`/`brew fetch` 验证并发阻断与恢复、在真实缓存验证在途文件保护，
   并挂载 case-sensitive APFS 与外置卷验证 Git 大小写分支及 `.Trashes` 跨卷移动。脚本带本机执行

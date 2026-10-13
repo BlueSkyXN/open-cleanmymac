@@ -34,10 +34,14 @@ DIAGNOSTIC_KINDS = frozenset(
         "open_unlinked",
         "codex_transient",
         "crashpad_pairing",
+        "application_binaries",
+        "application_updates",
+        "downloads",
+        "disk_image",
     }
 )
 FILESYSTEM_SUBSET_DIAGNOSTIC_KINDS = frozenset(
-    {"open_unlinked", "codex_transient", "crashpad_pairing"}
+    {"open_unlinked", "codex_transient", "crashpad_pairing", "application_binaries", "application_updates", "downloads", "disk_image"}
 )
 
 # ``SF_DATALESS`` is part of the public macOS ``sys/stat.h`` contract.  Older
@@ -372,6 +376,8 @@ class ScanResult:
     items: list[Item] = field(default_factory=list)
     issues: list[ScanIssue] = field(default_factory=list)
     cancelled: bool = False
+    # 只属于本次扫描的结构化诊断，保持 Item/Run 持久化字段不变。
+    diagnostics: list[dict[str, object]] = field(default_factory=list)
     # 仅本次扫描的计量旁路数据，不进入 Item、JSON 或 Run Store。
     _hardlinks: dict[Item, dict[tuple[int, int], tuple[int, int]]] = field(
         default_factory=dict, repr=False, compare=False,
@@ -383,6 +389,7 @@ class ScanResult:
     def extend(self, other: ScanResult) -> None:
         self.items.extend(other.items)
         self.issues.extend(other.issues)
+        self.diagnostics.extend(other.diagnostics)
         self.cancelled = self.cancelled or other.cancelled
         self._hardlinks.update(other._hardlinks)
         self._hardlink_originals.update(other._hardlink_originals)

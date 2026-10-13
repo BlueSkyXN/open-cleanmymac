@@ -113,7 +113,22 @@ exit 130。显示 top 截断与扫描不完整分开，合计覆盖全部已匹�
 VAL-DETECT-007/008：临时夹具覆盖递归、阈值/排序/top、物理/逻辑计量、硬链接、ignore、
 symlink、dataless 根与后代、跨文件系统、消失/权限、预算/取消、JSON 脱敏和拒绝执行参数。
 
-## 6. 实现与测试
+## 6. 应用与文件类型识别
+
+经典 system 域新增只读应用架构、Chrome 旧 framework 组件、Downloads 文件和镜像审阅，
+语言审计扩展至嵌套及混合本地化资源。注册、计量和输出以 [类型识别契约](../docs/RECOGNITION.md)
+为准。新增只读对象不可因风险参数、同路径合并或聚合锚点获得执行资格。
+
+`scan --file-root` 明确覆盖保存范围或默认文件审阅根，要求 system 域；不改变其它扫描根。
+保存范围由 config 管理，供 scan system 与经典 clean junk/clean 共用；离线根报告不完整，
+不静默回退。镜像与普通
+下载一次遍历、唯一归属。未挂载不等于不使用，mtime 不等于下载或最后使用时间。
+
+应用架构须校验 header、slice 边界与 CPU 信息；语言未知保留未知；Chrome 旧组件须核对
+已安装版本、组件元数据和 Current，不凭版本目录名或目录年龄决定旧更新。
+验证入口：`test_application_resources.py`、`test_recognition_gaps.py`，并保留既有保护回归。
+
+## 7. 实现与测试
 
 - 经典发现：[test_scan_point_expansion.py](../implementation/tests/test_scan_point_expansion.py)、[test_system_junk_discovery.py](../implementation/tests/test_system_junk_discovery.py)、[test_project_purge.py](../implementation/tests/test_project_purge.py)。
 - 专项诊断：[storage_diagnostics.py](../implementation/openclean/storage_diagnostics.py)、[workbuddy.py](../implementation/openclean/workbuddy.py)、[test_storage_diagnostics.py](../implementation/tests/test_storage_diagnostics.py)。

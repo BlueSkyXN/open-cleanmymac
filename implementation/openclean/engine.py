@@ -17,9 +17,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .application_languages import scan_application_languages
+from .application_binaries import scan_application_binaries
+from .application_updates import scan_chrome_versions
 from .application_ownership import ApplicationResolver
 from .cleanup_guards import CleanupGuardContext
 from .docker import scan_docker_resources
+from .downloads import scan_downloads
 from .filesystem import filesystem_id_retry, lstat_retry, scandir_entries
 from .knowledge_base import KnowledgeBase
 from .macos import (
@@ -973,7 +976,8 @@ def _deduplicate_hardlinks(result: ScanResult) -> ScanResult:
         for identity in measurements[item]:
             owners.setdefault(identity, item.path)
 
-    deduplicated = ScanResult(issues=list(result.issues), cancelled=result.cancelled)
+    deduplicated = ScanResult(issues=list(result.issues), cancelled=result.cancelled,
+                              diagnostics=list(result.diagnostics))
     for original in originals:
         hardlinks = measurements.get(original, {})
         logical = allocated = 0
@@ -1007,6 +1011,7 @@ def _scan_dynamic_point_with_progress(
     protection: Predicate,
     progress: TaskProgress,
     guards: CleanupGuardContext,
+    *, file_roots_required: bool = False,
 ) -> ScanResult:
     try:
         ctl.checkpoint()
@@ -1023,6 +1028,17 @@ def _scan_dynamic_point_with_progress(
                 checkpoint=ctl.checkpoint,
                 on_progress=progress.advance,
             )
+        elif point.scanner == "downloads":
+            result = scan_downloads(point.paths, protection, checkpoint=ctl.checkpoint,
+                                    on_progress=progress.advance, require_roots=file_roots_required)
+        elif point.scanner == "chrome-versions":
+            result = scan_chrome_versions(point.paths, protection, checkpoint=ctl.checkpoint,
+                                          on_progress=progress.advance)
+        elif point.scanner == "application-binaries":
+            result = scan_application_binaries(
+                point.paths, protection, checkpoint=ctl.checkpoint,
+                on_progress=progress.advance,
+            )
         elif point.scanner == "application-languages":
             result = scan_application_languages(
                 point.paths,
@@ -1031,6 +1047,7 @@ def _scan_dynamic_point_with_progress(
                 context_note=point.note,
                 checkpoint=ctl.checkpoint,
                 on_progress=progress.advance,
+                include_resources=True,
             )
         elif point.scanner == "retention-diagnostics":
             result = scan_retention_diagnostics(protection)
@@ -1057,6 +1074,11 @@ def _scan_dynamic_point_with_progress(
                 ]
             )
         result.items = [_apply_scan_guards(item, guards, result, ctl.checkpoint) for item in result.items]
+        if result.cancelled:
+            # 专项扫描器已经保存了完成的对象，不再通过检查点丢弃部分结果。
+            progress.cancel()
+            ctl.cancel()
+            return result
         ctl.checkpoint()
     except Cancelled:
         progress.cancel()
@@ -1074,6 +1096,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
                  ignore: Predicate | None = None,
                  workers: int = 8,
                  on_progress: Callable[[ProgressSnapshot], None] | None = None,
+                 *, file_roots: list[Path] | None = None,
                  ) -> ScanResult:
     """扫描指定域（specs §扫描器协议：配置→可清理项流）。"""
     ctl = ctl or Control()
@@ -1083,6 +1106,9 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
     setup_issues: list[ScanIssue] = []
     for d in domains:
         domain_points = DOMAINS.get(d, [])
+        if file_roots is not None and d == "system":
+            domain_points = [replace(p, paths=tuple(str(root) for root in file_roots))
+                             if p.scanner == "downloads" else p for p in domain_points]
         dynamic_trash_points = [
             point for point in domain_points if point.category == "废纸篓"
         ]
@@ -1159,6 +1185,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
                     ignore,
                     progress.task(task_id),
                     guards,
+                    file_roots_required=file_roots is not None,
                 )
             ),
         )
@@ -1219,6 +1246,7 @@ def scan_domains(domains: list[str], ctl: Control | None = None,
             result._hardlinks.update(task_result._hardlinks)
             result._hardlink_originals.update(task_result._hardlink_originals)
         result.issues.extend(task_result.issues)
+        result.diagnostics.extend(task_result.diagnostics)
         result.cancelled = result.cancelled or task_result.cancelled
     if result.cancelled:
         ctl.cancel()
@@ -1457,7 +1485,11 @@ def finalize_overlapping_result(result: ScanResult) -> ScanResult:
     result = _deduplicate_hardlinks(result)
     by_path: dict[Path, Item] = {}
     non_overlapping_items: list[Item] = []
+    separate_diagnostics: dict[tuple[Path, str], Item] = {}
     for item in result.items:
+        if item.diagnostic_kind in {"application_binaries", "application_updates", "downloads", "disk_image"}:
+            separate_diagnostics[(item.path, item.diagnostic_kind)] = item
+            continue
         if (
             item.path is None
             or item.resource_kind not in FILESYSTEM_RESOURCE_KINDS
@@ -1581,6 +1613,7 @@ def finalize_overlapping_result(result: ScanResult) -> ScanResult:
         )
 
     finalized.extend(subset_items)
+    finalized.extend(separate_diagnostics.values())
     finalized.extend(non_overlapping_items)
     finalized.sort(
         key=lambda item: (
@@ -1593,6 +1626,7 @@ def finalize_overlapping_result(result: ScanResult) -> ScanResult:
         items=finalized,
         issues=list(result.issues),
         cancelled=result.cancelled,
+        diagnostics=list(result.diagnostics),
     )
 
 

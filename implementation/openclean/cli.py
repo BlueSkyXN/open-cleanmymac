@@ -27,7 +27,8 @@ from .cleanup import (
     select_cleanup_items,
     with_cleanup_selection,
 )
-from .config import ConfigError, ConfigStore
+from .config import ConfigError, ConfigStore, validated_file_roots
+from .diagnostic_review import EvidenceIndex
 from .core.errors import AgentRuntimeError
 from .display_mode import DisplayModeError, resolve_display_mode
 from .engine import (
@@ -62,7 +63,7 @@ from .terminal_ui import pad_cells, safe_text, safety_label
 from .strategies.registry import StrategyRegistry, pack_hash
 from .tui import (
     CHEATSHEET_LINES, CHEATSHEET_NOTES, MENU_ITEMS, MENU_TITLES, MenuChoice,
-    ReviewGroup, TUIUnavailable, choose_menu, item_diagnostic_summary,
+    ReviewGroup, TUIUnavailable, choose_menu, item_diagnostic_summary, item_size_label,
     review_cleanup,
 )
 
@@ -410,6 +411,43 @@ def _validated_project_roots(raw_roots: list[Path]) -> list[Path]:
     return roots
 
 
+def _file_review_scope(args, domains: list[str]) -> tuple[list[Path] | None, dict | None]:
+    """显式范围 > 保存范围 > Downloads；只影响 system 的文件审阅扫描点。"""
+    explicit = getattr(args, "file_root", None)
+    if "system" not in domains:
+        return None, None
+    if explicit:
+        roots = validated_file_roots(explicit)
+        source = "argument"
+    else:
+        roots = ConfigStore(getattr(args, "config_path", None)).load().file_roots
+        source = "config" if roots else "default"
+    return ([Path(root) for root in roots] if roots else None), {
+        "kind": "file_review_scope", "category": "文件审阅范围",
+        "source": source, "roots": list(roots) or [str(normalize_path("~/Downloads"))],
+        "recursive": True, "actionable": False,
+    }
+
+
+def _record_file_review_scope(result: ScanResult, scope: dict | None) -> None:
+    if scope is not None:
+        result.diagnostics.insert(0, {
+            **scope,
+            "complete": not result.cancelled and not any(
+                i.blocking and i.task == "下载与磁盘镜像" for i in result.issues
+            ),
+        })
+
+
+def _print_file_review_scope(result: ScanResult) -> None:
+    labels = {"argument": "本次参数", "config": "已保存配置", "default": "默认"}
+    for diagnostic in result.diagnostics:
+        if diagnostic.get("kind") == "file_review_scope":
+            print(f"文件审阅范围（{labels.get(diagnostic['source'], '未知')}，有界递归，只读）：")
+            for root in diagnostic["roots"]:
+                print(f"  {safe_text(root)}")
+
+
 def _prepare_cleanup_selection(
     result: ScanResult,
     args: argparse.Namespace,
@@ -496,6 +534,7 @@ def _resolve_cleanup_selection(
                 groups,
                 title=title,
                 allow_execution=args.yes,
+                diagnostics=tuple(result.diagnostics),
             )
         except TUIUnavailable as exc:
             # 显式 --interactive 不静默换模式；无审阅执行风险同样拒绝回退。
@@ -537,7 +576,16 @@ def _print_issues(result) -> None:
         else f"扫描提示：{len(result.issues)} 项"
     )
     print(f"\n{heading}", file=sys.stderr)
+    summarized: set[tuple[str, str]] = set()
     for issue in result.issues:
+        if not issue.blocking and issue.code in {"dataless_object_skipped", "cross_filesystem_skipped"}:
+            key = (issue.task, issue.code)
+            if key in summarized:
+                continue
+            summarized.add(key)
+            count = sum((other.task, other.code) == key and not other.blocking for other in result.issues)
+            print(f"- [info:{issue.code}] {issue.task}: {count} 个对象按边界跳过；逐路径明细见 --json", file=sys.stderr)
+            continue
         location = f" ({issue.path})" if issue.path is not None else ""
         level = "warning" if issue.blocking else "info"
         print(
@@ -887,6 +935,24 @@ def _issue_payload(issue) -> dict[str, object]:
     }
 
 
+def _diagnostic_payload(result: ScanResult) -> list[dict[str, object]]:
+    diagnostics = list(result.diagnostics)
+    failures = [issue for issue in result.issues if issue.blocking]
+    if failures:
+        diagnostics.append({
+            "kind": "scan_coverage", "category": "扫描覆盖", "complete": result.complete,
+            "unreadable_path_count": len({str(i.path) for i in failures if i.code == "permission_denied"}),
+            "failures": [{
+                "path": str(i.path) if i.path is not None else None,
+                "task": i.task, "code": i.code,
+                "cause": "undetermined" if i.code == "permission_denied" else i.code,
+                "message": ("读取被系统拒绝；仅凭该错误不能区分 POSIX、TCC、SIP 或沙盒限制"
+                            if i.code == "permission_denied" else i.message),
+            } for i in failures],
+        })
+    return diagnostics
+
+
 def _scan_summary(result: ScanResult) -> dict[str, object]:
     total, reclaimable = result.total, result.actionable_total
     return {
@@ -905,7 +971,7 @@ def _scan_summary(result: ScanResult) -> dict[str, object]:
 def _print_text_item(name: str, item: Item, *, selected: bool = False, extra: str = "") -> None:
     marker = "[!]" if not item.actionable else "[x]" if selected else "[ ]"
     state = "只读诊断" if item.diagnostic_kind else "不可执行" if not item.actionable else "需逐项选择" if item.requires_explicit_selection else "可审阅"
-    print(f"  {marker} {pad_cells(name, 30)} {human(item.size):>10}  "
+    print(f"  {marker} {pad_cells(name, 30)} {item_size_label(item):>10}  "
           f"{pad_cells(safety_label(item.safety), 10)} {state}{safe_text(extra)}")
     print(f"      {safe_text(_item_location(item))}")
     annotations = _item_annotations(item).strip()
@@ -919,6 +985,16 @@ def _print_text_totals(result: ScanResult, *, selection_label: str = "当前选�
           f"只读/阻断 {human(sum(item.size for item in result.items if not item.actionable))}")
 
 
+def _print_text_evidence(item: Item, evidence: EvidenceIndex) -> None:
+    entries = evidence.entries(item)
+    if entries:
+        print(f"      资源明细：{len(entries)} 项（只读，不改变选择）")
+        for index, entry in enumerate(entries, 1):
+            print(f"      {index}. {safe_text(entry.summary)}")
+            for line in entry.lines:
+                print(f"         {safe_text(line)}")
+
+
 def _print_report(
     result: ScanResult,
     as_json: bool,
@@ -926,6 +1002,7 @@ def _print_report(
     *,
     redact_paths: bool = False,
     path_seeds: tuple[str, ...] = (),
+    show_details: bool = False,
 ) -> None:
     if as_json:
         _print_json({
@@ -934,6 +1011,7 @@ def _print_report(
             "mode": "report",
             "requested_domains": requested_domains,
             **_scan_summary(result),
+            **({"diagnostics": _diagnostic_payload(result)} if result.diagnostics or result.issues else {}),
             "volumes": _volume_summaries(result.items),
             "items": [
                 _item_payload(i)
@@ -945,11 +1023,15 @@ def _print_report(
 
     cats = result.by_category()
     print("\n扫描结果 · 只读报告")
+    _print_file_review_scope(result)
     print("─" * 78)
+    evidence = EvidenceIndex(result.diagnostics) if show_details else None
     for cat, items in sorted(cats.items(),
                              key=lambda kv: -sum(i.size for i in kv[1])):
         for i in sorted(items, key=lambda x: -x.size):
             _print_text_item(cat, i, selected=i.preselected is True)
+            if evidence is not None:
+                _print_text_evidence(i, evidence)
     print("─" * 78)
     _print_text_totals(result, selection_label="默认预选")
     _print_issues(result)
@@ -984,6 +1066,7 @@ def _print_purge_report(
             "command": "purge",
             "mode": "result" if cleanup is not None else "preview",
             **_scan_summary(result),
+            **({"diagnostics": _diagnostic_payload(result)} if result.diagnostics or result.issues else {}),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),
@@ -1036,6 +1119,7 @@ def _print_clean_report(
     *,
     redact_paths: bool = False,
     path_seeds: tuple[str, ...] = (),
+    show_details: bool = False,
 ) -> None:
     grouped = result.by_domain()
     domains = [
@@ -1065,6 +1149,7 @@ def _print_clean_report(
             "category": requested_category or "all",
             "mode": "result" if cleanup is not None else "preview",
             **_scan_summary(result),
+            **({"diagnostics": _diagnostic_payload(result)} if result.diagnostics or result.issues else {}),
             "preselected_bytes": result.preselected_total,
             "preselected_human": human(result.preselected_total),
             "volumes": _volume_summaries(result.items),
@@ -1076,6 +1161,7 @@ def _print_clean_report(
         }, redact_paths=redact_paths, path_seeds=path_seeds)
         return
 
+    _print_file_review_scope(result)
     if not domains:
         print(_empty_result_message(result))
         _print_issues(result)
@@ -1087,6 +1173,7 @@ def _print_clean_report(
     )
     print(f"\n{title}")
     print("─" * 88)
+    evidence_index = EvidenceIndex(result.diagnostics) if show_details else None
     for domain in domains:
         items = grouped[domain]
         domain_total = sum(item.size for item in items)
@@ -1099,7 +1186,9 @@ def _print_clean_report(
             )
             _print_text_item(item.category, item, selected=item.preselected is True, extra=cloud)
             for evidence in item_diagnostic_summary(item):
-                print(f"      {evidence}")
+                print(f"      {safe_text(evidence)}")
+            if evidence_index is not None:
+                _print_text_evidence(item, evidence_index)
     print("\n" + "─" * 88)
     _print_text_totals(result)
     if cleanup is None:
@@ -1675,6 +1764,10 @@ def main(argv: list[str] | None = None) -> int:
             "并配合 --domain project"
         ),
     )
+    sp.add_argument("--file-root", action="append", metavar="PATH",
+                    help="下载/镜像只读审阅根，可重复；覆盖保存配置或默认 Downloads，需包含 system 域")
+    sp.add_argument("--config-path", type=Path, help="读取指定 CLI 配置文件")
+    sp.add_argument("--details", action="store_true", help="文本展开本次扫描的只读资源明细；JSON 已含明细")
     _add_rule_options(sp)
     sp.add_argument(
         "--workers",
@@ -1699,6 +1792,8 @@ def main(argv: list[str] | None = None) -> int:
         help="可选清理分类；省略时扫描全部分类",
     )
     _add_cleanup_execution_options(clean)
+    clean.add_argument("--config-path", type=Path, help="读取指定 CLI 配置文件（文件审阅范围）")
+    clean.add_argument("--details", action="store_true", help="文本展开只读资源明细；TUI 可按 F，JSON 已含明细")
     _add_rule_options(clean)
     clean.add_argument(
         "--workers",
@@ -1873,6 +1968,14 @@ def main(argv: list[str] | None = None) -> int:
         metavar="HTTPS_URL",
         help="从显式 HTTPS URL 下载并安装签名托管知识库",
     )
+    config_action.add_argument(
+        "--file-root", action="append", metavar="PATH",
+        help="保存下载/镜像审阅根，可重复；整组替换已保存范围，不扫描或清理",
+    )
+    config_action.add_argument(
+        "--clear-file-roots", action="store_true",
+        help="清除保存的文件审阅根，恢复默认 Downloads",
+    )
     config_command.add_argument(
         "--knowledge-public-key",
         type=Path,
@@ -1892,7 +1995,7 @@ def main(argv: list[str] | None = None) -> int:
     config_command.add_argument(
         "--config-path",
         type=Path,
-        help=argparse.SUPPRESS,
+        help="读取或写入指定 CLI 配置文件",
     )
     _add_json_output_options(config_command)
 
@@ -2020,6 +2123,12 @@ def main(argv: list[str] | None = None) -> int:
                 "invalid_option_combination",
                 "scan：--project-root 需要同时请求 --domain project。",
             )
+        if args.file_root and "system" not in domains:
+            return _fail(args, "scan", "invalid_option_combination", "--file-root 需要 system 域")
+        try:
+            explicit_file_roots, file_scope = _file_review_scope(args, domains)
+        except ConfigError as exc:
+            return _fail(args, "scan", "invalid_file_root" if args.file_root else "config_error", str(exc))
         explicit_project_roots: list[Path] | None = None
         if args.project_root:
             try:
@@ -2056,6 +2165,7 @@ def main(argv: list[str] | None = None) -> int:
                         ignore,
                         args.workers,
                         on_progress=renderer,
+                        **({"file_roots": explicit_file_roots} if explicit_file_roots is not None else {}),
                     )
                 finally:
                     if renderer is not None:
@@ -2089,7 +2199,9 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         items_result = finalize_overlapping_result(items_result)
+        _record_file_review_scope(items_result, file_scope)
         if not items_result.items and not args.json:
+            _print_file_review_scope(items_result)
             print(_empty_result_message(items_result))
             _print_issues(items_result)
         else:
@@ -2099,6 +2211,7 @@ def main(argv: list[str] | None = None) -> int:
                 domains,
                 redact_paths=args.redact_paths,
                 path_seeds=tuple(raw_argv),
+                show_details=args.details,
             )
         return 0 if items_result.complete else 1
 
@@ -2108,6 +2221,8 @@ def main(argv: list[str] | None = None) -> int:
         _agent_run = bool(getattr(args, "run", None))
         _classic_selector = bool(
             args.category
+            or args.config_path
+            or args.details
             or getattr(args, "select", [])
             or getattr(args, "select_all_safe", False)
             or getattr(args, "force", False)
@@ -2161,6 +2276,11 @@ def main(argv: list[str] | None = None) -> int:
             else list(CLEAN_CATEGORY_DOMAINS.values())
         )
         try:
+            file_roots, file_scope = _file_review_scope(args, domains)
+        except ConfigError as exc:
+            return _fail(args, "clean", "config_error", str(exc))
+        file_root_options = {"file_roots": file_roots} if file_roots is not None else {}
+        try:
             ignore = _load_ignore_rules(args)
         except KnowledgeBaseError as exc:
             return _fail(
@@ -2179,6 +2299,7 @@ def main(argv: list[str] | None = None) -> int:
                         ignore,
                         args.workers,
                         on_progress=publish,
+                        **file_root_options,
                     ),
                     title="Clean · 扫描",
                     scope=" · ".join(
@@ -2225,6 +2346,7 @@ def main(argv: list[str] | None = None) -> int:
                         ignore,
                         args.workers,
                         on_progress=renderer,
+                        **file_root_options,
                     )
                 )
             except KeyboardInterrupt:
@@ -2241,6 +2363,7 @@ def main(argv: list[str] | None = None) -> int:
                     renderer.finish()
         else:
             result = finalize_overlapping_result(scan_outcome.result)
+        _record_file_review_scope(result, file_scope)
         try:
             result, selected, execution_confirmed, cancelled = (
                 _resolve_cleanup_selection(
@@ -2272,6 +2395,7 @@ def main(argv: list[str] | None = None) -> int:
             cleanup,
             redact_paths=args.redact_paths,
             path_seeds=tuple(raw_argv),
+            show_details=args.details,
         )
         return 0 if (
             result.complete and (cleanup is None or cleanup.complete)
@@ -2669,11 +2793,12 @@ def main(argv: list[str] | None = None) -> int:
         store = ConfigStore(args.config_path)
         try:
             before = store.load()
-            config = (
-                store.set_analytics(args.analytics == "on")
-                if args.analytics is not None
-                else before
-            )
+            if args.analytics is not None:
+                config = store.set_analytics(args.analytics == "on")
+            elif args.file_root is not None or args.clear_file_roots:
+                config = store.set_file_roots(args.file_root or [])
+            else:
+                config = before
         except ConfigError as exc:
             return _fail(
                 args,
@@ -2690,11 +2815,20 @@ def main(argv: list[str] | None = None) -> int:
                 "config_path": str(store.path),
                 "analytics_enabled": config.analytics_enabled,
                 "analytics_implemented": False,
+                "file_roots": list(config.file_roots),
+                "effective_file_roots": list(config.file_roots) or [str(normalize_path("~/Downloads"))],
+                "file_roots_source": "config" if config.file_roots else "default",
             }, redact_paths=args.redact_paths, path_seeds=tuple(raw_argv))
         else:
             state = "on" if config.analytics_enabled else "off"
             print(f"Analytics 偏好：{state}")
             print("当前版本未实现遥测上传；该开关仅持久化本地偏好。")
+            print("文件审阅目录（替代默认 Downloads，有界递归，只读）：" if config.file_roots
+                  else "文件审阅目录（默认，只读）：")
+            for root in config.file_roots or (str(normalize_path("~/Downloads")),):
+                print(f"  {safe_text(root)}")
+            if args.file_root is not None or args.clear_file_roots:
+                print("文件审阅范围配置已更新。" if changed else "文件审阅范围配置未变化。")
         return 0
 
     if args.cmd == "cat":

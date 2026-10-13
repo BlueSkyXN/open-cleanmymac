@@ -134,6 +134,8 @@ python3 -m venv .venv
 | `large [path]` | 是 | 只读 | 递归发现普通大文件，默认 ≥100 MiB、前 50 项；零预选，不读取正文、不跨卷 |
 | Docker daemon 容量 | 是 | 受限 | 三类 prune 需精确选择；Volumes 拒绝；真实 daemon 待验收 |
 | 日志 / 缓存 / updater / WorkBuddy 经验结构等诊断 | 是 | 否 | 只读报告；不提供通用删除器 |
+| 应用架构、语言资源、Chrome 旧组件 | 是 | 否 | 当前源码新增或扩展的只读识别，不修改应用；详见 [类型识别](docs/RECOGNITION.md) |
+| 下载与磁盘镜像审阅 | 是 | 否 | 默认 Downloads；可保存自定义范围或用 `scan --file-root` 临时覆盖；未挂载不代表不使用 |
 | `optimize ram / purgeable` | 命令面 | 否 | `status=unavailable`，退出码 1 |
 | 特权系统清理 | — | 否 | 需要尚未实现的签名 helper |
 | Agent Runtime（`inspect`/`show`/`clean --run`/`strategy`） | 是 | 当前不启用生产动作 | Codex/WorkBuddy 包均只读；见 [当前状态](docs/AGENT_RUNTIME_STATUS.md) |
@@ -144,6 +146,9 @@ Trash）。逐项状态、来源和有意排除项见
 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
 
 当前不在范围内：Desktop GUI、菜单栏、后台 agent、应用卸载、恶意软件扫描。
+
+当前源码的 JSON 可附带 `diagnostics`，分别解释架构、资源、版本、文件类型和访问失败。
+应用架构等专项计量单列，不能与清理候选总量直接相加；新诊断全部默认不选。
 
 ## 命令
 
@@ -158,6 +163,8 @@ Optimize 显示不可用原因，不执行维护。非 TTY 无参数启动仍只
 执行仍需 `--yes`、critical 二次确认和实时保护复核。历史安装包不会自动获得这些源码改进。
 
 Clean/Purge 的逐项列表按 `I` 查看只读详情，方向键滚动、Esc 返回，选择保持不变。
+Clean 的架构、语言、下载和镜像结果可按 `F` 浏览同次扫描的资源明细；Enter/I 查看单项，
+不改变清理选择。文本 `scan/clean --details` 可展开相同证据，默认保留摘要。
 详情显示已有年龄、句柄、保留期、SQLite、updater 等证据，不额外扫描。
 只读诊断不是可清理对象；内部空闲页、年龄桶或逻辑上限也不是已经释放的空间。
 
@@ -169,6 +176,8 @@ openclean analyze [PATH] [--top N] [--select PATH] [--yes]
 openclean optimize {ram,purgeable} [--json]
 openclean ignore {list,add,remove}
 openclean config [--analytics on|off]
+openclean config --file-root ~/Downloads --file-root ~/Documents/Images
+openclean config --clear-file-roots
 openclean cat [--json]
 ```
 
@@ -215,7 +224,7 @@ Zig 新增 `.zig-cache`、`zig-out`，仅在相邻 `build.zig` 为普通非云�
 | 普通 `clean` / `purge` / `analyze --yes` | 是 | 通常移到同卷 Trash |
 | `clean trash --select EXACT_ROOT --include-confirm --yes` | 是 | 永久删除所选 Trash 内容 |
 | Docker prune | 是 | 永久操作，不经过 Trash |
-| `ignore add/remove`、`config --analytics` | 是 | 修改本地 `0600` JSON 配置 |
+| `ignore add/remove`、`config --analytics/--file-root/--clear-file-roots` | 是 | 显式修改本地 `0600` JSON 配置 |
 | `config --update-knowledge` | 网络 + 写入 | 验签后原子安装规则 |
 
 `safe`、`confirm`、`critical` 是候选风险级别，不是数据价值保证。路径竞态、Trash

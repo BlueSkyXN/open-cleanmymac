@@ -164,6 +164,7 @@ def with_cleanup_selection(
         ],
         issues=list(result.issues),
         cancelled=result.cancelled,
+        diagnostics=list(result.diagnostics),
     )
 
 
