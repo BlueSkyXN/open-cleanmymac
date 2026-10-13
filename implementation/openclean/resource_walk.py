@@ -138,6 +138,15 @@ def walk_resources(
                             False,
                         )
                         continue
+                    # 调用方可能把此目录交给另一次遍历；边界检查不能只放在递归分支。
+                    if stat.S_ISDIR(facts.stat.st_mode) and filesystem_id_retry(child_path) != filesystem:
+                        issue(
+                            child_path,
+                            "cross_filesystem_skipped",
+                            "跨文件系统目录未读取",
+                            False,
+                        )
+                        continue
                     yield facts, fd
                     if stat.S_ISDIR(facts.stat.st_mode) and descend(facts):
                         child_fd = os.open(

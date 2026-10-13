@@ -132,6 +132,11 @@ def select_cleanup_items(
         matches = [
             item for item in candidates if _matches_selector(item, selector)
         ]
+        # 诊断锚点可以与普通候选同路径，但不是另一个执行目标。
+        # 仍保留普通候选的歧义和阻断检查，不能仅按 actionable 过滤。
+        ordinary_matches = [item for item in matches if not item.diagnostic_kind]
+        if ordinary_matches:
+            matches = ordinary_matches
         if not matches:
             raise SelectionError(f"未找到清理候选：{selector}")
         if len(matches) > 1:

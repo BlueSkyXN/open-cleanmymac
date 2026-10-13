@@ -16,6 +16,27 @@ from openclean.scanpoints import DOMAINS, ScanPoint
 
 
 class JsonPathRedactionTests(unittest.TestCase):
+    def test_image_format_descriptions_redact_unknown_and_partial_paths(self) -> None:
+        from openclean.redaction import redact_json_payload
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            original = root / "Private Source/original.img"
+            description = f'gzip compressed data, was "{original}"'
+            payload = {"diagnostics": [{"kind": "disk_image", "files": [
+                {"path": str(root / "download.img"), "format_description": description},
+                {"path": str(root / "other.img"), "format_description": "DOS/MBR boot sector"},
+            ]}]}
+            for seeds in ((), (str(root),)):
+                with self.subTest(seeds=seeds):
+                    result = redact_json_payload(payload, path_seeds=seeds)
+                    serialized = json.dumps(result)
+                    self.assertNotIn(str(original), serialized)
+                    self.assertNotIn("Private Source", serialized)
+                    descriptions = [f["format_description"] for f in result["diagnostics"][0]["files"]]
+                    self.assertEqual(descriptions, ["[path details redacted]", "DOS/MBR boot sector"])
+            self.assertEqual(payload["diagnostics"][0]["files"][0]["format_description"], description)
+
     def test_dynamic_application_markers_are_redacted_without_changing_input(self) -> None:
         from openclean.redaction import redact_json_payload
 

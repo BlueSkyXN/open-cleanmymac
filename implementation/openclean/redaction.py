@@ -28,7 +28,8 @@ PATH_VALUE_KEYS = frozenset({
     "running_process_markers",
 })
 FREE_TEXT_KEYS = frozenset(
-    {"message", "note", "action_block_reason", "summary", "do_not_do", "block_reasons"}
+    {"message", "note", "action_block_reason", "summary", "do_not_do", "block_reasons",
+     "format_description"}
 )
 # run_id/finding_id 不是路径形态，不会被路径 ref 替换；为保证脱敏输出
 # 不可 replay（AR-03 §7 / 决策 5），单独把这些 actionable ID 换成不可用占位。

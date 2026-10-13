@@ -32,11 +32,15 @@ class PathInspection:
         self.timeout = timeout
         self.deadline = time.monotonic() + timeout
 
+    def cooperate(self) -> None:
+        """共享给外围遍历的检查点；主动等待不消耗内容检查时间预算。"""
+        before = time.monotonic()
+        self.checkpoint()
+        self.deadline += time.monotonic() - before
+
     def tick(self, *, cooperate: bool = True) -> None:
         if cooperate:
-            before = time.monotonic()
-            self.checkpoint()
-            self.deadline += time.monotonic() - before
+            self.cooperate()
         if self.remaining <= 0 or time.monotonic() >= self.deadline:
             raise InspectionError("内容保护检查超出项数或时间预算")
         self.remaining -= 1
