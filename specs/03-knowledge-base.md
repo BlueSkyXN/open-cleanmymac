@@ -39,8 +39,14 @@ Agent 自定义 HOME 的默认规则/Store 解析见 [AR-03](agent-runtime/ar-03
 | REQ-RULE-004 配置副作用 | analytics 仅是持久偏好；目前无遥测上传；读配置不伪造网络操作 | VAL-RULE-004：显示值与显式写入一致，错误非零 |
 | REQ-RULE-005 原子写 | 沿用私有权限、临时写入/fsync/原子安装与错误回执 | VAL-RULE-005：失败不报告成功，配置文件权限与提交边界符合实现 |
 
-`ignore add/remove`、`config --analytics`、显式规则更新是现有配置写入口，不另要求清理用
+`ignore add/remove`、`config --analytics/--file-root/--clear-file-roots`、显式规则更新是现有配置写入口，不另要求清理用
 `--yes`；它们仍需要用户对配置变更的指令。不要将“清理默认预览”误写成“所有命令不带 --yes 完全不写盘”。
+
+文件审阅根以可选 `file_roots` 数组保存到 CLI 配置 schema 1，最多 64 个规范化绝对路径。
+设置操作整组替换并验证目录及祖先，不枚举内容、不创建目标；analytics 与范围更新互相保留。
+清除后恢复默认 Downloads 并省略新字段，旧配置无需迁移；旧版严格读取器不兼容含新字段的配置。
+读取时不因卷离线移除配置；扫描给出缺失/失败路径和不完整状态。命令参数、保存配置、默认根
+按优先级选择，不自动合并。验证见 `test_file_review_config.py`。
 
 ## 4. 托管规则更新
 

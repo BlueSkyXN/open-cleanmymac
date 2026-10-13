@@ -11,13 +11,37 @@ openclean scan --domain system --json
 openclean clean junk --no-interactive --json
 openclean scan --domain system --file-root ~/Downloads --json
 openclean scan --domain system --file-root ~/Downloads --file-root ~/Documents/Images --json
+openclean config --file-root ~/Downloads --file-root ~/Documents/Images
+openclean clean junk --json
+openclean config --clear-file-roots
 ```
 
-`--file-root` 仅用于 `scan` 的下载/镜像审阅，可重复，替代默认的 `~/Downloads`。
+`scan --file-root` 用于本次下载/镜像审阅，可重复，覆盖已保存范围或默认的 `~/Downloads`。
 扫描域必须包含 `system`，路径必须是存在的非 symlink 目录；扫描器继续检查祖先、
 云占位和文件系统边界。此参数不更改缓存、应用扫描根，也不扩张清理选择范围。
 默认文件审阅不遍历整个 HOME 或外置卷。`.app`、`.sparsebundle`、`.download`
 目录不在普通下载文件遍历范围，当前不报告这些目录内部的容量。
+
+### 保存审阅目录
+
+`config --file-root PATH` 整组替换保存的文件审阅根，可重复指定，最多 64 个；精确重复路径
+规范化后合并，父子目录保留显式范围，扫描时同一文件不重复计量。保存时只检查目录及祖先，
+不枚举内容、不创建目标目录。`config --clear-file-roots` 清除保存范围，恢复默认 Downloads。
+它们与 `--analytics`、`--update-knowledge` 互斥，属于显式配置写入，不需要清理参数 `--yes`。
+
+`scan` 请求 system 域以及经典 `clean junk`/`clean` 会读取保存范围。优先级为本次
+`scan --file-root` > 保存的 `file_roots` > 默认 Downloads，范围不会自动叠加。
+`scan`、`clean`、`config` 可用 `--config-path FILE` 指定配置；Agent `clean --run`
+不接受该参数。其它扫描域、项目范围和应用根不受文件审阅配置影响。
+
+保存目录在之后离线、消失或变成链接时，保留原配置并在扫描中报告阻断和 `complete=false`，
+其它可读根仍返回结果；不静默改扫 Downloads。默认 Downloads 缺失仅给提示。
+格式损坏的配置返回 `config_error`，不覆盖；显式 `scan --file-root` 可不读取保存配置。
+文本和 JSON 的 `file_review_scope` 显示来源和实际请求根，递归与既有扫描预算保持。
+
+配置沿用 `~/.config/openclean/config.json` 和原子写入/0600 权限，在配置 schema 1 中增加可选
+`file_roots` 数组。未设置或清除后不写此字段，旧配置无需迁移。旧版严格配置读取器不能读取
+含新字段的文件；退回旧版前可用新版清除保存范围，或使用独立 `--config-path`。
 
 ## 已有识别类型
 
@@ -61,6 +85,7 @@ Item 持久化字段集合、Run bundle 版本和现有 pack 保持不变。新�
 | `application_updates` | `installed_version`、`staged_version`、`current_version`、`updater_status` | 旧组件的物理/逻辑占用单列；版本判断不授权修改应用 |
 | `downloads` / `disk_image` | `files[].file_type`、时间依据、上下文；镜像增加挂载状态和格式描述 | 普通文件元数据；没有“已不需要”的自动判断 |
 | `scan_coverage` | `unreadable_path_count`、`failures[].path/task/code/cause/message` | 当前扫描的阻断范围，不能据此推算未读取字节数 |
+| `file_review_scope` | `source`（argument/config/default）、`roots`、`recursive`、`actionable=false` | 实际请求的文件审阅范围；`complete` 表示该任务在约定边界内完成，不承诺全盘覆盖 |
 
 应用架构、旧组件、下载和镜像项采用只读 `filesystem_subset`，`bytes/potential_bytes`
 为 0 表示不并入清理候选总量；其实际计量使用 `resource_total_bytes`、`logical_bytes` 和
