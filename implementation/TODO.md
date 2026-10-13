@@ -119,11 +119,12 @@ dataless 目录不触发枚举或下载，并覆盖 iCloud Drive 与至少一个
 
 ### 7. ApplicationLanguages / universal binary
 
-ApplicationLanguages 只读审计已经完成，并故意固定 `critical + actionable=false`。不要把
+ApplicationLanguages 已扩展嵌套及混合资源只读审计，固定 `critical + actionable=false`。不要把
 通用 cleanup executor 直接用于 `.app`，否则可能移动整个应用或破坏 code signature。
 
-universal binary thinning 未实现。若未来仅做审计，需要结构化记录 Mach-O slices、父 app、
-签名状态和兼容性；任何写入必须另有原子输出、恢复、签名和 Rosetta/plugin 验收方案。
+Mach-O 多架构只读识别已实现，提供 slice、父应用与逻辑容量；签名有效性和裁剪兼容性
+未验证，universal binary thinning 未实现。任何写入仍需独立的原子输出、恢复、签名和
+Rosetta/plugin 验收方案。Chrome 旧组件、下载和镜像识别同样没有新增删除执行器。
 
 ### 8. Countable 进度与任务控制聚合
 
@@ -187,8 +188,8 @@ SIGINT 在任务提交及等待两个阶段都先传播取消再收尾，有限�
   store 的发现仍需独立定义定位、归属和只读/动作边界，不能只添加环境变量或放开任意路径。
 - `large` 大文件扫描已实现只读发现；Large & Old 的访问日期/年龄过滤仍未实现，后续需明确
   Spotlight 缺失与 mtime 的区别，不把大小或未修改天数直接解释为闲置或可删除。
-- 语言资源审计尚未发现外置 Applications 根；缺失开发语言元数据时会记录 issue 并跳过，
-  后续可补按应用的未知量/跳过明细，不推断所有 `.lproj` 都可删除。
+- 语言资源审计尚未发现外置 Applications 根；开发语言未知已可保留只读资源证据，
+  元数据或路径无效仍报告并跳过，不推断所有 `.lproj` 都可删除。
 - 文本摘要已区分发现、当前可执行、选择和只读/阻断量；进一步建议层仍需逐项条件证据。
   退出应用不保证解锁，重启也不保证净释放。
 - 验收发现（ExFAT，2026-09-28）：同卷 Trash 的独占 rename 在 ExFAT 卷返回

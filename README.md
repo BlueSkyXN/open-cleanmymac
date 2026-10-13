@@ -134,6 +134,8 @@ python3 -m venv .venv
 | `large [path]` | 是 | 只读 | 递归发现普通大文件，默认 ≥100 MiB、前 50 项；零预选，不读取正文、不跨卷 |
 | Docker daemon 容量 | 是 | 受限 | 三类 prune 需精确选择；Volumes 拒绝；真实 daemon 待验收 |
 | 日志 / 缓存 / updater / WorkBuddy 经验结构等诊断 | 是 | 否 | 只读报告；不提供通用删除器 |
+| 应用架构、语言资源、Chrome 旧组件 | 是 | 否 | 当前源码新增或扩展的只读识别，不修改应用；详见 [类型识别](docs/RECOGNITION.md) |
+| 下载与磁盘镜像审阅 | 是 | 否 | 默认 Downloads；`scan --file-root` 指定只读范围；未挂载不代表不使用 |
 | `optimize ram / purgeable` | 命令面 | 否 | `status=unavailable`，退出码 1 |
 | 特权系统清理 | — | 否 | 需要尚未实现的签名 helper |
 | Agent Runtime（`inspect`/`show`/`clean --run`/`strategy`） | 是 | 当前不启用生产动作 | Codex/WorkBuddy 包均只读；见 [当前状态](docs/AGENT_RUNTIME_STATUS.md) |
@@ -144,6 +146,9 @@ Trash）。逐项状态、来源和有意排除项见
 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
 
 当前不在范围内：Desktop GUI、菜单栏、后台 agent、应用卸载、恶意软件扫描。
+
+当前源码的 JSON 可附带 `diagnostics`，分别解释架构、资源、版本、文件类型和访问失败。
+应用架构等专项计量单列，不能与清理候选总量直接相加；新诊断全部默认不选。
 
 ## 命令
 

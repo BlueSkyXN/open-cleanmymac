@@ -32,6 +32,13 @@ PYTHONPATH=. python3 openclean_cli.py --version
 
 ## 命令面
 
+当前源码新增只读应用架构、Chrome 旧组件、嵌套语言资源和下载/镜像审阅，具体输出契约见
+[类型识别](../docs/RECOGNITION.md)。`scan --file-root PATH` 可重复使用，替代 Downloads
+默认文件审阅根，要求扫描域包含 `system`；不改变缓存/应用根和清理权限。
+JSON schema v2 的可选 `diagnostics` 提供专项证据；严格字段白名单消费者需允许该扩展。
+新只读子集项计量单列，`potential_bytes=0` 不表示实际占用为零；查看 `resource_total_bytes`
+和专项字段。Item/Run 持久化字段集合没有扩展。
+
 以下示例默认只读：
 
 ```bash

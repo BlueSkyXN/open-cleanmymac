@@ -263,10 +263,26 @@ SYSTEM_JUNK: list[ScanPoint] = [
         scanner="broken-startup-items",
     ),
     ScanPoint(
+        "下载与磁盘镜像", ("~/Downloads",), "critical",
+        "用户文件仅分类审阅，不推断已不使用", scanner="downloads", default_selected=False,
+    ),
+    ScanPoint(
+        "应用旧版本组件",
+        ("/Applications/Google Chrome.app", "~/Applications/Google Chrome.app"),
+        "critical", "核对 Chrome 当前版本与旧 framework；只读",
+        scanner="chrome-versions", default_selected=False,
+    ),
+    ScanPoint(
+        "通用二进制文件",
+        ("/Applications", "/System/Applications", "~/Applications"),
+        "critical", "只读报告 Mach-O 架构，不裁剪或修改应用",
+        scanner="application-binaries", default_selected=False,
+    ),
+    ScanPoint(
         "应用语言包",
         ("/Applications", "/System/Applications", "~/Applications"),
         "critical",
-        "按首选语言和应用开发语言保留；含非字符串资源时跳过",
+        "按首选语言和开发语言保留；嵌套及混合本地化资源只读审计",
         scanner="application-languages",
     ),
 ]

@@ -47,6 +47,15 @@ openclean large ~/Downloads --min-size 100MiB --top 50 --json
 这些路径只是分类提示。实际候选、大小和可执行性始终以本次 JSON 输出为准；AI 不应自行
 补充未被扫描器报告的删除路径。
 
+## 新类型识别
+
+经典 system 扫描增加应用架构、Chrome 旧组件、嵌套语言资源与下载/镜像审阅。使用可选
+`diagnostics` 获取逐对象证据，具体字段见 [类型识别](RECOGNITION.md)。`anchor_path` 是
+诊断锚点，不是动作许可；新子集的实际计量单列，不直接加到 `potential_bytes`。
+`scan --domain system --file-root PATH --json` 可针对明确目录审阅文件，零预选、无删除。
+挂载未知、元数据缺失或 `scan_coverage` 中的访问失败须原样解释，不要求用户用权限改动
+换取更大的可清理数字。
+
 ## JSON 判读
 
 | 内容 | 判读规则 |
