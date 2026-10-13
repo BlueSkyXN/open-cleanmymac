@@ -13,6 +13,8 @@
 
 - 文件审阅支持 `config --file-root` 保存整组目录、`--clear-file-roots` 恢复默认；
   scan system 与经典 clean 复用，显式 scan --file-root 优先。离线根报告不完整而不静默回退。
+- 文本 `scan/clean --details` 与 Clean TUI 的 F 资源列表展示同次架构、语言、下载和镜像
+  证据；可逐项查看和翻页，资源行不改变清理选择，未新增清理动作。
 - 新增应用内 Mach-O 多架构只读扫描，校验 fat 表与 slice，报告其它 CPU 架构逻辑字节；
   扩展语言资源审计至嵌套框架与混合 `.lproj`，开发语言未知不再被误解为没有资源。
 - 新增 Google Chrome 旧 framework 组件识别，核对应用版本、组件元数据和 Current 指针；

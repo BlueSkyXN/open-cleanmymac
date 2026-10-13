@@ -171,7 +171,7 @@ class FileReviewConfigTests(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertNotIn(str(self.home), json.dumps(payload))
 
-    def test_clean_tui_uses_saved_scope(self):
+    def test_clean_tui_uses_saved_scope_and_passes_same_evidence_to_review(self):
         self.store.set_file_roots([self.first])
         captured = {}
 
@@ -182,7 +182,9 @@ class FileReviewConfigTests(unittest.TestCase):
 
         def review(groups, **options):
             self.assertEqual(str(groups[0].items[0].path), str(self.first))
-            self.assertEqual([f["path"] for f in captured["files"]], [str(self.first / "document.txt")])
+            scope = next(d for d in options["diagnostics"] if d["kind"] == "file_review_scope")
+            self.assertEqual(scope["source"], "config")
+            self.assertEqual([f for d in options["diagnostics"] for f in d.get("files", [])], captured["files"])
             return ReviewResult((), True, False, False)
 
         with mock.patch.object(sys.stdin, "isatty", return_value=True), \
@@ -195,7 +197,7 @@ class FileReviewConfigTests(unittest.TestCase):
         display.assert_called_once()
 
     def test_agent_mode_rejects_classic_review_configuration(self):
-        for options in (["--config-path", str(self.config)],):
+        for options in (["--details"], ["--config-path", str(self.config)]):
             with mock.patch("openclean.cli._cmd_clean_finding") as agent:
                 status, payload = invoke(["clean", "--run", "run:fixture", "--finding", "finding:fixture", *options])
             self.assertEqual(status, 2)

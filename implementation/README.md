@@ -257,6 +257,9 @@ JSON、管道、`--no-interactive` 和任何参数化选择 flag 不打开 TUI�
 `Ctrl-C` 中断（exit 130）；取消后等待 worker 完成收尾，不重开扫描。
 
 Clean/Purge 的逐项列表新增 `I` 只读详情：方向键滚动、Esc/左键返回原位置，`Q` 取消审阅。
+Clean 的架构、语言、下载和镜像项支持 `F` 同次资源列表，Enter/I 查看单项详情，
+PgUp/PgDn 翻页，Esc 返回；所有资源行不可选择。文本 `scan/clean --details` 显式展开，
+默认摘要与已有 JSON 明细保持。UI 和文本共用 `diagnostic_review.py`，不重新访问文件。
 Space/Enter 仍在逐项列表切换选择，详情页不改变选择。详情只读取当前 Item 的路径/identifier、
 说明、年龄、句柄和诊断字段；未测数据标为未知。Clean 文本报告同步提供简短诊断摘要，
 JSON 字段与容量口径不变。子集锚点不代表父目录可删除，retention 年龄桶有重叠、不可累加。

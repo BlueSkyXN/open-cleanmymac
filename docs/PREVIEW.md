@@ -53,6 +53,10 @@ PYTHONPATH=. python3 scripts/preview_all.py --json
 保存文件审阅根的设置、覆盖、清除和离线目录行为由 `test_file_review_config.py` 在临时
 HOME 中验证；不会改写真实配置。文件范围只影响只读下载/镜像扫描，不改变执行资格。
 
+类型资源可用文本 `scan/clean --details` 展开，或在 Clean TUI 按 F 浏览、Enter/I 查看单项。
+`test_diagnostic_review.py` 验证明细来自同次证据、同路径类型隔离、终端字符处理和资源页
+不改变选择；这些资源行没有执行动作。
+
 AI 浏览器补齐测试在临时 profile 中验证八个新增精确路径及相似路径反例、运行中 Chrome
 阻断、JSON 预览和只移动选中缓存，保留登录态与未选数据；不启动真实浏览器或连接真实 profile。
 

@@ -28,6 +28,7 @@ from .cleanup import (
     with_cleanup_selection,
 )
 from .config import ConfigError, ConfigStore, validated_file_roots
+from .diagnostic_review import EvidenceIndex
 from .core.errors import AgentRuntimeError
 from .display_mode import DisplayModeError, resolve_display_mode
 from .engine import (
@@ -533,6 +534,7 @@ def _resolve_cleanup_selection(
                 groups,
                 title=title,
                 allow_execution=args.yes,
+                diagnostics=tuple(result.diagnostics),
             )
         except TUIUnavailable as exc:
             # 显式 --interactive 不静默换模式；无审阅执行风险同样拒绝回退。
@@ -983,6 +985,16 @@ def _print_text_totals(result: ScanResult, *, selection_label: str = "当前选�
           f"只读/阻断 {human(sum(item.size for item in result.items if not item.actionable))}")
 
 
+def _print_text_evidence(item: Item, evidence: EvidenceIndex) -> None:
+    entries = evidence.entries(item)
+    if entries:
+        print(f"      资源明细：{len(entries)} 项（只读，不改变选择）")
+        for index, entry in enumerate(entries, 1):
+            print(f"      {index}. {safe_text(entry.summary)}")
+            for line in entry.lines:
+                print(f"         {safe_text(line)}")
+
+
 def _print_report(
     result: ScanResult,
     as_json: bool,
@@ -990,6 +1002,7 @@ def _print_report(
     *,
     redact_paths: bool = False,
     path_seeds: tuple[str, ...] = (),
+    show_details: bool = False,
 ) -> None:
     if as_json:
         _print_json({
@@ -1012,10 +1025,13 @@ def _print_report(
     print("\n扫描结果 · 只读报告")
     _print_file_review_scope(result)
     print("─" * 78)
+    evidence = EvidenceIndex(result.diagnostics) if show_details else None
     for cat, items in sorted(cats.items(),
                              key=lambda kv: -sum(i.size for i in kv[1])):
         for i in sorted(items, key=lambda x: -x.size):
             _print_text_item(cat, i, selected=i.preselected is True)
+            if evidence is not None:
+                _print_text_evidence(i, evidence)
     print("─" * 78)
     _print_text_totals(result, selection_label="默认预选")
     _print_issues(result)
@@ -1103,6 +1119,7 @@ def _print_clean_report(
     *,
     redact_paths: bool = False,
     path_seeds: tuple[str, ...] = (),
+    show_details: bool = False,
 ) -> None:
     grouped = result.by_domain()
     domains = [
@@ -1156,6 +1173,7 @@ def _print_clean_report(
     )
     print(f"\n{title}")
     print("─" * 88)
+    evidence_index = EvidenceIndex(result.diagnostics) if show_details else None
     for domain in domains:
         items = grouped[domain]
         domain_total = sum(item.size for item in items)
@@ -1168,7 +1186,9 @@ def _print_clean_report(
             )
             _print_text_item(item.category, item, selected=item.preselected is True, extra=cloud)
             for evidence in item_diagnostic_summary(item):
-                print(f"      {evidence}")
+                print(f"      {safe_text(evidence)}")
+            if evidence_index is not None:
+                _print_text_evidence(item, evidence_index)
     print("\n" + "─" * 88)
     _print_text_totals(result)
     if cleanup is None:
@@ -1747,6 +1767,7 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--file-root", action="append", metavar="PATH",
                     help="下载/镜像只读审阅根，可重复；覆盖保存配置或默认 Downloads，需包含 system 域")
     sp.add_argument("--config-path", type=Path, help="读取指定 CLI 配置文件")
+    sp.add_argument("--details", action="store_true", help="文本展开本次扫描的只读资源明细；JSON 已含明细")
     _add_rule_options(sp)
     sp.add_argument(
         "--workers",
@@ -1772,6 +1793,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_cleanup_execution_options(clean)
     clean.add_argument("--config-path", type=Path, help="读取指定 CLI 配置文件（文件审阅范围）")
+    clean.add_argument("--details", action="store_true", help="文本展开只读资源明细；TUI 可按 F，JSON 已含明细")
     _add_rule_options(clean)
     clean.add_argument(
         "--workers",
@@ -2189,6 +2211,7 @@ def main(argv: list[str] | None = None) -> int:
                 domains,
                 redact_paths=args.redact_paths,
                 path_seeds=tuple(raw_argv),
+                show_details=args.details,
             )
         return 0 if items_result.complete else 1
 
@@ -2199,6 +2222,7 @@ def main(argv: list[str] | None = None) -> int:
         _classic_selector = bool(
             args.category
             or args.config_path
+            or args.details
             or getattr(args, "select", [])
             or getattr(args, "select_all_safe", False)
             or getattr(args, "force", False)
@@ -2371,6 +2395,7 @@ def main(argv: list[str] | None = None) -> int:
             cleanup,
             redact_paths=args.redact_paths,
             path_seeds=tuple(raw_argv),
+            show_details=args.details,
         )
         return 0 if (
             result.complete and (cleanup is None or cleanup.complete)
