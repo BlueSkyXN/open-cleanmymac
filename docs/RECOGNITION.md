@@ -12,7 +12,8 @@ openclean clean junk --no-interactive --json
 openclean scan --domain system --file-root ~/Downloads --json
 openclean scan --domain system --file-root ~/Downloads --file-root ~/Documents/Images --json
 openclean config --file-root ~/Downloads --file-root ~/Documents/Images
-openclean clean junk --json
+openclean scan --domain system --details
+openclean clean junk --interactive
 openclean config --clear-file-roots
 ```
 
@@ -42,6 +43,17 @@ openclean config --clear-file-roots
 配置沿用 `~/.config/openclean/config.json` 和原子写入/0600 权限，在配置 schema 1 中增加可选
 `file_roots` 数组。未设置或清除后不写此字段，旧配置无需迁移。旧版严格配置读取器不能读取
 含新字段的文件；退回旧版前可用新版清除保存范围，或使用独立 `--config-path`。
+
+### 逐项查看
+
+文本 `scan --details`、`clean --details --no-interactive` 展开已采集的架构文件、语言资源
+目录、普通下载和镜像证据；默认仍输出摘要，JSON 原有明细不变。修改时间以 UTC 显示，
+不是下载时间或最后使用时间。语言条目是本地化目录，不承诺列出目录内所有普通文件。
+
+Clean TUI 的逐项列表按 `F` 打开资源明细；`I` 聚合详情也可用 `F` 进入。方向键和
+PgUp/PgDn 浏览，Enter/I 查看完整路径、类型、计量和限制；Esc/左键逐层返回，Q 取消审阅。
+资源列表使用同次扫描证据、不重新扫描，Space/A 不选中资源，也不改变原清理选择。
+小窗口与 resize 沿用既有终端保护；缺明细时不生成虚构资源行。
 
 ## 已有识别类型
 

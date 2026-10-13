@@ -44,6 +44,11 @@ REQ-FLOW-002：Clean/Purge 列表提供分类、复选、阻断原因与 I 详�
 方向键滚动详情，Esc/左键返回原位置，Q 取消审阅。列表 Space/Enter 选择语义不变。
 VAL-FLOW-002：长路径、缺失元数据、只读/阻断对象可查看；详情返回不改变选择和计量。
 
+架构、语言、下载和镜像项的 F 资源列表来自同次 ScanResult.diagnostics，Enter/I 显示完整
+路径与依据；资源页 Space/A 无选择动作，不生成清理 Item。Esc/左键保留原列表位置，Q
+取消审阅；方向键与 PgUp/PgDn 支持有界列表。文本 scan/clean --details 展开同一证据，
+不重新扫描或读取资源正文。回归见 `test_diagnostic_review.py`。
+
 显示层按终端列宽处理中文/组合字符，长列表文本可以省略但详情保留完整内容；焦点和阻断
 状态同时具有文字与视觉标记。快捷键完整换行，NO_COLOR/无颜色终端提供单色回退。
 默认 `OPENCLEAN_THEME=auto` 使用终端默认前景/背景与反白焦点，兼容浅色和深色配置；

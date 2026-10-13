@@ -78,3 +78,7 @@ SIGTERM 和消费者提前关闭管道不在本轮新增处理范围内，不承
 回归入口：`tests/test_display_mode.py`（模式矩阵与冲突）、`tests/test_cli_contract.py`
 （输出契约）、`tests/test_scan_tui.py`、`tests/test_analyze_session.py`、
 `tests/test_analyze_pty.py`（真实 PTY 取消）。
+
+`scan/clean --details` 只展开文本的类型资源证据；JSON 本身已经含明细，配合此参数不会
+改变结构或进入交互。Clean TUI 按 F 查看同次资源列表、Enter/I 详情、Esc 返回、Q 取消，
+PgUp/PgDn 翻页；资源页没有选择动作。`--details` 与 Agent `clean --run` 互斥。

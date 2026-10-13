@@ -5,6 +5,7 @@ import curses
 from dataclasses import dataclass
 
 from .engine import human
+from .diagnostic_review import EvidenceEntry, EvidenceIndex
 from .models import Item
 from .terminal_ui import (
     clip_cells, draw_footer, draw_small_screen, draw_text, init_styles,
@@ -270,16 +271,48 @@ def _wrap_detail_line(text: str, width: int) -> list[str]:
     return wrap_cells(text, width)
 
 
-def _draw_item_details(screen, item: Item, offset: int) -> tuple[int, int]:
+def _draw_item_details(screen, item: Item, offset: int, *, evidence_count: int = 0) -> tuple[int, int]:
     screen.erase()
     height, width = screen.getmaxyx()
     lines = [part for line in item_detail_lines(item)
              for part in _wrap_detail_line(line, max(1, width - 1))]
-    footer = draw_footer(screen, "↑↓ 滚动 · Esc/← 返回 · Q 取消审阅")
+    hint = f"F 查看 {evidence_count} 项资源 · " if evidence_count else ""
+    footer = draw_footer(screen, hint + "↑↓ 滚动 · Esc/← 返回 · Q 取消审阅")
     visible = max(1, footer - 3)
     maximum = max(0, len(lines) - visible)
     offset = max(0, min(offset, maximum))
     _safe_add(screen, 0, 1, "只读详情 · 不改变选择", width, "title")
+    for row, line in enumerate(lines[offset:offset + visible], 2):
+        _safe_add(screen, row, 0, line, width)
+    screen.refresh()
+    return offset, maximum
+
+
+def _draw_evidence(screen, item: Item, entries: tuple[EvidenceEntry, ...], cursor: int) -> int:
+    screen.erase()
+    _height, width = screen.getmaxyx()
+    footer = draw_footer(screen, "↑↓/PgUp/PgDn 浏览 · Enter/I 详情 · Esc/← 返回 · Q 取消审阅")
+    visible = max(1, footer - 4)
+    offset = max(0, cursor - visible + 1)
+    _safe_add(screen, 0, 1, f"{item.category} · {cursor + 1}/{len(entries)} 项只读资源", width, "title")
+    _safe_add(screen, 1, 1, "来自本次扫描；不改变选择，不重新扫描。", width, "muted")
+    for row, index in enumerate(range(offset, min(len(entries), offset + visible)), 3):
+        entry = entries[index]
+        _safe_add(screen, row, 1, f"{'›' if index == cursor else ' '} {entry.summary}  {entry.name}",
+                  width, "focus" if index == cursor else "plain")
+    screen.refresh()
+    return visible
+
+
+def _draw_evidence_details(screen, entry: EvidenceEntry, offset: int) -> tuple[int, int]:
+    screen.erase()
+    _height, width = screen.getmaxyx()
+    lines = [part for line in entry.lines for part in _wrap_detail_line(line, max(1, width - 1))]
+    footer = draw_footer(screen, "↑↓/PgUp/PgDn 滚动 · Esc/← 返回资源列表 · Q 取消审阅")
+    visible = max(1, footer - 3)
+    maximum = max(0, len(lines) - visible)
+    offset = max(0, min(offset, maximum))
+    _safe_add(screen, 0, 1, "资源详情 · 只读，不改变选择", width, "title")
     for row, line in enumerate(lines[offset:offset + visible], 2):
         _safe_add(screen, row, 0, line, width)
     screen.refresh()
@@ -398,6 +431,7 @@ def _draw_items(
     cursor: int,
     selected_keys: set,
     title: str,
+    *, has_evidence: bool = False,
 ) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
@@ -408,7 +442,9 @@ def _draw_items(
         groups,
         selected_keys,
     )
-    footer = draw_footer(screen, "↑↓ 移动 · Space/Enter 切换 · I 只读详情 · A 批量选择 · ←/Esc 返回 · Q 退出")
+    footer = draw_footer(screen, "↑↓ 移动 · Space/Enter 切换 · I 只读详情 · "
+                         + ("F 资源明细 · " if has_evidence else "")
+                         + "A 批量选择 · ←/Esc 返回 · Q 退出")
     category_width = min(24, max(12, width // 5))
     size_width = 16 if any(item.diagnostic_kind in {
         "application_binaries", "application_updates", "downloads", "disk_image"
@@ -523,6 +559,7 @@ def _run_review(
     *,
     title: str,
     allow_execution: bool,
+    diagnostics: tuple[dict, ...] = (),
 ) -> ReviewResult:
     screen.keypad(True)
     init_styles()
@@ -543,6 +580,11 @@ def _run_review(
     group_cursor = 0
     item_cursor = 0
     detail_offset = 0
+    evidence_index = EvidenceIndex(diagnostics)
+    entries: tuple[EvidenceEntry, ...] = ()
+    evidence_cursor = 0
+    evidence_return_mode = "items"
+    evidence_page = 1
     mode = "groups"
 
     while True:
@@ -561,6 +603,7 @@ def _run_review(
                 item_cursor,
                 selected_keys,
                 title,
+                has_evidence=evidence_index.record(groups[group_cursor].items[item_cursor]) is not None,
             )
         elif mode == "confirm":
             _draw_confirmation(
@@ -572,8 +615,13 @@ def _run_review(
             )
         elif mode == "details":
             detail_offset, detail_maximum = _draw_item_details(
-                screen, groups[group_cursor].items[item_cursor], detail_offset
+                screen, groups[group_cursor].items[item_cursor], detail_offset,
+                evidence_count=len(entries),
             )
+        elif mode == "evidence":
+            evidence_page = _draw_evidence(screen, groups[group_cursor].items[item_cursor], entries, evidence_cursor)
+        elif mode == "evidence-details":
+            detail_offset, detail_maximum = _draw_evidence_details(screen, entries[evidence_cursor], detail_offset)
         else:
             _draw_critical_confirmation(
                 screen, _selected_items(groups, selected_keys)
@@ -621,7 +669,14 @@ def _run_review(
                 _toggle_items(list(items), selected_keys)
             elif key in {ord("i"), ord("I")}:
                 detail_offset = 0
+                entries = evidence_index.entries(items[item_cursor])
                 mode = "details"
+            elif key in {ord("f"), ord("F")}:
+                entries = evidence_index.entries(items[item_cursor])
+                if entries:
+                    evidence_cursor = 0
+                    evidence_return_mode = "items"
+                    mode = "evidence"
             continue
 
         if mode == "details":
@@ -631,6 +686,36 @@ def _run_review(
                 detail_offset = min(detail_maximum, detail_offset + 1)
             elif key in {curses.KEY_LEFT, 27}:
                 mode = "items"
+            elif key in {ord("f"), ord("F")} and entries:
+                evidence_cursor = 0
+                evidence_return_mode = "details"
+                mode = "evidence"
+            continue
+
+        if mode == "evidence":
+            if key in {curses.KEY_UP, curses.KEY_PPAGE}:
+                evidence_cursor = max(0, evidence_cursor - (evidence_page if key == curses.KEY_PPAGE else 1))
+            elif key in {curses.KEY_DOWN, curses.KEY_NPAGE}:
+                evidence_cursor = min(len(entries) - 1, evidence_cursor + (evidence_page if key == curses.KEY_NPAGE else 1))
+            elif key == curses.KEY_HOME:
+                evidence_cursor = 0
+            elif key == curses.KEY_END:
+                evidence_cursor = len(entries) - 1
+            elif key in {curses.KEY_ENTER, 10, 13, ord("i"), ord("I")}:
+                detail_offset = 0
+                mode = "evidence-details"
+            elif key in {curses.KEY_LEFT, 27}:
+                detail_offset = 0
+                mode = evidence_return_mode
+            continue
+
+        if mode == "evidence-details":
+            if key in {curses.KEY_UP, curses.KEY_PPAGE}:
+                detail_offset = max(0, detail_offset - (max(1, screen.getmaxyx()[0] - 6) if key == curses.KEY_PPAGE else 1))
+            elif key in {curses.KEY_DOWN, curses.KEY_NPAGE}:
+                detail_offset = min(detail_maximum, detail_offset + (max(1, screen.getmaxyx()[0] - 6) if key == curses.KEY_NPAGE else 1))
+            elif key in {curses.KEY_LEFT, 27}:
+                mode = "evidence"
             continue
 
         if mode == "confirm":
@@ -664,6 +749,7 @@ def review_cleanup(
     *,
     title: str,
     allow_execution: bool,
+    diagnostics: tuple[dict, ...] = (),
 ) -> ReviewResult:
     """打开 curses 审阅；空结果直接提交空选择。"""
     groups = tuple(group for group in groups if group.items)
@@ -676,6 +762,7 @@ def review_cleanup(
                 groups,
                 title=title,
                 allow_execution=allow_execution,
+                diagnostics=diagnostics,
             )
         )
     except (curses.error, OSError) as exc:

@@ -57,6 +57,7 @@ openclean large ~/Downloads --min-size 100MiB --top 50 --json
 `config --clear-file-roots` 恢复默认。`scan` system 和经典 `clean junk/clean` 复用保存根，
 本次 `scan --file-root` 优先；用 `file_review_scope` 核对实际来源和请求目录。
 配置写入不同于只读扫描，不因获准扫描就替用户保存目录。`--config-path FILE` 可隔离配置。
+文本 `--details` 或 TUI `F` 展开同次明细；JSON 已含完整的有界证据，不增加清理资格。
 挂载未知、元数据缺失或 `scan_coverage` 中的访问失败须原样解释，不要求用户用权限改动
 换取更大的可清理数字。
 

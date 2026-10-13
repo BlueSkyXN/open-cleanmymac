@@ -76,6 +76,7 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | Mach-O 多架构识别 | `scan/clean junk` | `read-only` | slice 逻辑字节单列，未提供裁剪执行器 |
 | Chrome 旧版本组件 | `scan/clean junk` | `read-only` | 应用、组件元数据与 Current 一致才判版本；不删除 |
 | 下载与磁盘镜像 | `scan/clean junk` | `read-only` | 显式 scan --file-root > 保存范围 > 默认 Downloads；离线保存根报告不完整；未挂载不等于不使用 |
+| 类型资源明细 | `scan/clean --details`、Clean TUI `F` | `read-only` | 同次架构文件、语言目录、下载/镜像明细；可翻页与查看详情，不改变选择、不重新扫描 |
 | 扫描覆盖诊断 | JSON diagnostics | `read-only` | 访问失败原因未知时如实标记，不能据此推断未读取容量 |
 | Time Machine 本地快照提示 | `analyze` | `read-only` | 只显示名称/数量；不宣称精确大小，不删除 |
 | dataless/疑似占位保护 | 所有文件扫描/执行 | `available` | 不保证识别全部已 materialized cloud-synced 文件；真实 provider fixture 待验收 |
