@@ -34,6 +34,8 @@ openclean config --clear-file-roots
 `scan --file-root` > 保存的 `file_roots` > 默认 Downloads，范围不会自动叠加。
 `scan`、`clean`、`config` 可用 `--config-path FILE` 指定配置；Agent `clean --run`
 不接受该参数。其它扫描域、项目范围和应用根不受文件审阅配置影响。
+审阅根与普通清理候选同路径时，`--select` 解析普通候选并保留其风险、阻断和唯一性检查；
+只读诊断锚点不引入额外选择歧义，也不因此获得执行资格。
 
 保存目录在之后离线、消失或变成链接时，保留原配置并在扫描中报告阻断和 `complete=false`，
 其它可读根仍返回结果；不静默改扫 Downloads。默认 Downloads 缺失仅给提示。
@@ -69,6 +71,11 @@ PgUp/PgDn 浏览，Enter/I 查看完整路径、类型、计量和限制；Esc/�
 镜像与下载来自同一次文件遍历，不重复计算同一文件。`testdata`、`node_modules`、`.git`
 路径组件会显示开发文件上下文；镜像使用情况仍为未知。链接、云占位和跨文件系统对象
 按既有规则排除，不把排除当成已确认的零占用。
+语言目录和 Chrome 版本子目录也在开始内部遍历前检查文件系统边界，跨界跳过写入 issues。
+
+Chrome 的 Current 必须对应实际存在的普通版本目录，当前 framework 的标识和版本也须
+与应用一致；计量结束再次核实当前组件身份、元数据和指针。证据缺失或矛盾时保留未知。
+主动暂停不消耗元数据检查时间预算；实际检查超时仍报告不完整，但不推断版本已经变化。
 
 挂载查询失败返回 `unknown`。空的已挂载镜像清单支持 `not_mounted`；非空清单中能
 精确找到候选路径时为 `mounted`，未精确匹配则保留 `unknown`，不假设各种系统版本的
@@ -88,7 +95,8 @@ CLI envelope 继续使用 `schema_version=2`；原有字段和精确选择含义
 Item 持久化字段集合、Run bundle 版本和现有 pack 保持不变。新诊断不通过 Agent pack 执行。
 
 所有诊断含 `kind`、`category`、`complete`；对象诊断另含 `anchor_path`，该路径是证据锚点，
-不是执行 selector。对外分享使用 `--redact-paths`，锚点、明细路径及错误说明均脱敏。
+不是执行 selector。对外分享使用 `--redact-paths`，锚点、明细路径、错误说明和镜像格式
+描述内嵌的原始路径均脱敏。
 
 | `kind` | 主要明细 | 计量解释 |
 |---|---|---|

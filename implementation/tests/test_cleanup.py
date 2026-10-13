@@ -93,6 +93,25 @@ def _candidate(
 
 
 class CleanupSelectionTests(unittest.TestCase):
+    def test_same_path_diagnostic_does_not_bypass_safety_or_ordinary_ambiguity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp).resolve() / "cache"
+            ordinary = Item(path, 10, "缓存", "critical", preselected=False)
+            diagnostic = Item(path, 0, "文件审阅", "critical", actionable=False,
+                              resource_kind="filesystem_subset", diagnostic_kind="downloads")
+            with self.assertRaisesRegex(SelectionError, "--include-critical"):
+                select_cleanup_items([ordinary, diagnostic], selectors=[str(path)])
+            self.assertEqual(select_cleanup_items(
+                [ordinary, diagnostic], selectors=[str(path)], include_critical=True,
+            ), [ordinary])
+            blocked = replace(ordinary, actionable=False, action_block_reason="fixture blocked")
+            with self.assertRaisesRegex(SelectionError, "fixture blocked"):
+                select_cleanup_items([blocked, diagnostic], selectors=[str(path)], include_critical=True)
+            with self.assertRaisesRegex(SelectionError, "候选不唯一"):
+                select_cleanup_items([ordinary, blocked, diagnostic], selectors=[str(path)], include_critical=True)
+            with self.assertRaisesRegex(SelectionError, "拒绝选择"):
+                select_cleanup_items([diagnostic], selectors=[str(path)], include_critical=True)
+
     def setUp(self) -> None:
         self.safe = _candidate(
             Path("/Users/example/safe"),

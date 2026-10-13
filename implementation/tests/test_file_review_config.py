@@ -149,6 +149,28 @@ class FileReviewConfigTests(unittest.TestCase):
         self.assertEqual(len(paths), 2)
         self.assertEqual(len(set(paths)), 2)
 
+    def test_saved_review_root_does_not_ambiguate_existing_cleanup_selector(self):
+        cache = self.home / "Library/Caches/ReviewFixture"
+        cache.mkdir(parents=True)
+        (cache / "cache.bin").write_bytes(b"cached data")
+        points = [
+            ScanPoint("测试缓存", (str(cache),), "safe"),
+            ScanPoint("下载与磁盘镜像", ("~/Downloads",), "critical", scanner="downloads"),
+        ]
+        with mock.patch.dict(DOMAINS, {"system": points}):
+            argv = ["clean", "junk", "--no-interactive", "--select", str(cache)]
+            self.assertEqual(invoke(argv)[0], 0)
+            self.store.set_file_roots([cache])
+            status, payload = invoke(argv)
+        self.assertEqual(status, 0)
+        items = [item for category in payload["categories"] for item in category["items"]]
+        ordinary = next(i for i in items if not i.get("diagnostic_kind"))
+        diagnostic = next(i for i in items if i.get("diagnostic_kind") == "downloads")
+        self.assertTrue(ordinary["preselected"])
+        self.assertFalse(diagnostic["preselected"])
+        self.assertFalse(diagnostic["actionable"])
+        self.assertTrue((cache / "cache.bin").exists())
+
     def test_invalid_config_blocks_system_scan_but_not_other_domains_or_explicit_scope(self):
         self.config.parent.mkdir(parents=True)
         self.config.write_text("invalid")

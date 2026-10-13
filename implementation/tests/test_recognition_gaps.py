@@ -62,6 +62,116 @@ def format_result(*args, **kwargs):
 
 
 class UpdateRecognitionTests(unittest.TestCase):
+    def test_current_component_must_exist_and_match_framework_metadata(self):
+        for invalid in ("missing", "symlink", "version", "identifier", "plist", "protected"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as tmp:
+                application, versions = chrome(Path(tmp).resolve())
+                current = versions / "2.0"
+                metadata = current / "Resources/Info.plist"
+                protection = IgnoreRules()
+                if invalid in {"missing", "symlink"}:
+                    current.rename(versions / "parked-current")
+                    if invalid == "symlink":
+                        current.symlink_to("parked-current", target_is_directory=True)
+                elif invalid == "protected":
+                    protection = IgnoreRules([str(current)])
+                elif invalid == "plist":
+                    metadata.write_bytes(b"invalid plist")
+                else:
+                    value = plistlib.loads(metadata.read_bytes())
+                    value["CFBundleShortVersionString" if invalid == "version" else "CFBundleIdentifier"] = "wrong"
+                    metadata.write_bytes(plistlib.dumps(value))
+                result = scan_chrome_versions([application], protection)
+                self.assertFalse(result.complete)
+                self.assertEqual(len(result.items), 1)
+                self.assertEqual(result.diagnostics[0]["updater_status"], "version_unknown")
+                self.assertFalse(result.diagnostics[0]["complete"])
+                self.assertTrue(any(i.code == "updater_metadata_invalid" for i in result.issues))
+
+    def test_current_component_is_revalidated_after_measurement(self):
+        for mutation in ("metadata", "identity"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                application, versions = chrome(Path(tmp).resolve())
+                current = versions / "2.0"
+                metadata = current / "Resources/Info.plist"
+                mutated = False
+
+                def progress():
+                    nonlocal mutated
+                    if mutated:
+                        return
+                    mutated = True
+                    original = metadata.read_bytes()
+                    if mutation == "identity":
+                        current.rename(versions / "parked-current")
+                        metadata.parent.mkdir(parents=True)
+                        metadata.write_bytes(original)
+                    else:
+                        value = plistlib.loads(original)
+                        value["CFBundleShortVersionString"] = "3.0"
+                        metadata.write_bytes(plistlib.dumps(value))
+
+                result = scan_chrome_versions([application], IgnoreRules(), on_progress=progress)
+                self.assertTrue(mutated)
+                self.assertFalse(result.complete)
+                self.assertEqual(result.diagnostics[0]["updater_status"], "version_unknown")
+                expected = "path_changed" if mutation == "identity" else "updater_metadata_invalid"
+                self.assertTrue(any(i.code == expected for i in result.issues))
+
+    def test_resource_walk_pause_is_excluded_from_inspection_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            application, _ = chrome(Path(tmp).resolve())
+            now = 0.0
+            walking = paused = False
+
+            def progress():
+                nonlocal walking
+                walking = True
+
+            def checkpoint():
+                nonlocal now, paused
+                if walking and not paused:
+                    paused = True
+                    now += 20.0
+
+            with mock.patch("openclean.path_inspection.time.monotonic", side_effect=lambda: now):
+                result = scan_chrome_versions([application], IgnoreRules(), checkpoint=checkpoint,
+                                              on_progress=progress)
+            self.assertTrue(paused)
+            self.assertTrue(result.complete)
+            self.assertEqual(result.diagnostics[0]["updater_status"], "older_version_residue")
+            self.assertEqual(result.issues, [])
+
+    def test_active_timeout_stays_incomplete_without_claiming_version_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            application, _ = chrome(Path(tmp).resolve())
+            now = 0.0
+
+            def progress():
+                nonlocal now
+                now = 20.0
+
+            with mock.patch("openclean.path_inspection.time.monotonic", side_effect=lambda: now):
+                result = scan_chrome_versions([application], IgnoreRules(), on_progress=progress)
+            self.assertFalse(result.complete)
+            self.assertEqual(result.diagnostics[0]["updater_status"], "version_unknown")
+            self.assertNotIn("path_changed", {i.code for i in result.issues})
+            self.assertIn("updater_metadata_invalid", {i.code for i in result.issues})
+
+    def test_old_component_filesystem_is_checked_before_metadata_or_contents(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            application, versions = chrome(Path(tmp).resolve())
+            foreign = versions / "1.0"
+
+            def filesystem(path):
+                return 2 if Path(path) == foreign or foreign in Path(path).parents else 1
+
+            with mock.patch("openclean.resource_walk.filesystem_id_retry", side_effect=filesystem):
+                result = scan_chrome_versions([application], IgnoreRules())
+            self.assertEqual(result.items, [])
+            self.assertTrue(any(i.code == "cross_filesystem_skipped" and i.path == foreign
+                                for i in result.issues))
+
     def test_old_component_has_version_evidence_but_no_action(self):
         with tempfile.TemporaryDirectory() as tmp:
             application, versions = chrome(Path(tmp))

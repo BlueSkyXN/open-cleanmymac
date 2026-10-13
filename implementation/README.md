@@ -229,6 +229,8 @@ JSON schema v2 新增 `command=large`，已有命令格式不变。`items` 复�
   分别扩展对应批量层级。
 - 一旦指定 `--select`，选择集从空开始，不继承默认预选；confirm/critical 精确目标仍需
   对应 `--include-confirm`/`--include-critical` 作为风险授权，但不会顺带选择同等级其他项。
+- 同路径只读诊断不参与普通候选的选择歧义；普通候选自身仍需唯一并通过风险/阻断检查。
+  只有诊断项的路径仍拒绝执行，不因该规则获得清理资格。
 - Purge 对 `.vitepress` 只识别其一级 `cache`、`dist`，不把整个目录、配置或主题源码视为产物。
 - 硬链接按 device/inode 跨扫描点合并计量；共享容量归属不改变其它路径的选择资格。
   被扣除共享容量的候选可能显示 0 字节，note 会解释原因；这不是其内容为空或无需审阅。
@@ -362,6 +364,7 @@ Analyze 的公共参数、JSON schema v2、`--top` 显示截断和 critical 执�
 序列化阶段把同一文档内路径映射成稳定 opaque ref；输出声明
 `selection_replayable=false`，不能直接用于后续 `--select`。`complete=true` 只表示
 没有 blocking issue；仍应检查 `issues`。
+镜像的 `format_description` 按自由文本脱敏，包含未登记为结构化路径的嵌入来源路径。
 
 清理回执中的 `moved_to_trash_bytes` 与 `permanently_deleted_bytes` 是操作计量，
 不是执行前后磁盘可用空间的净增量；文本与 TUI 不承诺等量释放空间。

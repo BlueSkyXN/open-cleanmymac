@@ -100,6 +100,27 @@ class MachOTests(unittest.TestCase):
 
 
 class ResourceScanTests(unittest.TestCase):
+    def test_nested_language_directory_is_checked_before_starting_its_walk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            application, resources = app(Path(tmp).resolve())
+            foreign = resources / "fr.lproj"
+            local = resources / "de.lproj"
+            for directory in (foreign, local):
+                directory.mkdir()
+                (directory / "data.pak").write_bytes(b"localized data")
+
+            def filesystem(path):
+                return 2 if Path(path) == foreign or foreign in Path(path).parents else 1
+
+            with mock.patch("openclean.resource_walk.filesystem_id_retry", side_effect=filesystem):
+                result = scan_application_languages(
+                    [application], IgnoreRules(), preferred_languages=["en"], include_resources=True,
+                )
+            self.assertEqual(result.items[0].artifact_name, "de")
+            self.assertEqual([r["path"] for r in result.diagnostics[0]["localizations"]], [str(local)])
+            self.assertTrue(any(i.code == "cross_filesystem_skipped" and i.path == foreign
+                                for i in result.issues))
+
     def test_dynamic_cancel_preserves_completed_diagnostics(self):
         from openclean.progress import ProgressTaskSpec, WeightedProgress
         from openclean.scanpoints import ScanPoint

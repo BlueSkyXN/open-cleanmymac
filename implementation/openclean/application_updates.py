@@ -6,12 +6,50 @@ import os
 import plistlib
 import stat
 from collections.abc import Callable, Iterable
+from pathlib import Path
 
-from .models import FileFacts, Item, ScanIssue, ScanResult, normalize_path
+from .filesystem import filesystem_id_retry
+from .models import FileFacts, FileIdentity, Item, ScanIssue, ScanResult, normalize_path
 from .path_inspection import PathInspection
 from .predicates import Predicate, ProtectionGate
 from .resource_walk import WalkBudget, open_directory, walk_resources
 from .updater import _compare_versions, _read_app_metadata, _version_numbers
+
+
+def _framework_metadata_matches(component: Path, inspection: PathInspection) -> bool:
+    metadata = plistlib.loads(
+        inspection.read_metadata(component / "Resources/Info.plist", 2 * 1024 * 1024)
+    )
+    return (
+        isinstance(metadata, dict)
+        and metadata.get("CFBundleIdentifier") == "com.google.Chrome.framework"
+        and metadata.get("CFBundleShortVersionString") == component.name
+    )
+
+
+def _current_component(
+    versions: Path, installed_version: str, inspection: PathInspection
+) -> tuple[str | None, FileIdentity | None]:
+    """保留指针文本供展示；只有同卷实体和 framework 元数据一致才返回身份。"""
+    current = None
+    try:
+        with open_directory(versions, inspection.protection) as fd:
+            current = os.readlink("Current", dir_fd=fd)
+        if current != installed_version or _version_numbers(current) is None:
+            return current, None
+        # 数字版本只能是 Versions 下的直接子目录，不跟随 Current 或其它链接读取。
+        parent = inspection.checked_path(versions)
+        component = inspection.checked_path(versions / current)
+        if (
+            not stat.S_ISDIR(component.stat.st_mode)
+            or component.stat.st_dev != parent.stat.st_dev
+            or filesystem_id_retry(component.path) != filesystem_id_retry(versions)
+            or not _framework_metadata_matches(component.path, inspection)
+        ):
+            return current, None
+        return current, component.identity
+    except (OSError, ValueError, TypeError, RecursionError, plistlib.InvalidFileException):
+        return current, None
 
 
 def scan_chrome_versions(
@@ -64,17 +102,15 @@ def scan_chrome_versions(
                 versions_facts = inspection.checked_path(versions)
                 if not stat.S_ISDIR(versions_facts.stat.st_mode):
                     continue
-                with open_directory(versions, protection) as fd:
-                    try:
-                        current = os.readlink("Current", dir_fd=fd)
-                    except OSError:
-                        current = None
-                current_known = current == installed.version
+                current, current_identity = _current_component(
+                    versions, installed.version, inspection
+                )
+                current_known = current_identity is not None
                 if not current_known:
                     result.issues.append(
                         ScanIssue(
                             "updater_metadata_invalid",
-                            "Current 与已安装版本不一致或不可读取",
+                            "Current、当前组件实体或 framework 元数据无法与已安装版本核对",
                             task,
                             versions / "Current",
                         )
@@ -87,7 +123,7 @@ def scan_chrome_versions(
                         result,
                         task,
                         budget=budget,
-                        checkpoint=checkpoint,
+                        checkpoint=inspection.cooperate,
                         on_progress=on_progress,
                         descend=lambda f: False,
                     )
@@ -99,22 +135,12 @@ def scan_chrome_versions(
                     start = len(result.issues)
                     state = "version_unknown"
                     try:
-                        metadata = plistlib.loads(
-                            inspection.read_metadata(
-                                candidate.path / "Resources/Info.plist", 2 * 1024 * 1024
-                            )
-                        )
-                        metadata_matches = (
-                            isinstance(metadata, dict)
-                            and metadata.get("CFBundleIdentifier")
-                            == "com.google.Chrome.framework"
-                            and metadata.get("CFBundleShortVersionString")
-                            == candidate.path.name
-                        )
+                        metadata_matches = _framework_metadata_matches(candidate.path, inspection)
                     except (
                         OSError,
                         ValueError,
                         TypeError,
+                        RecursionError,
                         plistlib.InvalidFileException,
                     ):
                         metadata_matches = False
@@ -148,7 +174,7 @@ def scan_chrome_versions(
                         result,
                         task,
                         budget=budget,
-                        checkpoint=checkpoint,
+                        checkpoint=inspection.cooperate,
                         on_progress=on_progress,
                     ):
                         if not stat.S_ISREG(child.stat.st_mode):
@@ -158,19 +184,34 @@ def scan_chrome_versions(
                             seen.add(identity)
                             logical += child.logical_size
                             allocated += child.allocated_size
-                    # 版本读取和计量不是事务，结束时复核当前版本指针和应用元数据。
+                    # 版本读取和计量不是事务，结束时复核当前组件、指针和应用元数据。
                     latest = _read_app_metadata(application, inspection.checked_path)
-                    with open_directory(versions, protection) as fd:
-                        try:
-                            unchanged = os.readlink("Current", dir_fd=fd) == current
-                        except OSError:
-                            unchanged = False
-                    if latest != installed or not unchanged:
+                    latest_current, latest_identity = _current_component(
+                        versions, latest.version if latest is not None else installed.version,
+                        inspection,
+                    )
+                    changed = (
+                        (latest is not None and latest != installed)
+                        or (latest_current is not None and latest_current != current)
+                        or (current_identity is not None and latest_identity is not None
+                            and latest_identity != current_identity)
+                    )
+                    if changed:
                         state = "version_unknown"
                         result.issues.append(
                             ScanIssue(
                                 "path_changed",
-                                "扫描期间应用版本或 Current 变化",
+                                "扫描期间应用版本、Current 或当前组件身份变化",
+                                task,
+                                application,
+                            )
+                        )
+                    elif latest is None or latest_identity is None:
+                        state = "version_unknown"
+                        result.issues.append(
+                            ScanIssue(
+                                "updater_metadata_invalid",
+                                "扫描结束时无法核实应用及当前组件元数据；不能确认版本状态",
                                 task,
                                 application,
                             )
