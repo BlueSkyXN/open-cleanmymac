@@ -13,6 +13,7 @@ from .application_ownership import (
     DARWIN_CACHE_PROCESS_MARKERS,
     ApplicationResolver,
 )
+from .caskroom import CaskVersionState, _receipt_version, assess_cask_version, caskroom_roots
 from .filesystem import lstat_retry, scandir_entries
 from .macos import filesystem_name_matches, filesystem_relative_parts, scan_symlink_anchor
 from .models import FileFacts, normalize_path
@@ -106,6 +107,22 @@ class CleanupGuardContext:
         if (filesystem_relative_parts(root, path, probe=self._probe) is not None
                 and self._probe(root) is not None):
             return root, ()
+        return None
+
+    def _caskroom_state(self, path: Path) -> "CaskVersionState | None":
+        # 只判定 Caskroom 根下 token/版本 形状的路径；receipt 重读由 caskroom 完成。
+        for root in caskroom_roots():
+            relative = filesystem_relative_parts(path, root, probe=self._probe)
+            if relative is None or len(relative) != 2:
+                continue
+            token, directory_version = relative
+            receipt_version, receipt_error = _receipt_version(root / token)
+            if receipt_error:
+                return CaskVersionState(
+                    token, "", directory_version, "version_unknown",
+                    receipt_error, f"{token}：{receipt_error}；强制保护",
+                )
+            return assess_cask_version(token, receipt_version, directory_version)
         return None
 
     def _build_registered_roots(self) -> Iterator[tuple[Path, tuple[str, ...]]]:
@@ -213,6 +230,21 @@ class CleanupGuardContext:
                     reason = "选择范围覆盖 updater 暂存区，需重新扫描并精确审阅 updater 根目录"
                 elif updater.blocks_cleanup:
                     reason = updater.block_reason
+            cask_state = self._caskroom_state(path)
+            if cask_state is not None:
+                # 把 Caskroom 版本状态纳入 updater 四元组：扫描时写入 item，
+                # 执行前重读回执重算，receipt 变化即拒绝执行。
+                scopes.append(UpdaterScope(path, UpdaterAssessment(
+                    cask_state.status,
+                    "homebrew.cask",
+                    staged_version=cask_state.directory_version,
+                    installed_version=cask_state.receipt_version,
+                )))
+                notes.append(cask_state.note)
+                if cask_state.status != "older_version_residue":
+                    reason = reason or cask_state.block_reason or cask_state.note
+                elif cask_state.blocks_cleanup:
+                    reason = reason or cask_state.block_reason
         except OSError as exc:
             reason = f"无法完成应用保护范围复核：{exc}"
             inspection_error = reason

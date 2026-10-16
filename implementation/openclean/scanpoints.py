@@ -83,6 +83,13 @@ DEVELOPER_JUNK: list[ScanPoint] = [
     ScanPoint("Bun 缓存", ("~/.bun/install/cache",)),
     ScanPoint("mise 缓存", ("~/Library/Caches/mise",)),
     ScanPoint("Homebrew 缓存", ("~/Library/Caches/Homebrew",), env_paths=("HOMEBREW_CACHE",)),
+    ScanPoint(
+        "Homebrew Cask 旧版本",
+        (), "critical",
+        "按 INSTALL_RECEIPT 版本核对 Caskroom 版本目录；仅严格更低的目录成为候选",
+        scanner="caskroom-versions", default_selected=False,
+        running_process_markers=("brew", "brew.rb", "brew.sh"),
+    ),
     ScanPoint("Cargo 注册缓存", ("~/.cargo/registry/cache",)),
     ScanPoint(
         "Cargo Git 缓存",

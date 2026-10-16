@@ -85,6 +85,7 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | WorkBuddy 两代 BundleMigration | `scan/clean junk` | `available` | 分别校验旧/新 bundle ID 的暂存 app 与 ZIP；待安装包、损坏 ZIP、安装缺失和版本冲突均阻断；不混用两代安装元数据 |
 | Codex Electron 精确缓存 | `scan/clean ai` | `available` | 已知根与精确浏览器分区中的 Cache/Code Cache/GPU/Dawn、根级 shader/CRX 缓存；confirm、默认不选、运行保护及执行前复核 |
 | Codex 浏览器 CacheStorage | `scan/clean ai` | `read-only` | 已知根与精确浏览器分区中的 Service Worker/CacheStorage，仅报告元数据与 retention；保留登录、历史、会话和组件数据 |
+| Homebrew Cask 旧版本目录 | `scan/clean dev` | `available` | 按 INSTALL_RECEIPT 版本核对 Caskroom 顶层版本目录，仅严格更低目录为 critical 候选；brew 运行、进程未知、回执缺失或版本不可比较均阻断，执行前重读回执复核；等价 `brew cleanup --cask` 目录范围，不触碰 `.metadata` |
 | Go/Homebrew 环境缓存路径 | `scan/clean dev` | `available`（受限） | 跟随 GOCACHE/GOMODCACHE/HOMEBREW_CACHE，但仅限可信用户缓存根；要求精确选择，外置卷路径仍拒绝 |
 | 按卷容量汇总 | JSON 扫描/预览 | `available` | 按运行时 device 分组系统盘与外置盘；非文件系统资源不归卷 |
 | 递归大文件扫描 | `large [path]` | `read-only` | 表观大小阈值/排序、独立物理计量、top/预算、硬链接去重、忽略/云/跨卷边界；无访问日期推断、无清理执行器 |

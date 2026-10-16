@@ -13,7 +13,7 @@ from pathlib import Path
 SAFETY_LEVELS = frozenset({"safe", "confirm", "critical"})
 FILESYSTEM_RESOURCE_KINDS = frozenset({"filesystem", "filesystem_subset"})
 RESOURCE_KINDS = frozenset({*FILESYSTEM_RESOURCE_KINDS, "docker"})
-CLEANUP_SCOPES = frozenset({"", "darwin-user-cache"})
+CLEANUP_SCOPES = frozenset({"", "darwin-user-cache", "homebrew-caskroom"})
 PATH_SOURCES = frozenset({"builtin", "environment"})
 UPDATER_STATUSES = frozenset(
     {

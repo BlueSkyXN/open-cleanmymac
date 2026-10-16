@@ -273,6 +273,9 @@ def _validate_cleanup_scope(
                 f"候选路径包含符号链接组件：{component}"
             )
         return
+    if item.cleanup_scope == "homebrew-caskroom":
+        _validate_caskroom_scope(item, path, uid)
+        return
     if item.cleanup_scope != "darwin-user-cache":
         raise CleanupSafetyError(f"未知特殊清理范围：{item.cleanup_scope}")
     assert item.cleanup_root is not None
@@ -298,6 +301,39 @@ def _validate_cleanup_scope(
         raise CleanupSafetyError("Darwin cache 根目录 inode 已变化")
     if root_stat.st_uid != uid:
         raise CleanupSafetyError("Darwin cache 根目录不属于当前用户")
+
+
+def _validate_caskroom_scope(item: Item, path: Path, uid: int) -> None:
+    """Caskroom 旧版本目录位于系统保护根内；执行前重新发现根并复核结构。"""
+    from .caskroom import _receipt_version, assess_cask_version, caskroom_roots
+
+    assert item.cleanup_root is not None
+    assert item.cleanup_root_identity is not None
+    token_root = normalize_path(item.cleanup_root)
+    if component := symlink_component(path, anchor=token_root):
+        raise CleanupSafetyError(f"Caskroom 候选包含符号链接组件：{component}")
+    if path.parent != token_root:
+        raise CleanupSafetyError("Caskroom 候选不是 token 根的一级子项")
+    if not any(
+        token_root == normalize_path(root) / token_root.name
+        for root in caskroom_roots()
+    ):
+        raise CleanupSafetyError("Caskroom token 根不在当前发现范围内，需重新扫描")
+    root_stat = _lstat(token_root)
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise CleanupSafetyError("Caskroom token 根不是可信目录")
+    if FileFacts(path=token_root, stat=root_stat).identity != item.cleanup_root_identity:
+        raise CleanupSafetyError("Caskroom token 根 inode 已变化")
+    if root_stat.st_uid != uid:
+        raise CleanupSafetyError("Caskroom token 根不属于当前用户")
+    receipt_version, receipt_error = _receipt_version(token_root)
+    if receipt_error:
+        raise CleanupSafetyError(f"Caskroom {receipt_error}")
+    state = assess_cask_version(token_root.name, receipt_version, path.name)
+    if state.status != "older_version_residue":
+        raise CleanupSafetyError(
+            f"Caskroom 版本状态已变化（{state.status}），需重新扫描后再决定"
+        )
 
 
 def _validate_startup_item(item: Item, path: Path) -> None:

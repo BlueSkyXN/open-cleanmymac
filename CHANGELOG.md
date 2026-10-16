@@ -9,6 +9,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Homebrew Cask 旧版本目录识别：developer 域按 cask 安装回执（`INSTALL_RECEIPT.json`
+  的 `source.version`）核对 Caskroom 顶层版本目录，仅严格低于回执版本的目录成为
+  critical 候选并要求精确选择；当前版本、更高版本、无法比较或回执缺失一律保护。
+  brew 运行或进程状态未知时不可执行；执行前重读回执并复核版本四元组，新增
+  `homebrew-caskroom` 清理范围在系统保护根内限定 token/版本结构，不触碰
+  `.metadata`。等价于 `brew cleanup --cask` 的目录范围，不调用 brew 命令。
+
 ## [0.24.0a4] - 2026-10-13
 
 Alpha 功能与修复版：补齐应用资源和文件类型只读识别、保存审阅范围与资源明细，

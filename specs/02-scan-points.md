@@ -47,7 +47,12 @@ Homebrew 缓存的运行状态保护必须覆盖专用/通用扫描点、Analyze
 进程未知、疑似在途下载与锁标记保留原位，不能通过停止进程或按年龄判断自动解锁；锁目录不
 作为清理对象。识别 Bash 执行 brew.sh 的自动更新阶段，普通 API 文件没有在途标记也不能在活动时
 清理。Homebrew 范围及锁后代的大小写别名需经文件系统语义和 no-follow 身份复核，未知则阻断。
-验收见 `test_project_content_guards.py`、`test_homebrew_guards.py`。
+
+Caskroom 旧版本目录按安装回执版本判定：仅严格低于回执 `source.version` 的顶层版本目录成为
+developer 域 critical 精确选择候选；同版、更高、版本不可比较或回执缺失只报告并阻断。
+brew 活动、进程未知、打开句柄与既有文件系统边界沿用；执行前经 `homebrew-caskroom`
+范围重发现根并复核回执四元组，`.metadata` 与 token 本身不是清理对象，不调用 brew 命令。
+验收见 `test_caskroom.py`、`test_homebrew_guards.py`。
 
 ## 3. 承接个人经验与已有诊断
 

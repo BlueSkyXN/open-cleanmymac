@@ -134,6 +134,15 @@ probe 核对同一 device/inode/owner，不全局 casefold 或 resolve；身份�
 不改变输出路径、默认扫描根、环境路径原有授权范围或其它软件的归属推断。
 实际 Homebrew 下载/安装并发验收仍未完成；测试使用模拟进程与临时缓存，不调用真实 brew。
 
+Homebrew Cask 旧版本目录按 cask 安装回执（`Caskroom/<token>/.metadata/INSTALL_RECEIPT.json`
+的 `source.version`）核对同 token 下的顶层版本目录：仅严格低于回执版本的目录成为
+developer 域 critical 候选，要求 `--include-critical` 精确选择；当前版本、更高版本、
+无法比较的版本号（如 `1.0.98-2`）或回执缺失一律只报告并阻断。brew 运行或进程状态未知、
+存在打开句柄、symlink、忽略/跨卷/云占位均不可执行。Caskroom 位于系统保护根内，
+通过 `homebrew-caskroom` 清理范围在执行前重新发现根、复核 token/版本两级结构和回执版本
+四元组后才允许移动到同卷 Trash；不触碰 `.metadata`、不卸载 token、不调用 brew 命令，
+目录范围等价于 `brew cleanup --cask`。带后缀版本一律不可比较并保持保护。
+
 ### AI 浏览器缓存路径补齐
 
 Codex 的 `~/Library/Application Support/Codex` 根、`Default`、`codex-browser-app`、

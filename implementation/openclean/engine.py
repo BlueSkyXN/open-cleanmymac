@@ -22,6 +22,7 @@ from .application_updates import scan_chrome_versions
 from .application_ownership import ApplicationResolver
 from .cleanup_guards import CleanupGuardContext
 from .docker import scan_docker_resources
+from .caskroom import scan_caskroom_versions
 from .downloads import scan_downloads
 from .filesystem import filesystem_id_retry, lstat_retry, scandir_entries
 from .knowledge_base import KnowledgeBase
@@ -1061,6 +1062,10 @@ def _scan_dynamic_point_with_progress(
             result = scan_codex_storage_artifact_diagnostics(protection)
         elif point.scanner == "codex-browser-storage":
             result = scan_codex_browser_storage_diagnostics(protection)
+        elif point.scanner == "caskroom-versions":
+            result = scan_caskroom_versions(
+                protection, checkpoint=ctl.checkpoint,
+            )
         elif point.scanner == "workbuddy-storage":
             result = scan_workbuddy_storage(protection)
         else:
