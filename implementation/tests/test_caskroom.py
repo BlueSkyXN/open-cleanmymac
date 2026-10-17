@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -695,6 +696,67 @@ class CaskroomMetadataTests(CaskroomFixture):
             )
         item = self.old(self.scan())
         self.assertTrue(item.actionable, item.action_block_reason)
+
+    def test_other_scan_phases_do_not_expire_token_identity_check(self) -> None:
+        self.make_cask()
+        clock = time.monotonic
+        for operation in ("_installation_version", "_candidate_measurement"):
+            with self.subTest(operation=operation):
+                elapsed = 0.0
+                original = getattr(caskroom, operation)
+
+                def run(*args, **kwargs):
+                    nonlocal elapsed
+                    result = original(*args, **kwargs)
+                    elapsed += 6.0
+                    return result
+
+                with mock.patch("openclean.caskroom.time.monotonic", side_effect=lambda: clock() + elapsed), \
+                     mock.patch.object(caskroom, operation, side_effect=run):
+                    result = self.scan()
+                self.assertTrue(result.complete, result.issues)
+                self.assertTrue(self.old(result).actionable)
+
+    def test_prefix_phase_has_an_independent_time_budget(self) -> None:
+        self.make_cask()
+        clock = time.monotonic
+        elapsed = 0.0
+        installed = caskroom._check_installed_links
+        prefix = caskroom._scan_prefix_links
+
+        def check_installed(*args, **kwargs):
+            nonlocal elapsed
+            installed(*args, **kwargs)
+            elapsed += 2.0
+
+        def check_prefix(*args, **kwargs):
+            nonlocal elapsed
+            prefix(*args, **kwargs)
+            elapsed += 4.0
+
+        with mock.patch("openclean.caskroom.time.monotonic", side_effect=lambda: clock() + elapsed), \
+             mock.patch.object(caskroom, "_check_installed_links", side_effect=check_installed), \
+             mock.patch.object(caskroom, "_scan_prefix_links", side_effect=check_prefix):
+            result = self.scan()
+        self.assertTrue(result.complete, result.issues)
+        self.assertTrue(self.old(result).actionable, self.old(result).action_block_reason)
+
+    def test_prefix_phase_still_blocks_its_own_timeout(self) -> None:
+        self.make_cask()
+        clock = time.monotonic
+        elapsed = 0.0
+        original = caskroom._scan_prefix_links
+
+        def delayed(*args, **kwargs):
+            nonlocal elapsed
+            elapsed += 6.0
+            return original(*args, **kwargs)
+
+        with mock.patch("openclean.caskroom.time.monotonic", side_effect=lambda: clock() + elapsed), \
+             mock.patch.object(caskroom, "_scan_prefix_links", side_effect=delayed):
+            item = self.old(self.scan())
+        self.assertFalse(item.actionable)
+        self.assertIn("时间预算", item.action_block_reason)
 
     def test_protected_intermediate_link_reports_entry_and_component(self) -> None:
         token = self.make_cask()

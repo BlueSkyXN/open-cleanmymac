@@ -746,7 +746,12 @@ def _installation_version(
         historical = _check_historical_links(inspection, caskfiles[1:], links)
         # 除声明的入口外，prefix 链接目录中的任何残留链接也不得指向当前版本之外；
         # 历史版本记录过的入口在升级改名后仍可能保留在 bin/manpage 等目录中。
-        _scan_prefix_links(inspection, token_root, current, links)
+        prefix_started = time.monotonic()
+        prefix_inspection = _CaskInspection(token_root, protection, checkpoint)
+        prefix_inspection.remaining += _PREFIX_LINK_BUDGET
+        _scan_prefix_links(prefix_inspection, token_root, current, links)
+        # 全局 prefix 检查有自己的预算，不占用本 token 元数据复核的计时。
+        inspection.deadline += time.monotonic() - prefix_started
         if inspection.metadata_facts(token_root).identity != inspection.root.identity:
             raise InspectionError("Caskroom token 根在复核期间变化")
         if (inspection.read_json(token_root / ".metadata/INSTALL_RECEIPT.json") != receipt
@@ -924,7 +929,8 @@ def _scan_token(
             continue
         try:
             after = lstat_retry(path)
-            token_after = inspection.metadata_facts(token_root)
+            # 安装检查和目录计量可能耗时较长；这里开始独立的身份复核。
+            token_after = _CaskInspection(token_root, protection, checkpoint).root
         except OSError as exc:
             result.issues.append(_fs_issue(exc, path))
             continue

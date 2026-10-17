@@ -41,8 +41,10 @@ class PathInspection:
     def tick(self, *, cooperate: bool = True) -> None:
         if cooperate:
             self.cooperate()
-        if self.remaining <= 0 or time.monotonic() >= self.deadline:
-            raise InspectionError("内容保护检查超出项数或时间预算")
+        if self.remaining <= 0:
+            raise InspectionError("内容保护检查超出项数预算")
+        if time.monotonic() >= self.deadline:
+            raise InspectionError("内容保护检查超出时间预算")
         self.remaining -= 1
 
     def probe(self, path: Path) -> FileFacts:
