@@ -31,7 +31,7 @@ from .macos import (
 )
 from .models import FileFacts, FileIdentity, Item, ScanResult, normalize_path
 from .predicates import Predicate, ProtectionGate
-from .processes import capture_process_snapshot
+from .processes import OpenFileDetectionError, capture_open_file_snapshot, capture_process_snapshot
 from .project_artifacts import assess_project_artifact
 from .startup_items import StartupItemError, startup_item_still_broken
 
@@ -263,6 +263,7 @@ def _validate_cleanup_scope(
     path: Path,
     uid: int,
     home: Path,
+    protection: Predicate,
 ) -> None:
     if not item.cleanup_scope:
         if reason := nonprivileged_action_block_reason(path, home=home):
@@ -272,6 +273,9 @@ def _validate_cleanup_scope(
             raise CleanupSafetyError(
                 f"候选路径包含符号链接组件：{component}"
             )
+        return
+    if item.cleanup_scope == "homebrew-caskroom":
+        _validate_caskroom_scope(item, path, uid, protection)
         return
     if item.cleanup_scope != "darwin-user-cache":
         raise CleanupSafetyError(f"未知特殊清理范围：{item.cleanup_scope}")
@@ -298,6 +302,46 @@ def _validate_cleanup_scope(
         raise CleanupSafetyError("Darwin cache 根目录 inode 已变化")
     if root_stat.st_uid != uid:
         raise CleanupSafetyError("Darwin cache 根目录不属于当前用户")
+
+
+def _validate_caskroom_scope(item: Item, path: Path, uid: int, protection: Predicate) -> None:
+    """Caskroom 旧版本目录位于系统保护根内；执行前重新发现根并复核结构。"""
+    from .caskroom import assess_cask_path, caskroom_roots
+
+    assert item.cleanup_root is not None
+    assert item.cleanup_root_identity is not None
+    token_root = normalize_path(item.cleanup_root)
+    if component := symlink_component(path, anchor=token_root):
+        raise CleanupSafetyError(f"Caskroom 候选包含符号链接组件：{component}")
+    if path.parent != token_root:
+        raise CleanupSafetyError("Caskroom 候选不是 token 根的一级子项")
+    if not any(
+        token_root == normalize_path(root) / token_root.name
+        for root in caskroom_roots()
+    ):
+        raise CleanupSafetyError("Caskroom token 根不在当前发现范围内，需重新扫描")
+    root_stat = _lstat(token_root)
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise CleanupSafetyError("Caskroom token 根不是可信目录")
+    if FileFacts(path=token_root, stat=root_stat).identity != item.cleanup_root_identity:
+        raise CleanupSafetyError("Caskroom token 根 inode 已变化")
+    if root_stat.st_uid != uid:
+        raise CleanupSafetyError("Caskroom token 根不属于当前用户")
+    state = assess_cask_path(path, protection)
+    if state.blocks_cleanup:
+        raise CleanupSafetyError(state.block_reason)
+    if ((state.status, state.receipt_version, state.directory_version, False)
+            != (item.updater_status, item.installed_version,
+                item.staged_version, item.updater_external_install)):
+        raise CleanupSafetyError("Caskroom 版本状态已变化，需重新扫描后再决定")
+    if state.status != "older_version_residue":
+        raise CleanupSafetyError("Caskroom 目标不是已核实的旧版本目录")
+    try:
+        handles = capture_open_file_snapshot()
+    except OpenFileDetectionError as exc:
+        raise CleanupSafetyError(f"无法复核 Caskroom 打开句柄：{exc}") from exc
+    if handles.count_under(path):
+        raise CleanupSafetyError("Caskroom 旧版本存在打开句柄，拒绝清理")
 
 
 def _validate_startup_item(item: Item, path: Path) -> None:
@@ -476,7 +520,7 @@ def _audit_item(
         raise CleanupSafetyError("候选包含 macOS dataless/疑似云占位文件")
 
     path = normalize_path(item.path)
-    _validate_cleanup_scope(item, path, uid, home)
+    _validate_cleanup_scope(item, path, uid, home, protection)
     if item.domain == "trash" and not _is_trash_root(path, uid):
         raise CleanupSafetyError(f"拒绝清空非 Trash 根目录：{path}")
     if _knowledge_base_blocks(protection, path):
@@ -850,7 +894,7 @@ def _move_to_trash(
     destination = _unique_destination(trash, path)
     if not _identity_matches(path, item):
         raise CleanupSafetyError(f"移动前 inode 已变化：{path}")
-    _validate_cleanup_scope(item, path, uid, home)
+    _validate_cleanup_scope(item, path, uid, home, protection)
     _validate_startup_item(item, path)
     source_anchor = (
         normalize_path(item.cleanup_root)
@@ -989,7 +1033,7 @@ def _empty_trash(
     assert item.path is not None
     root = normalize_path(item.path)
     _audit_item(item, protection, home, uid, _live_guard_context(protection, home, process_runner))
-    _validate_cleanup_scope(item, root, uid, home)
+    _validate_cleanup_scope(item, root, uid, home, protection)
     if not _identity_matches(root, item):
         raise CleanupSafetyError(f"执行前 inode 已变化：{root}")
     anchor = home if _same_or_descendant(root, home) else Path("/")

@@ -13,11 +13,12 @@ from .application_ownership import (
     DARWIN_CACHE_PROCESS_MARKERS,
     ApplicationResolver,
 )
+from .caskroom import CaskScanCache, CaskVersionState, assess_cask_path, caskroom_roots
 from .filesystem import lstat_retry, scandir_entries
 from .macos import filesystem_name_matches, filesystem_relative_parts, scan_symlink_anchor
 from .models import FileFacts, normalize_path
 from .predicates import Predicate, ProtectionGate
-from .processes import ProcessDetectionError, ProcessSnapshot
+from .processes import OpenFileDetectionError, ProcessDetectionError, ProcessSnapshot, capture_open_file_snapshot
 from .scanpoints import DOMAINS
 from .updater import UPDATER_RULES, UpdaterAssessment, assess_updater_candidate
 
@@ -59,11 +60,13 @@ class CleanupGuardContext:
         *,
         home: Path | None = None,
         application_resolver: ApplicationResolver | None = None,
+        cask_scan_cache: CaskScanCache | None = None,
     ) -> None:
         self.home = normalize_path(home or Path.home())
         self.protection = protection
         self.resolver = application_resolver or ApplicationResolver(home=self.home)
         self.capture_processes = capture_processes
+        self.cask_scan_cache = cask_scan_cache
         self._process_lock = threading.Lock()
         self._process_checked = False
         self._snapshot: ProcessSnapshot | None = None
@@ -106,6 +109,41 @@ class CleanupGuardContext:
         if (filesystem_relative_parts(root, path, probe=self._probe) is not None
                 and self._probe(root) is not None):
             return root, ()
+        return None
+
+    def _caskroom_state(
+        self, path: Path, checkpoint: Callable[[], None],
+    ) -> CaskVersionState | None:
+        for root in caskroom_roots():
+            relative = filesystem_relative_parts(path, root, probe=self._probe)
+            if relative is None:
+                if (filesystem_relative_parts(root, path, probe=self._probe) is None
+                        or self._probe(root) is None):
+                    continue
+                relative = ()
+            if not relative:
+                return CaskVersionState(
+                    "", "", "", "version_unknown",
+                    "选择范围包含 Caskroom 安装根，不支持整体清理；请精确选择已核实的旧版本",
+                )
+            token = relative[0]
+            if len(relative) == 1:
+                # token 根本身聚合全部版本与安装证据，清理等于卸载 cask。
+                return CaskVersionState(
+                    token, "", "", "version_unknown",
+                    "Caskroom token 根包含全部版本和安装证据，不支持整体清理",
+                )
+            directory_version = relative[1]
+            if directory_version.startswith("."):
+                # `.metadata` 等安装证据目录不是清理对象。
+                return CaskVersionState(
+                    token, "", directory_version, "version_unknown",
+                    "Caskroom 安装证据目录不是清理对象",
+                )
+            return assess_cask_path(
+                root / token / directory_version, self.protection, checkpoint=checkpoint,
+                scan_cache=self.cask_scan_cache,
+            )
         return None
 
     def _build_registered_roots(self) -> Iterator[tuple[Path, tuple[str, ...]]]:
@@ -213,6 +251,32 @@ class CleanupGuardContext:
                     reason = "选择范围覆盖 updater 暂存区，需重新扫描并精确审阅 updater 根目录"
                 elif updater.blocks_cleanup:
                     reason = updater.block_reason
+            cask_state = self._caskroom_state(path, checkpoint)
+            if cask_state is not None:
+                brew_scope = True
+                markers.extend(homebrew.HOMEBREW_PROCESS_MARKERS)
+                scopes.append(UpdaterScope(path, UpdaterAssessment(
+                    cask_state.status,
+                    "homebrew.cask",
+                    staged_version=cask_state.directory_version,
+                    installed_version=cask_state.receipt_version,
+                )))
+                notes.append(cask_state.note)
+                if cask_state.status != "older_version_residue":
+                    reason = reason or cask_state.block_reason or cask_state.note
+                elif cask_state.blocks_cleanup:
+                    reason = reason or cask_state.block_reason
+                else:
+                    # 任意入口（含 Analyze）选中 Caskroom 内对象时都必须复核句柄。
+                    try:
+                        handles = (self.cask_scan_cache.open_files(checkpoint)
+                                   if self.cask_scan_cache is not None else
+                                   capture_open_file_snapshot())
+                    except OpenFileDetectionError as exc:
+                        reason = reason or f"无法复核 Caskroom 打开句柄：{exc}"
+                    else:
+                        if handles.count_under(path):
+                            reason = reason or "Caskroom 内目标存在打开句柄，拒绝清理"
         except OSError as exc:
             reason = f"无法完成应用保护范围复核：{exc}"
             inspection_error = reason

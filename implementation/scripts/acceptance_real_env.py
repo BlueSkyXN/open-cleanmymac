@@ -2,7 +2,8 @@
 
 homebrew 套件启动真实 ``brew update``/``brew fetch`` 并向真实
 ``~/Library/Caches/Homebrew`` 写入合成文件；volumes 套件创建并挂载
-APFS 磁盘镜像。两者都假定运行在用完即弃的虚拟机上，不应在真实
+APFS 磁盘镜像；caskroom 套件创建自有 tap，运行真实安装、升级和失败回滚。
+所有套件都假定运行在用完即弃的虚拟机上，不应在真实
 用户机器上执行；脚本因此要求显式设置 OPENCLEAN_REAL_ENV_ACCEPTANCE=1。
 验收结论以对应 GitHub Actions 运行日志为准，不写入仓库文档。
 """
@@ -175,6 +176,12 @@ def suite_homebrew() -> None:
         if seed.exists():
             seed.unlink()
     print("ACCEPT homebrew：真实 brew 并发与在途文件保护全部通过")
+
+
+def suite_caskroom() -> None:
+    from acceptance_caskroom import run
+
+    run()
 
 
 def _require_tool(name: str) -> None:
@@ -519,6 +526,7 @@ def suite_unicode() -> None:
 
 SUITES = {
     "homebrew": suite_homebrew,
+    "caskroom": suite_caskroom,
     "volumes": suite_volumes,
     "zig": suite_zig,
     "deriveddata": suite_deriveddata,
@@ -533,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if os.environ.get("OPENCLEAN_REAL_ENV_ACCEPTANCE") != "1":
         print(
-            "拒绝执行：本脚本会修改真实 Homebrew 缓存并挂载磁盘镜像，"
+            "拒绝执行：本脚本会修改 Homebrew 缓存、安装测试 cask 或挂载磁盘镜像，"
             "只能在一次性 macOS runner 上运行（设置 OPENCLEAN_REAL_ENV_ACCEPTANCE=1）。",
             file=sys.stderr,
         )

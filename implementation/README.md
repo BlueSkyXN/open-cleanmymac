@@ -134,6 +134,56 @@ probe 核对同一 device/inode/owner，不全局 casefold 或 resolve；身份�
 不改变输出路径、默认扫描根、环境路径原有授权范围或其它软件的归属推断。
 实际 Homebrew 下载/安装并发验收仍未完成；测试使用模拟进程与临时缓存，不调用真实 brew。
 
+Homebrew Cask 旧版本目录使用 `homebrew-caskroom` 专用范围。默认 Caskroom 根之外，只接受
+绝对 `HOMEBREW_PREFIX`。存在多个顶层版本目录时，核对 `.metadata/INSTALL_RECEIPT.json`
+的 `source.version`、最新 `.metadata/<version>/<timestamp>/Casks/<token>.json|internal.json|rb`、当前版本
+目录及安装入口；证据一致且目录版本严格更低时，才成为 developer 域 critical 可执行候选。
+需要 `--select <精确路径> --include-critical`，执行还需 `--yes`；同版、更高版本、带后缀或
+不可比较的版本、元数据缺失或矛盾均保持阻断。
+
+安装入口来自已安装 JSON 的 `artifacts` 或回执 `uninstall_artifacts`，当前只支持 binary、
+manpage、bash/zsh/fish/pwsh completion：每个目标必须是直接指向当前版本普通文件的链接，
+相对目标按 Homebrew prefix 中对应目录定位，绝对 target 按记录核对。源路径不允许绝对路径或
+`..`，支持已安装 JSON 的 `url_specs.only_path`。manpage 按章节目录定位，completion 按各 shell
+命名规则定位；这两类当前只接受默认目标名称。生成式补全只核对当前源文件和独立普通输出文件，
+不执行生成命令；`zap` 是卸载声明，不读取其目标也不把它当安装证据。app/pkg、脚本钩子、
+缺少安装链接及未知结构仅报告。旧 Ruby 定义只核对文件路径，不执行或解析 Ruby；入口由回执提供。
+当前声明的安装入口逐组件验证：中间组件必须是已验证的真实目录，含 `..` 的目标只在无符号链接
+组件时逐层回退解析，穿过符号链接的回退拒绝。除声明的入口外，
+prefix 已知链接目录会有界递归枚举，覆盖 manpage 章节目录和嵌套 binary，枚举不跟随链接。
+残留入口的归属检查逐组件展开中间及末级链接，先核实链接目标再处理 `..`，兼容正常的
+Homebrew `opt` 链接；每个链接经 no-follow 身份核验和保护检查。核实为其它软件或已经失效的入口
+不阻断当前软件的清理；指向本 token 旧版、循环、超出跳数、路径变化或命中保护规则时阻断。
+这项只读检查也覆盖先指向 prefix 外、再转回旧版文件的链接链；安装记录及清理目标继续拒绝链接组件。
+无法核实时，阻断原因包含入口及失败组件路径，便于定位具体对象。
+同时读取已有历史 JSON 定义，核对其记录的自定义目标（包括 prefix 外的绝对 binary target）；
+已移除的历史入口允许通过，仍引用本 token 非当前版本的入口阻断。历史 Ruby 定义或未知安装
+类型缺少可核实的入口记录时保持只读。链接归属按文件系统语义及对象身份核对大小写别名；
+指向其它 token 的链接由目标 token 自己的扫描判定。Caskroom 扫描器与共享 guards 在同次
+`scan/clean/analyze` 扫描内复用安装检查、prefix 枚举、目标解析及打开句柄快照，失败结论也复用。
+链接归属检查复用共同祖先的元数据，并在整批解析后按祖先优先顺序复核对象身份、链接及文件修改时间；
+共享祖先目录中无关条目的增减不改变当前链接的归属判定。
+大量手册别名共享目录时无需重复消耗检查预算。
+prefix 枚举、安装元数据核对和计量后的身份复核分别使用有界检查，前一阶段的耗时不占用后一阶段的预算。
+全局 prefix 检查使用 20 秒时限，单个 token 元数据和身份复核各使用默认 5 秒时限；条目数及链接跳数仍受限。
+新扫描和执行复核重新读取；预算超限、路径变化或保护范围无法读取时拒绝放行。
+
+Caskroom 子路径按 token/版本 槽位重判，覆盖 Analyze 的父目录、当前版本子目录和任意入口：
+当前版本不可清理，brew 运行或句柄检测失败拒绝执行；选中槽位存在打开句柄时阻断，
+句柄匹配按组件核对大小写别名，包括候选文件或目录自身（dev/inode 相同才视为同一对象）。
+token 根本身聚合全部版本与安装证据、`.metadata` 等安装证据目录均不可清理。Caskroom 根及包含已存在 Caskroom 的
+祖先目录同样不可整体清理；不存在的根和名称相似的 sibling 不扩大保护范围。
+
+扫描与执行前均对安装证据及祖先执行 no-follow、ignore/protect、云占位、属主和文件系统检查，
+JSON 有大小上限，元数据检查有项数与时间预算，候选目录计量在检查点响应取消。执行时重新发现根、
+复核 token/版本身份和版本四元组，重新获取进程及打开句柄快照；相关状态未知或打开句柄存在时
+拒绝执行。通过后只移动精确旧版本目录到同卷 Trash，保留 token、`.metadata` 和当前安装入口，
+不调用 brew。已安装定义支持 `.json`、`.internal.json` 与 `.rb`。用户显式忽略整个 Caskroom
+根时静默跳过，不报告为文件系统故障。这是 OpenClean 的受限识别规则，不等同于 Homebrew
+cleanup；专用 `acceptance.yml` 的 `caskroom` 套件使用本地自有 tap 验证真实安装、升级、失败
+回滚、brew/lsof 并发保护及合成旧版本残留的清理，仅在一次性 GitHub macOS runner 上运行。
+已编写的验收脚本不作为验收通过记录，结果以对应提交的运行日志为准。
+
 ### AI 浏览器缓存路径补齐
 
 Codex 的 `~/Library/Application Support/Codex` 根、`Default`、`codex-browser-app`、
