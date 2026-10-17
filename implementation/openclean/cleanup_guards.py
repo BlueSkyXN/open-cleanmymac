@@ -13,12 +13,12 @@ from .application_ownership import (
     DARWIN_CACHE_PROCESS_MARKERS,
     ApplicationResolver,
 )
-from .caskroom import CaskVersionState, _receipt_version, assess_cask_version, caskroom_roots
+from .caskroom import CaskVersionState, assess_cask_path, caskroom_roots
 from .filesystem import lstat_retry, scandir_entries
 from .macos import filesystem_name_matches, filesystem_relative_parts, scan_symlink_anchor
 from .models import FileFacts, normalize_path
 from .predicates import Predicate, ProtectionGate
-from .processes import ProcessDetectionError, ProcessSnapshot
+from .processes import OpenFileDetectionError, ProcessDetectionError, ProcessSnapshot, capture_open_file_snapshot
 from .scanpoints import DOMAINS
 from .updater import UPDATER_RULES, UpdaterAssessment, assess_updater_candidate
 
@@ -109,20 +109,28 @@ class CleanupGuardContext:
             return root, ()
         return None
 
-    def _caskroom_state(self, path: Path) -> "CaskVersionState | None":
-        # 只判定 Caskroom 根下 token/版本 形状的路径；receipt 重读由 caskroom 完成。
+    def _caskroom_state(
+        self, path: Path, checkpoint: Callable[[], None],
+    ) -> CaskVersionState | None:
         for root in caskroom_roots():
             relative = filesystem_relative_parts(path, root, probe=self._probe)
-            if relative is None or len(relative) != 2:
+            if relative is None or not relative:
                 continue
-            token, directory_version = relative
-            receipt_version, receipt_error = _receipt_version(root / token)
-            if receipt_error:
+            token = relative[0]
+            if len(relative) == 1:
+                # token 根本身聚合全部版本与安装证据，清理等于卸载 cask。
+                return CaskVersionState(
+                    token, "", "", "version_unknown",
+                    "Caskroom token 根包含全部版本和安装证据，不支持整体清理",
+                )
+            directory_version = relative[1]
+            if directory_version.startswith("."):
+                # `.metadata` 等安装证据目录不是清理对象。
                 return CaskVersionState(
                     token, "", directory_version, "version_unknown",
-                    receipt_error, f"{token}：{receipt_error}；强制保护",
+                    "Caskroom 安装证据目录不是清理对象",
                 )
-            return assess_cask_version(token, receipt_version, directory_version)
+            return assess_cask_path(root / token / directory_version, self.protection, checkpoint=checkpoint)
         return None
 
     def _build_registered_roots(self) -> Iterator[tuple[Path, tuple[str, ...]]]:
@@ -230,10 +238,10 @@ class CleanupGuardContext:
                     reason = "选择范围覆盖 updater 暂存区，需重新扫描并精确审阅 updater 根目录"
                 elif updater.blocks_cleanup:
                     reason = updater.block_reason
-            cask_state = self._caskroom_state(path)
+            cask_state = self._caskroom_state(path, checkpoint)
             if cask_state is not None:
-                # 把 Caskroom 版本状态纳入 updater 四元组：扫描时写入 item，
-                # 执行前重读回执重算，receipt 变化即拒绝执行。
+                brew_scope = True
+                markers.extend(homebrew.HOMEBREW_PROCESS_MARKERS)
                 scopes.append(UpdaterScope(path, UpdaterAssessment(
                     cask_state.status,
                     "homebrew.cask",
@@ -245,6 +253,15 @@ class CleanupGuardContext:
                     reason = reason or cask_state.block_reason or cask_state.note
                 elif cask_state.blocks_cleanup:
                     reason = reason or cask_state.block_reason
+                else:
+                    # 任意入口（含 Analyze）选中 Caskroom 内对象时都必须复核句柄。
+                    try:
+                        handles = capture_open_file_snapshot()
+                    except OpenFileDetectionError as exc:
+                        reason = reason or f"无法复核 Caskroom 打开句柄：{exc}"
+                    else:
+                        if handles.count_under(path):
+                            reason = reason or "Caskroom 内目标存在打开句柄，拒绝清理"
         except OSError as exc:
             reason = f"无法完成应用保护范围复核：{exc}"
             inspection_error = reason

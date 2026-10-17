@@ -1,10 +1,4 @@
-"""Homebrew Caskroom 旧版本目录扫描。
-
-只比较 cask 安装回执（``Caskroom/<token>/.metadata/INSTALL_RECEIPT.json`` 的
-``source.version``）与同一 token 下的顶层版本目录。目录版本严格低于回执版本
-才识别为升级残留；当前版本、更高版本、无法比较或回执缺失一律不产生候选。
-回执是 Homebrew 安装时写入的公开状态文件，版本判定原语复用 updater 模块。
-"""
+"""Homebrew Caskroom 旧版本目录识别与安装状态复核。"""
 from __future__ import annotations
 
 import json
@@ -16,8 +10,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .filesystem import lstat_retry, scandir_entries
-from .models import FileIdentity, Item, ScanIssue, ScanResult, normalize_path
+from .filesystem import filesystem_id_retry, lstat_retry
+from .models import FileFacts, FileIdentity, Item, ScanIssue, ScanResult, normalize_path
+from .path_inspection import InspectionError, PathInspection
+from .predicates import Predicate
 from .processes import (
     OpenFileDetectionError,
     OpenFileSnapshot,
@@ -26,30 +22,37 @@ from .processes import (
     capture_open_file_snapshot,
     capture_process_snapshot,
 )
+from .resource_walk import open_directory, open_resource
 from .storage_diagnostics import _candidate_measurement
 from .updater import _compare_versions
 
 CASKROOM_SCAN_TASK = "homebrew-caskroom"
 _MAX_RECEIPT_BYTES = 2 * 1024 * 1024
 _MAX_TOKENS = 20_000
+_MAX_METADATA_ENTRIES = 4096
+_PREFIX_LINK_BUDGET = 200_000
 _TOKEN_NAME = re.compile(r"^[a-z0-9][a-z0-9@._+-]*$")
+_TIMESTAMP = re.compile(r"^[0-9]{14}(?:\.[0-9]+)?$")
+_LINK_DIRECTORIES = {
+    "binary": "bin",
+    "manpage": "share/man",
+    "bash_completion": "etc/bash_completion.d",
+    "zsh_completion": "share/zsh/site-functions",
+    "fish_completion": "share/fish/vendor_completions.d",
+    "pwsh_completion": "share/pwsh/completions",
+}
 
 
 def caskroom_roots() -> tuple[Path, ...]:
-    """Caskroom 候选根：默认安装位置加 HOMEBREW_PREFIX 覆盖。"""
     roots = [Path("/opt/homebrew/Caskroom"), Path("/usr/local/Caskroom")]
     prefix = os.environ.get("HOMEBREW_PREFIX")
-    if prefix:
-        path = normalize_path(prefix)
-        if path.is_absolute():
-            roots.append(path / "Caskroom")
+    if prefix and Path(prefix).is_absolute():
+        roots.append(normalize_path(prefix) / "Caskroom")
     return tuple(dict.fromkeys(roots))
 
 
 @dataclass(frozen=True)
 class CaskVersionState:
-    """一个 token 的回执版本与目录版本比较结果。"""
-
     token: str
     receipt_version: str
     directory_version: str
@@ -62,76 +65,490 @@ class CaskVersionState:
         return bool(self.block_reason)
 
 
-def _receipt_version(token_root: Path) -> tuple[str, str]:
-    """读取回执版本；返回 ``(version, error)``，两者互斥。"""
-    receipt = token_root / ".metadata" / "INSTALL_RECEIPT.json"
+class _CaskInspection(PathInspection):
+    def __init__(self, token_root: Path, protection: Predicate, checkpoint: Callable[[], None]):
+        super().__init__(protection, checkpoint=checkpoint, max_entries=_MAX_METADATA_ENTRIES)
+        self.token_root = token_root
+        self.root = self.checked_path(token_root)
+        if not stat.S_ISDIR(self.root.stat.st_mode) or self.root.stat.st_uid != os.getuid():
+            raise InspectionError("Caskroom token 根不是当前用户的普通目录")
+        caskroom = self.checked_path(token_root.parent)
+        self.filesystem = filesystem_id_retry(token_root.parent)
+        if (self.root.stat.st_dev != caskroom.stat.st_dev
+                or filesystem_id_retry(token_root) != self.filesystem):
+            raise InspectionError("Caskroom token 根跨越文件系统")
+        self._verified_ancestors: set[Path] = set()
+
+    def checked_relative(self, parts: tuple[str, ...]) -> FileFacts:
+        """在 token 根内逐组件验证相对路径，避免从系统锚点重复走完全路径。"""
+        current = self.token_root
+        result = self.probe(current)
+        for part in parts:
+            current /= part
+            result = self.probe(current)
+            if stat.S_ISLNK(result.stat.st_mode):
+                raise InspectionError("内容保护范围包含符号链接组件")
+        return result
+
+    def metadata_facts(self, path: Path) -> FileFacts:
+        if not path.is_relative_to(self.token_root):
+            raise InspectionError("Cask 安装证据不在 token 范围内")
+        facts = self.checked_path(path)
+        # 祖先的属主/设备/文件系统一致性按身份缓存，避免每次全链重查。
+        for current in (path, *path.parents):
+            if current == self.token_root.parent:
+                break
+            if current in self._verified_ancestors:
+                continue
+            component = facts if current == path else self.probe(current)
+            if (component.stat.st_uid != self.root.stat.st_uid
+                    or component.stat.st_dev != self.root.stat.st_dev
+                    or filesystem_id_retry(current) != self.filesystem):
+                raise InspectionError("Cask 安装证据的属主或文件系统不一致")
+            self._verified_ancestors.add(current)
+        return facts
+
+    def names(self, path: Path) -> list[str]:
+        facts = self.metadata_facts(path)
+        with open_directory(path, self.protection) as descriptor:
+            if FileIdentity.from_stat(os.fstat(descriptor)) != facts.identity:
+                raise InspectionError("Cask 安装证据目录身份变化")
+            with os.scandir(descriptor) as entries:
+                names = []
+                for entry in entries:
+                    self.tick()
+                    names.append(entry.name)
+        return sorted(names)
+
+    def read_json(self, path: Path) -> dict:
+        facts = self.metadata_facts(path)
+        if not stat.S_ISREG(facts.stat.st_mode) or facts.stat.st_size > _MAX_RECEIPT_BYTES:
+            raise InspectionError("Cask 安装元数据不是普通文件或超出大小上限")
+        with open_directory(path.parent, self.protection) as parent_fd:
+            with open_resource(facts, parent_fd) as descriptor:
+                chunks = []
+                remaining = _MAX_RECEIPT_BYTES + 1
+                while remaining:
+                    self.tick()
+                    chunk = os.read(descriptor, min(remaining, 65536))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                if not remaining:
+                    raise InspectionError("Cask 安装元数据超出大小上限")
+        payload = json.loads(b"".join(chunks))
+        if not isinstance(payload, dict):
+            raise InspectionError("Cask 安装元数据不是 JSON 对象")
+        return payload
+
+
+def _installed_caskfile(inspection: _CaskInspection) -> Path:
+    metadata = inspection.token_root / ".metadata"
+    records: list[tuple[str, Path]] = []
+    for version in inspection.names(metadata):
+        path = metadata / version
+        facts = inspection.metadata_facts(path)
+        if not stat.S_ISDIR(facts.stat.st_mode):
+            continue
+        for timestamp in inspection.names(path):
+            stamped = path / timestamp
+            facts = inspection.metadata_facts(stamped)
+            if not stat.S_ISDIR(facts.stat.st_mode) or not _TIMESTAMP.fullmatch(timestamp):
+                raise InspectionError("Cask 带时间戳安装元数据的结构不明确")
+            records.append((timestamp, stamped))
+    if not records:
+        raise InspectionError("缺少带时间戳的 Cask 安装元数据")
+    newest = max(timestamp for timestamp, _ in records)
+    latest = [path for timestamp, path in records if timestamp == newest]
+    if len(latest) != 1:
+        raise InspectionError("最新 Cask 安装元数据不唯一")
+    casks = latest[0] / "Casks"
+    for suffix in (".json", ".internal.json", ".rb"):
+        path = casks / (inspection.token_root.name + suffix)
+        try:
+            facts = inspection.metadata_facts(path)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(facts.stat.st_mode):
+            raise InspectionError("已安装 Cask 定义不是普通文件")
+        return path
+    raise InspectionError("最新 Cask 安装元数据缺少对应定义")
+
+
+def _relative_artifact_path(value: object) -> Path:
+    if (not isinstance(value, str) or not value or "\x00" in value
+            or value.startswith("~")):
+        raise InspectionError("Cask 安装入口路径无效")
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        raise InspectionError("Cask 安装入口源路径不在当前版本内")
+    return path
+
+
+def _relative_link_path(value: str) -> Path:
+    """保留链接原始组件；``..`` 与绝对路径因词法折叠不等于实际解析而拒绝。"""
+    if not value or "\x00" in value or value.startswith("~"):
+        raise InspectionError("Cask 安装链接路径无效")
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        raise InspectionError("Cask 安装链接路径包含拒绝的组件")
+    return path
+
+
+def _iter_prefix_links(
+    inspection: _CaskInspection, token_root: Path,
+) -> list[tuple[Path, FileFacts]]:
+    """枚举 prefix 已知链接目录中的一级符号链接；不跟随也不枚举目标内容。"""
+    prefix = token_root.parent.parent
+    entries: list[tuple[Path, FileFacts]] = []
+    for directory in _LINK_DIRECTORIES.values():
+        inspection.tick()
+        root = prefix / directory
+        try:
+            facts = inspection.checked_path(root)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(facts.stat.st_mode):
+            raise InspectionError("Cask prefix 链接目录不是普通目录")
+        with open_directory(root, inspection.protection) as descriptor:
+            if FileIdentity.from_stat(os.fstat(descriptor)) != facts.identity:
+                raise InspectionError("Cask prefix 链接目录身份变化")
+            with os.scandir(descriptor) as children:
+                names = []
+                for child in children:
+                    inspection.tick()
+                    names.append(child.name)
+        for name in sorted(names):
+            try:
+                facts = inspection.probe(root / name)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(facts.stat.st_mode):
+                entries.append((root / name, facts))
+    return entries
+
+
+def _resolve_link_target(
+    inspection: _CaskInspection, entry: Path, token_root: Path,
+    cache: dict[Path, Path | None] | None = None,
+) -> Path | None:
+    """逐组件解析链接目标；中间组件须是已验证的真实目录，``..`` 只在其后出现。
+
+    词法折叠 ``..`` 只有在全部中间组件都不是符号链接时才等于实际解析；
+    因此先验证再回退，包含符号链接组件的目标直接拒绝。
+    ``cache`` 复用同一链接的解析结果（链接路径→目标），扫描与声明入口共用。
+    """
+    if cache is not None and entry in cache:
+        return cache[entry]
+    prefix = token_root.parent.parent
     try:
-        receipt_stat = receipt.lstat()
-    except FileNotFoundError:
-        return "", "缺少 INSTALL_RECEIPT.json，无法确认当前版本"
+        raw = os.readlink(entry)
     except OSError as exc:
-        return "", f"无法读取安装回执：{exc}"
-    if (stat.S_ISLNK(receipt_stat.st_mode) or not stat.S_ISREG(receipt_stat.st_mode)
-            or receipt_stat.st_size > _MAX_RECEIPT_BYTES):
-        return "", "安装回执不是普通文件或超出大小上限"
+        raise InspectionError(f"无法读取 Cask 链接目标：{exc}") from exc
+    if raw.startswith("~") or "\x00" in raw:
+        raise InspectionError("Cask 链接目标路径无效")
+    parts = Path(raw)
+    if parts.is_absolute():
+        # 绝对目标逐组件重新验证，从根目录开始定位。
+        resolved = _walk_components(
+            inspection, [p for p in parts.parts if p != os.sep], [], Path(os.sep), token_root,
+        )
+    else:
+        resolved = _walk_components(
+            inspection, list(parts.parts), list(entry.parent.relative_to(prefix).parts), prefix, token_root,
+        )
+    if resolved is None:
+        if cache is not None:
+            cache[entry] = None
+        return None
+    if parts.is_absolute():
+        target = Path(os.sep).joinpath(*resolved) if resolved else Path(os.sep)
+    else:
+        target = prefix.joinpath(*resolved) if resolved else prefix
+    if not target.is_relative_to(token_root):
+        # 缓存值区分"目标在其它 token/范围外"（保留绝对目标路径，
+        # 由目标所属 token 自行判定）与"无法解析"（None）。
+        if cache is not None:
+            cache[entry] = target if target.is_relative_to(token_root.parent) else None
+        return target if target.is_relative_to(token_root.parent) else None
     try:
-        payload = json.loads(receipt.read_bytes())
-    except (OSError, ValueError):
-        return "", "安装回执无法解析为 JSON"
-    source = payload.get("source") if isinstance(payload, dict) else None
-    version = source.get("version") if isinstance(source, dict) else None
-    if not isinstance(version, str) or not version.strip() or len(version) > 256:
-        return "", "安装回执缺少有效的 source.version"
-    return version.strip(), ""
+        inspection.checked_path(target.parent)
+    except FileNotFoundError:
+        if cache is not None:
+            cache[entry] = None
+        return None
+    if cache is not None:
+        cache[entry] = target
+    return target
+
+
+def _walk_components(
+    inspection: _CaskInspection, components: list[str], base: list[str], prefix: Path,
+    token_root: Path,
+) -> list[str] | None:
+    resolved = list(base)
+    for index, part in enumerate(components):
+        if part in (os.sep, "/", "."):
+            continue
+        if part == "..":
+            if not resolved:
+                raise InspectionError("Cask 链接目标回退到允许范围之外")
+            resolved.pop()
+            continue
+        resolved.append(part)
+        if index < len(components) - 1:
+            candidate = prefix.joinpath(*resolved)
+            try:
+                if candidate.is_relative_to(token_root):
+                    facts = inspection.checked_relative(
+                        candidate.relative_to(token_root).parts,
+                    )
+                else:
+                    facts = inspection.checked_path(candidate)
+            except FileNotFoundError as exc:
+                raise InspectionError("Cask 链接目标组件不存在") from exc
+            if not stat.S_ISDIR(facts.stat.st_mode):
+                raise InspectionError("Cask 链接目标穿过非目录组件")
+    return resolved
+
+
+def _scan_prefix_links(
+    inspection: _CaskInspection, token_root: Path, current: Path,
+    prefix_links: dict[Path, Path | None],
+) -> None:
+    """本 token 范围内的 prefix 链接目标不得指向当前版本之外。
+
+    ``prefix_links`` 是一次扫描内复用的链接目标缓存（链接路径→解析结果）；
+    链接归属按目标所在的 token 判定：指向其它 token 的链接由那个 token
+    自己的扫描复核，不由当前 token 的判断覆盖。
+    """
+    for entry, _facts in _iter_prefix_links(inspection, token_root):
+        inspection.tick()
+        if entry not in prefix_links:
+            prefix_links[entry] = _resolve_link_target(
+                inspection, entry, token_root, prefix_links,
+            )
+    for entry, target in prefix_links.items():
+        if target is None or not target.is_relative_to(token_root):
+            # 目标属于其它 token 或 prefix 外，由其归属 token 的扫描判定。
+            continue
+        if not target.is_relative_to(current):
+            raise InspectionError(f"Cask 安装入口仍指向旧版本或其它位置：{entry}")
+
+
+def _artifact_target(prefix: Path, kind: str, arguments: list, source: Path) -> Path:
+    destination = source.name
+    if len(arguments) == 2:
+        options = arguments[1]
+        if not isinstance(options, dict) or set(options) != {"target"}:
+            raise InspectionError("Cask 安装入口 target 参数无效")
+        destination = options["target"]
+    if not isinstance(destination, str) or not destination or "\x00" in destination:
+        raise InspectionError("Cask 安装入口 target 路径无效")
+    if kind == "binary":
+        path = Path(destination)
+        if path.is_absolute():
+            return normalize_path(path)
+        return prefix / "bin" / _relative_artifact_path(destination)
+    if len(arguments) != 1:
+        raise InspectionError("仅核实 manpage/completion 的默认目标名称")
+    name = source.name
+    directory = prefix / _LINK_DIRECTORIES[kind]
+    if kind == "manpage":
+        match = re.search(r"\.([1-8nl])(?:\.gz)?$", name)
+        if match is None:
+            raise InspectionError("Cask manpage 缺少有效章节后缀")
+        directory /= "man" + match[1]
+    elif kind == "bash_completion":
+        name = Path(name).stem
+    elif kind == "zsh_completion" and not name.startswith("_"):
+        name = "_" + Path(name).stem
+    elif kind == "fish_completion" and not name.endswith(".fish"):
+        name = Path(name).stem + ".fish"
+    elif kind == "pwsh_completion" and not (name.startswith("_") and name.endswith(".ps1")):
+        name = "_" + Path(name).stem + ".ps1"
+    return directory / name
+
+
+def _check_generated_completions(
+    inspection: _CaskInspection, source_root: Path, arguments: object,
+) -> None:
+    if not isinstance(arguments, list) or len(arguments) < 2 or not isinstance(arguments[-1], dict):
+        raise InspectionError("Cask 生成式补全参数无法核实")
+    options = arguments[-1]
+    if set(options) - {"base_name", "shell_parameter_format", "shells"}:
+        raise InspectionError("Cask 生成式补全包含未知选项")
+    if not all(isinstance(value, str) for value in arguments[:-1]):
+        raise InspectionError("Cask 生成式补全命令参数无效")
+    source = source_root / _relative_artifact_path(arguments[0])
+    if not stat.S_ISREG(inspection.metadata_facts(source).stat.st_mode):
+        raise InspectionError("Cask 生成式补全源不是当前版本普通文件")
+    shells = options.get("shells")
+    if (not isinstance(shells, list) or not shells
+            or any(shell not in ("bash", "zsh", "fish", "pwsh") for shell in shells)):
+        raise InspectionError("Cask 生成式补全的 shell 范围不明确")
+    name = options.get("base_name") or source.name
+    name_path = _relative_artifact_path(name)
+    if len(name_path.parts) != 1:
+        raise InspectionError("Cask 生成式补全名称不是单个文件名")
+    prefix = inspection.token_root.parent.parent
+    for shell in shells:
+        target = _artifact_target(prefix, shell + "_completion", [name], Path(name))
+        facts = inspection.checked_path(target)
+        if not stat.S_ISREG(facts.stat.st_mode):
+            raise InspectionError("Cask 生成式补全目标不是独立普通文件")
+
+
+def _check_installed_links(
+    inspection: _CaskInspection, current: Path, receipt: dict, definition: dict,
+    prefix_links: dict[Path, Path | None] | None = None,
+) -> None:
+    if receipt.get("uninstall_flight_blocks"):
+        raise InspectionError("Cask 包含卸载脚本钩子，仅报告")
+    artifacts = definition.get("artifacts", receipt.get("uninstall_artifacts"))
+    if ("artifacts" in definition and "uninstall_artifacts" in receipt
+            and definition["artifacts"] != receipt["uninstall_artifacts"]):
+        raise InspectionError("Cask 定义与回执的安装入口不一致")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise InspectionError("缺少可核实的 Cask 安装入口")
+    specs = definition.get("url_specs", {})
+    if not isinstance(specs, dict):
+        raise InspectionError("Cask 源路径元数据无效")
+    source_root = current
+    if specs.get("only_path"):
+        source_root /= _relative_artifact_path(specs["only_path"])
+    installed_links = 0
+    for artifact in artifacts:
+        inspection.tick()
+        if not isinstance(artifact, dict) or len(artifact) != 1:
+            raise InspectionError("Cask 安装入口结构无法核实")
+        kind, arguments = next(iter(artifact.items()))
+        if kind == "zap":
+            # zap 只描述显式卸载时的用户数据清理，不是已安装入口。
+            continue
+        if kind == "generate_completions_from_executable":
+            _check_generated_completions(inspection, source_root, arguments)
+            continue
+        if kind not in _LINK_DIRECTORIES:
+            raise InspectionError(f"尚不能核实 Cask {kind} 安装入口，仅报告")
+        if not isinstance(arguments, list) or not 1 <= len(arguments) <= 2:
+            raise InspectionError("Cask 安装入口参数无法核实")
+        source = source_root / _relative_artifact_path(arguments[0])
+        source_facts = inspection.metadata_facts(source)
+        if not stat.S_ISREG(source_facts.stat.st_mode):
+            raise InspectionError("Cask 当前安装入口源不是普通文件")
+        target = _artifact_target(inspection.token_root.parent.parent, kind, arguments, source)
+        inspection.checked_path(target.parent)
+        target_facts = inspection.probe(target)
+        if not stat.S_ISLNK(target_facts.stat.st_mode):
+            raise InspectionError("Cask 安装入口不是可核实的符号链接")
+        with open_directory(target.parent, inspection.protection) as parent_fd:
+            if FileIdentity.from_stat(os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)) != target_facts.identity:
+                raise InspectionError("Cask 安装入口身份变化")
+            linked = _resolve_link_target(
+                inspection, target, inspection.token_root, prefix_links,
+            )
+        if linked is None or not linked.is_relative_to(current):
+            raise InspectionError("Cask 安装入口仍指向旧版本或其它位置")
+        linked_facts = inspection.metadata_facts(linked)
+        if linked_facts.identity != source_facts.identity:
+            raise InspectionError("Cask 安装入口与当前版本源文件不一致")
+        if inspection.probe(target).identity != target_facts.identity:
+            raise InspectionError("Cask 安装入口在复核期间变化")
+        installed_links += 1
+    if not installed_links:
+        raise InspectionError("缺少可核实的 Cask 安装链接")
+
+
+def _installation_version(
+    token_root: Path, protection: Predicate, checkpoint: Callable[[], None] = lambda: None,
+    prefix_links: dict[Path, Path | None] | None = None,
+) -> tuple[str, str]:
+    try:
+        inspection = _CaskInspection(token_root, protection, checkpoint)
+        # prefix 链接解析（首次填充或独立复核）有独立预算，
+        # 不与 token 自身的元数据检查共用同一配额。
+        inspection.remaining += _PREFIX_LINK_BUDGET
+        receipt = inspection.read_json(token_root / ".metadata/INSTALL_RECEIPT.json")
+        source = receipt.get("source")
+        version = source.get("version") if isinstance(source, dict) else None
+        if not isinstance(version, str) or not version or len(version) > 256:
+            raise InspectionError("安装回执缺少有效的 source.version")
+        if _compare_versions(version, version) is None:
+            raise InspectionError("回执版本不是可比较的纯数字版本号")
+        caskfile = _installed_caskfile(inspection)
+        if caskfile.parent.parent.parent.name != version:
+            raise InspectionError("安装回执与最新安装元数据的版本不一致")
+        current = token_root / version
+        current_facts = inspection.metadata_facts(current)
+        if not stat.S_ISDIR(current_facts.stat.st_mode):
+            raise InspectionError("回执版本对应的当前目录不是普通目录")
+        # Ruby 定义仅核对路径与文件身份，绝不执行或解析其中的代码。
+        definition = (inspection.read_json(caskfile)
+                      if caskfile.suffix == ".json" else {})
+        if definition.get("version", version) != version:
+            raise InspectionError("已安装 Cask 定义与回执版本不一致")
+        # 空 dict 是有效缓存（or 短路会新建对象导致缓存失效），仅 None 时新建。
+        links = {} if prefix_links is None else prefix_links
+        _check_installed_links(inspection, current, receipt, definition, links)
+        # 除声明的入口外，prefix 链接目录中的任何残留链接也不得指向当前版本之外；
+        # 历史版本记录过的入口在升级改名后仍可能保留在 bin/manpage 等目录中。
+        _scan_prefix_links(inspection, token_root, current, links)
+        if inspection.metadata_facts(token_root).identity != inspection.root.identity:
+            raise InspectionError("Caskroom token 根在复核期间变化")
+        if (inspection.read_json(token_root / ".metadata/INSTALL_RECEIPT.json") != receipt
+                or _installed_caskfile(inspection) != caskfile
+                or inspection.metadata_facts(current).identity != current_facts.identity
+                or (caskfile.suffix == ".json" and inspection.read_json(caskfile) != definition)):
+            raise InspectionError("Cask 安装证据在复核期间变化")
+        return version, ""
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
+        return "", f"无法核实 Cask 安装状态：{exc}"
 
 
 def assess_cask_version(token: str, receipt_version: str, directory_version: str) -> CaskVersionState:
-    """按回执版本判定目录版本状态；语义与 updater 版本残留一致。"""
     comparison = _compare_versions(directory_version, receipt_version)
     if comparison is None:
         return CaskVersionState(
             token, receipt_version, directory_version, "version_unknown",
             "目录或回执版本不是纯数字版本号，无法比较",
-            f"目录版本 {directory_version} 无法与回执 {receipt_version} 比较，强制保护",
         )
     if comparison > 0:
         return CaskVersionState(
             token, receipt_version, directory_version, "pending_update",
             "目录版本高于回执版本，可能正在升级",
-            f"目录 {directory_version} 高于回执 {receipt_version}，疑似升级进行中，强制保护",
         )
     if comparison == 0:
         return CaskVersionState(
             token, receipt_version, directory_version, "same_version_residue",
-            block_reason="目录版本与回执一致，是当前安装版本",
+            "目录版本与回执一致，是当前安装版本",
         )
     return CaskVersionState(
         token, receipt_version, directory_version, "older_version_residue",
-        note=f"目录 {directory_version} 低于回执 {receipt_version}，属于升级后残留",
+        note=f"目录 {directory_version} 低于已核实安装版本 {receipt_version}",
     )
 
 
-def _item_updater_fields(state: CaskVersionState) -> dict[str, object]:
-    """把版本状态映射到 Item 的 updater 复核四元组，执行前重新比较。"""
-    return {
-        "updater_status": state.status,
-        "installed_version": state.receipt_version,
-        "staged_version": state.directory_version,
-    }
+def assess_cask_path(
+    path: Path, protection: Predicate, *, checkpoint: Callable[[], None] = lambda: None,
+) -> CaskVersionState:
+    version, error = _installation_version(path.parent, protection, checkpoint)
+    if error:
+        return CaskVersionState(path.parent.name, "", path.name, "version_unknown", error)
+    return assess_cask_version(path.parent.name, version, path.name)
 
 
 def scan_caskroom_versions(
-    protection,
+    protection: Predicate,
     *,
     roots: tuple[Path, ...] | None = None,
-    process_snapshot: ProcessSnapshot | None = None,
-    open_files: OpenFileSnapshot | None = None,
     snapshots: tuple[ProcessSnapshot | None, OpenFileSnapshot | None] | None = None,
     now: float | None = None,
     checkpoint: Callable[[], None] = lambda: None,
 ) -> ScanResult:
-    """枚举各 Caskroom 根下带旧版本目录的 token；不修改任何状态。"""
     from .engine import Cancelled
+    from .homebrew import running
 
     result = ScanResult()
     if snapshots is None:
@@ -140,8 +557,7 @@ def scan_caskroom_versions(
         except ProcessDetectionError:
             processes = None
             result.issues.append(ScanIssue(
-                code="process_detection_failed",
-                message="无法获取进程快照；相关候选保持不可执行",
+                code="process_detection_failed", message="无法获取进程快照；相关候选保持不可执行",
                 task=CASKROOM_SCAN_TASK, blocking=False,
             ))
         try:
@@ -149,102 +565,93 @@ def scan_caskroom_versions(
         except OpenFileDetectionError:
             handles = None
             result.issues.append(ScanIssue(
-                code="open_file_detection_failed",
-                message="无法获取打开文件快照；相关候选保持不可执行",
+                code="open_file_detection_failed", message="无法获取打开文件快照；相关候选保持不可执行",
                 task=CASKROOM_SCAN_TASK, blocking=False,
             ))
     else:
         processes, handles = snapshots
-    brew_running = processes is not None and _brew_active(processes)
+    brew_running = processes is not None and running(processes)
     observed_at = time.time() if now is None else now
     scanned_tokens = 0
+    prefix_links: dict[Path, Path | None] = {}
     try:
-        for raw_root in (roots if roots is not None else caskroom_roots()):
+        for raw_root in dict.fromkeys(roots if roots is not None else caskroom_roots()):
             root = normalize_path(raw_root)
             checkpoint()
             try:
-                root_stat = lstat_retry(root)
+                inspection = PathInspection(protection, checkpoint=checkpoint, max_entries=_MAX_TOKENS + 64)
+                facts = inspection.checked_path(root)
+                with open_directory(root, protection) as descriptor:
+                    with os.scandir(descriptor) as entries:
+                        tokens = []
+                        for entry in entries:
+                            inspection.tick()
+                            if _TOKEN_NAME.fullmatch(entry.name) and entry.is_dir(follow_symlinks=False):
+                                tokens.append(entry.name)
+                for token in sorted(tokens):
+                    checkpoint()
+                    if scanned_tokens >= _MAX_TOKENS:
+                        raise InspectionError("Caskroom token 数超过上限")
+                    scanned_tokens += 1
+                    _scan_token(root / token, facts.stat.st_dev, protection, result,
+                                brew_running=brew_running, now=observed_at,
+                                process_snapshot=processes, open_files=handles,
+                                checkpoint=checkpoint, prefix_links=prefix_links)
             except FileNotFoundError:
                 continue
             except OSError as exc:
-                result.issues.append(_fs_issue(exc, root))
-                continue
-            if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
-                continue
-            try:
-                tokens = sorted(scandir_entries(root), key=lambda entry: entry.name)
-            except OSError as exc:
-                result.issues.append(_fs_issue(exc, root))
-                continue
-            for entry in tokens:
-                checkpoint()
-                if scanned_tokens >= _MAX_TOKENS:
-                    result.issues.append(ScanIssue(
-                        code="caskroom_token_limit", message="Caskroom token 数超过上限",
-                        task=CASKROOM_SCAN_TASK, blocking=True,
-                    ))
-                    return result
-                if not _TOKEN_NAME.fullmatch(entry.name):
+                # 用户显式忽略或保护整个扫描根时静默跳过，不当作文件系统故障。
+                if isinstance(exc, InspectionError) and ("忽略" in str(exc) or "云占位" in str(exc)):
                     continue
-                try:
-                    if not entry.is_dir(follow_symlinks=False):
-                        continue
-                except OSError:
-                    continue
-                scanned_tokens += 1
-                _scan_token(Path(entry.path), root_stat.st_dev, protection, result,
-                            brew_running=brew_running, now=observed_at,
-                            process_snapshot=processes, open_files=handles)
+                result.issues.append(_fs_issue(exc, root))
     except Cancelled:
         result.cancelled = True
-        raise
     return result
-
-
-def _brew_active(snapshot: ProcessSnapshot) -> bool:
-    from .homebrew import running
-
-    return running(snapshot)
 
 
 def _scan_token(
     token_root: Path,
     root_device: int,
-    protection,
+    protection: Predicate,
     result: ScanResult,
     *,
     brew_running: bool,
     now: float,
     process_snapshot: ProcessSnapshot | None,
     open_files: OpenFileSnapshot | None,
+    checkpoint: Callable[[], None],
+    prefix_links: dict[Path, Path | None] | None = None,
 ) -> None:
     task = CASKROOM_SCAN_TASK
     try:
-        entries = sorted(scandir_entries(token_root), key=lambda item: item.name)
+        inspection = _CaskInspection(token_root, protection, checkpoint)
+        versions = []
+        for name in inspection.names(token_root):
+            if name.startswith("."):
+                continue
+            path = token_root / name
+            try:
+                facts = inspection.metadata_facts(path)
+            except OSError as exc:
+                result.issues.append(_fs_issue(exc, path))
+                continue
+            if stat.S_ISDIR(facts.stat.st_mode):
+                versions.append(name)
     except OSError as exc:
         result.issues.append(_fs_issue(exc, token_root))
         return
-    versions = []
-    for entry in entries:
-        if entry.name.startswith("."):
-            continue
-        try:
-            if entry.is_dir(follow_symlinks=False):
-                versions.append(entry.name)
-        except OSError:
-            continue
     if len(versions) <= 1:
         return
-    receipt_version, receipt_error = _receipt_version(token_root)
+    receipt_version, receipt_error = _installation_version(
+        token_root, protection, checkpoint,
+        {} if prefix_links is None else prefix_links,
+    )
     for directory_version in versions:
-        if receipt_error:
-            state = CaskVersionState(
-                token_root.name, "", directory_version, "version_unknown",
-                receipt_error,
-                f"{token_root.name}：{receipt_error}；强制保护",
-            )
-        else:
-            state = assess_cask_version(token_root.name, receipt_version, directory_version)
+        checkpoint()
+        state = (
+            CaskVersionState(token_root.name, "", directory_version, "version_unknown", receipt_error)
+            if receipt_error else assess_cask_version(token_root.name, receipt_version, directory_version)
+        )
         path = token_root / directory_version
         try:
             before = lstat_retry(path)
@@ -254,31 +661,28 @@ def _scan_token(
         issue_start = len(result.issues)
         measurement = _candidate_measurement(
             path, root_device, protection, result.issues, task=task, now=now,
+            checkpoint=checkpoint,
         )
         if measurement is None:
             continue
         try:
             after = lstat_retry(path)
+            token_after = inspection.metadata_facts(token_root)
         except OSError as exc:
             result.issues.append(_fs_issue(exc, path))
             continue
         if (before.st_dev, before.st_ino, before.st_uid, before.st_mode,
                 before.st_mtime_ns, before.st_ctime_ns) != (
                 after.st_dev, after.st_ino, after.st_uid, after.st_mode,
-                after.st_mtime_ns, after.st_ctime_ns):
+                after.st_mtime_ns, after.st_ctime_ns) or token_after.identity != inspection.root.identity:
             result.issues.append(ScanIssue(
                 code="target_changed_during_scan", message="目标在计量期间变化",
                 task=task, path=path, blocking=True,
             ))
             continue
-        open_handles = (
-            open_files.count_under(path) if open_files is not None else None
-        )
+        open_handles = open_files.count_under(path) if open_files is not None else None
         newest_mtime = measurement.newest_mtime or None
-        age_days = (
-            max(0, int((now - newest_mtime) // 86400))
-            if newest_mtime is not None else None
-        )
+        age_days = max(0, int((now - newest_mtime) // 86400)) if newest_mtime is not None else None
         block_reasons: list[str] = []
         if len(result.issues) > issue_start:
             block_reasons.append("measurement_incomplete")
@@ -299,26 +703,16 @@ def _scan_token(
         if measurement.cloud_file_count:
             block_reasons.append("包含云占位文件")
         actionable = not block_reasons
-        age_label = age_days if age_days is not None else "?"
-        notes = [
-            f"Homebrew cask {token_root.name} 旧版本目录（{age_label} 天）",
-            state.note,
-        ]
+        notes = [f"Homebrew cask {token_root.name} 版本目录", state.note]
         if state.status == "older_version_residue":
-            notes.append(
-                "删除旧版本不影响当前安装；等价于 brew cleanup --cask 的范围，"
-                "不会卸载 token 或触碰 .metadata",
-            )
-        item = Item(
-            path,
-            measurement.allocated_bytes,
-            "Homebrew Cask 旧版本",
-            "critical",
+            notes.append("仅移动已核实的旧版本目录到同卷 Trash；保留 token 和 .metadata")
+        result.items.append(Item(
+            path, measurement.allocated_bytes, "Homebrew Cask 旧版本", "critical",
             "；".join(part for part in notes if part),
             logical_size=measurement.logical_bytes,
             allocated_size=measurement.allocated_bytes,
             actionable=actionable,
-            action_block_reason="" if actionable else "；".join(block_reasons),
+            action_block_reason="；".join(block_reasons),
             identity=FileIdentity.from_stat(after),
             latest_mtime=newest_mtime,
             age_days=age_days,
@@ -333,19 +727,11 @@ def _scan_token(
             open_handle_count=open_handles,
             cleanup_scope="homebrew-caskroom",
             cleanup_root=token_root,
-            cleanup_root_identity=FileIdentity.from_stat(
-                _safe_lstat(token_root, before)
-            ),
-            **_item_updater_fields(state),
-        )
-        result.items.append(item)
-
-
-def _safe_lstat(path: Path, fallback: os.stat_result) -> os.stat_result:
-    try:
-        return lstat_retry(path)
-    except OSError:
-        return fallback
+            cleanup_root_identity=inspection.root.identity,
+            updater_status=state.status,
+            installed_version=state.receipt_version,
+            staged_version=state.directory_version,
+        ))
 
 
 def _fs_issue(exc: OSError, path: Path) -> ScanIssue:

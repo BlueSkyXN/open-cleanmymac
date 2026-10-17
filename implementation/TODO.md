@@ -139,6 +139,9 @@ Countable total、每任务 Control 聚合和 observer 仅是条件增强；需�
   发现 Default/Profile 用户根，不删除 Cookies、Login Data、IndexedDB 或整个 profile，
   运行中固定不可执行。origin 级汇总仍需先确认稳定、结构化且可脱敏的数据源，不使用
   `strings` 或临时正则解析 LevelDB。
+- Homebrew Caskroom 已有受限旧版本清理：binary/manpage/completion 入口、回执和最新安装元数据
+  必须一致；app/pkg、脚本钩子和未知入口只报告。真实 brew 安装/升级/失败回滚并发、旧版 Ruby
+  定义与新版 JSON 定义的兼容性仍需一次性 macOS runner 验收；不在本机真实 Caskroom 执行测试。
 - Claude/Copilot 等版本目录应先解析当前 symlink/安装版本，只报告非当前完整旧版本；
   零字节更新 marker、当前 binary 和 session state 必须保留。
 - UURemote application/updater logs、历史 `.pkg` 和 Darwin temp 已纳入只读 retention

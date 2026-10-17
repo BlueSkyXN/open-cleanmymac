@@ -11,12 +11,31 @@
 
 ### Added
 
-- Homebrew Cask 旧版本目录识别：developer 域按 cask 安装回执（`INSTALL_RECEIPT.json`
-  的 `source.version`）核对 Caskroom 顶层版本目录，仅严格低于回执版本的目录成为
-  critical 候选并要求精确选择；当前版本、更高版本、无法比较或回执缺失一律保护。
-  brew 运行或进程状态未知时不可执行；执行前重读回执并复核版本四元组，新增
-  `homebrew-caskroom` 清理范围在系统保护根内限定 token/版本结构，不触碰
-  `.metadata`。等价于 `brew cleanup --cask` 的目录范围，不调用 brew 命令。
+- Homebrew Cask 旧版本目录识别：developer 域核对安装回执、最新带时间戳安装元数据、
+  当前版本目录和安装入口。仅已核实的严格更低版本可经 critical 精确选择移入同卷 Trash；
+  当前支持 binary、manpage 和 shell completion 链接，其它安装类型或证据不一致保持只读。
+  `homebrew-caskroom` 范围限定 token/版本结构，保留 `.metadata`，不调用 brew 命令。
+
+### Fixed
+
+- Caskroom 安装链接逐组件验证：含 `..` 的目标仅在无符号链接组件时逐层回退解析，
+  穿过符号链接的折叠回退（如 `2.0/bridge/../bin/tool` 实际指向旧版）判为指向旧版本；
+  prefix 链接目录全量核对残留链接，历史版本记录过且仍指向旧版的入口阻断清理。
+- Caskroom 子路径（含 Analyze 生成的父目录与版本内子目录）按 token/版本 槽位重判，
+  当前版本不可清理；token 根与 `.metadata` 等安装证据目录不可清理；选中槽位执行前
+  重查打开句柄，检测失败拒绝。
+- prefix 链接解析在整次扫描内缓存复用（真实规模 200 token + 200 链接从逐 token 全量
+  重复解析恢复为一次解析）；链接归属按目标 token 判定，单一 token 的残留链接不再
+  阻断其它 token；扫描预算为链接解析单独配额，不再因 prefix 链接数量耗尽。
+- 打开句柄匹配按组件核对大小写别名的对象身份（dev/inode 相同才视为同一对象），
+  不敏感文件系统上不同大小写拼写的句柄不再漏报。
+- Caskroom 候选目录计量在检查点响应取消；用户显式忽略整个扫描根时静默跳过，
+  不再报告为文件系统故障；已安装定义补充支持 `.internal.json`。
+- Caskroom 扫描和执行共用有界安装证据检查：回执及祖先经过 no-follow、ignore/protect、
+  云占位、属主和文件系统校验；实际安装入口仍指向旧版时阻断。执行前重新获取打开句柄，
+  句柄或进程状态未知均拒绝，版本变化使旧选择失效；相对 `HOMEBREW_PREFIX` 不作为扫描根。
+- Caskroom 测试显式限制临时扫描根并核对移动来源和目的地，避免误选本机默认根中的同名版本；
+  修复测试回执未关闭文件的告警。
 
 ## [0.24.0a4] - 2026-10-13
 

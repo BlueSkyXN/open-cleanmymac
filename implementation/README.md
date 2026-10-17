@@ -134,14 +134,38 @@ probe 核对同一 device/inode/owner，不全局 casefold 或 resolve；身份�
 不改变输出路径、默认扫描根、环境路径原有授权范围或其它软件的归属推断。
 实际 Homebrew 下载/安装并发验收仍未完成；测试使用模拟进程与临时缓存，不调用真实 brew。
 
-Homebrew Cask 旧版本目录按 cask 安装回执（`Caskroom/<token>/.metadata/INSTALL_RECEIPT.json`
-的 `source.version`）核对同 token 下的顶层版本目录：仅严格低于回执版本的目录成为
-developer 域 critical 候选，要求 `--include-critical` 精确选择；当前版本、更高版本、
-无法比较的版本号（如 `1.0.98-2`）或回执缺失一律只报告并阻断。brew 运行或进程状态未知、
-存在打开句柄、symlink、忽略/跨卷/云占位均不可执行。Caskroom 位于系统保护根内，
-通过 `homebrew-caskroom` 清理范围在执行前重新发现根、复核 token/版本两级结构和回执版本
-四元组后才允许移动到同卷 Trash；不触碰 `.metadata`、不卸载 token、不调用 brew 命令，
-目录范围等价于 `brew cleanup --cask`。带后缀版本一律不可比较并保持保护。
+Homebrew Cask 旧版本目录使用 `homebrew-caskroom` 专用范围。默认 Caskroom 根之外，只接受
+绝对 `HOMEBREW_PREFIX`。存在多个顶层版本目录时，核对 `.metadata/INSTALL_RECEIPT.json`
+的 `source.version`、最新 `.metadata/<version>/<timestamp>/Casks/<token>.json|rb`、当前版本
+目录及安装入口；证据一致且目录版本严格更低时，才成为 developer 域 critical 可执行候选。
+需要 `--select <精确路径> --include-critical`，执行还需 `--yes`；同版、更高版本、带后缀或
+不可比较的版本、元数据缺失或矛盾均保持阻断。
+
+安装入口来自已安装 JSON 的 `artifacts` 或回执 `uninstall_artifacts`，当前只支持 binary、
+manpage、bash/zsh/fish/pwsh completion：每个目标必须是直接指向当前版本普通文件的链接，
+相对目标按 Homebrew prefix 中对应目录定位，绝对 target 按记录核对。源路径不允许绝对路径或
+`..`，支持已安装 JSON 的 `url_specs.only_path`。manpage 按章节目录定位，completion 按各 shell
+命名规则定位；这两类当前只接受默认目标名称。生成式补全只核对当前源文件和独立普通输出文件，
+不执行生成命令；`zap` 是卸载声明，不读取其目标也不把它当安装证据。app/pkg、脚本钩子、
+缺少安装链接及未知结构仅报告。旧 Ruby 定义只核对文件路径，不执行或解析 Ruby；入口由回执提供。
+链接目标逐组件验证：中间组件必须是已验证的真实目录，含 `..` 的目标只在无符号链接组件时按
+逐层回退解析，任何穿过符号链接的回退一律拒绝（词法折叠不等于实际解析）。除声明的入口外，
+prefix 各链接目录中的一级符号链接会全量核对：目标位于本 token 内但指向当前版本之外的
+（含历史版本记录过的残留入口）一律阻断；指向其它 token 的链接由目标 token 自己的扫描判定，
+指向 prefix 之外的软件链接不受影响。链接目标解析在整次扫描内缓存复用，不随 token 数放大。
+
+Caskroom 子路径按 token/版本 槽位重判，覆盖 Analyze 的父目录、当前版本子目录和任意入口：
+当前版本不可清理，brew 运行或句柄检测失败拒绝执行；选中槽位存在打开句柄时阻断，
+句柄匹配按组件核对大小写别名（dev/inode 相同才视为同一对象）。token 根本身聚合全部版本
+与安装证据、`.metadata` 等安装证据目录均不可清理。
+
+扫描与执行前均对安装证据及祖先执行 no-follow、ignore/protect、云占位、属主和文件系统检查，
+JSON 有大小上限，元数据检查有项数与时间预算，候选目录计量在检查点响应取消。执行时重新发现根、
+复核 token/版本身份和版本四元组，重新获取进程及打开句柄快照；相关状态未知或打开句柄存在时
+拒绝执行。通过后只移动精确旧版本目录到同卷 Trash，保留 token、`.metadata` 和当前安装入口，
+不调用 brew。已安装定义支持 `.json`、`.internal.json` 与 `.rb`。用户显式忽略整个 Caskroom
+根时静默跳过，不报告为文件系统故障。这是 OpenClean 的受限识别规则，不等同于 Homebrew
+cleanup；真实安装/升级并发验收见 TODO。
 
 ### AI 浏览器缓存路径补齐
 

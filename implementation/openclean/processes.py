@@ -48,11 +48,33 @@ class OpenFileSnapshot:
 
     def count_under(self, root: str | os.PathLike[str]) -> int:
         normalized = os.path.abspath(os.fspath(root))
-        prefix = normalized.rstrip(os.sep) + os.sep
-        return sum(
-            candidate == normalized or candidate.startswith(prefix)
-            for candidate in self.paths
-        )
+        return sum(self._matches(candidate, normalized) for candidate in self.paths)
+
+    @staticmethod
+    def _matches(candidate: str, normalized: str) -> bool:
+        if candidate == normalized or candidate.startswith(
+            normalized.rstrip(os.sep) + os.sep
+        ):
+            return True
+        # 大小写不敏感文件系统上 lsof 与候选可能使用不同大小写拼写；
+        # 组件折叠相同后，还须逐个差异组件核对是否同一文件系统对象。
+        candidate_parts = os.path.abspath(candidate).split(os.sep)
+        root_parts = normalized.rstrip(os.sep).split(os.sep)
+        if (len(candidate_parts) <= len(root_parts)
+                or any(a.casefold() != b.casefold()
+                       for a, b in zip(candidate_parts, root_parts))):
+            return False
+        for index, (actual, expected) in enumerate(zip(candidate_parts, root_parts)):
+            if actual == expected:
+                continue
+            try:
+                left = os.lstat(os.sep.join(candidate_parts[:index + 1]))
+                right = os.lstat(os.sep.join(root_parts[:index + 1]))
+            except OSError:
+                return False
+            if (left.st_dev, left.st_ino) != (right.st_dev, right.st_ino):
+                return False
+        return True
 
     def count_sqlite_family(self, database: str | os.PathLike[str]) -> int:
         normalized = os.path.abspath(os.fspath(database))

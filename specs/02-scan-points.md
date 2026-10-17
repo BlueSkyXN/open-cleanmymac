@@ -48,11 +48,20 @@ Homebrew 缓存的运行状态保护必须覆盖专用/通用扫描点、Analyze
 作为清理对象。识别 Bash 执行 brew.sh 的自动更新阶段，普通 API 文件没有在途标记也不能在活动时
 清理。Homebrew 范围及锁后代的大小写别名需经文件系统语义和 no-follow 身份复核，未知则阻断。
 
-Caskroom 旧版本目录按安装回执版本判定：仅严格低于回执 `source.version` 的顶层版本目录成为
-developer 域 critical 精确选择候选；同版、更高、版本不可比较或回执缺失只报告并阻断。
-brew 活动、进程未知、打开句柄与既有文件系统边界沿用；执行前经 `homebrew-caskroom`
-范围重发现根并复核回执四元组，`.metadata` 与 token 本身不是清理对象，不调用 brew 命令。
-验收见 `test_caskroom.py`、`test_homebrew_guards.py`。
+Caskroom 旧版本目录须同时核对回执 `source.version`、最新带时间戳安装元数据、当前版本目录
+及已安装入口；仅严格更低的顶层版本目录可成为 developer 域 critical 精确选择可执行候选。
+当前支持 binary、manpage、shell completion 的直接链接；生成式补全只核对当前源及独立普通
+输出文件，`zap` 声明不作为安装证据且不访问其目标。app/pkg、脚本钩子及无法核实的入口保持只读。
+链接目标逐组件验证，含 `..` 的目标仅在中间组件均为真实目录时逐层回退解析，穿过符号链接的
+回退一律拒绝；prefix 链接目录中的残留链接指向当前版本之外时阻断（按目标所属 token 判定），
+链接解析在整次扫描内缓存复用，不随 token 数放大。
+Caskroom 子路径（含 Analyze 入口）按 token/版本 槽位重判并复核句柄；句柄匹配按组件核对大小写
+别名的对象身份；token 根与安装证据目录不可清理。已安装定义支持 `.json`、`.internal.json` 与 `.rb`。同版、更高、不可比较、证据缺失或相互矛盾均阻断，不因回执单一字段放行。
+安装证据及祖先须先经过 ignore/protect、no-follow、云占位、属主与文件系统检查，再做有界读取；
+不得执行 Ruby 定义。仅绝对环境 prefix 可追加扫描根。
+执行前经 `homebrew-caskroom` 范围重发现根、复核身份和版本四元组，并重查进程与打开句柄；
+brew 活动、句柄存在或必要状态未知均拒绝。`.metadata` 与 token 本身不是清理对象，不调用 brew。
+验收见 `test_caskroom.py`、`test_homebrew_guards.py`；测试须隔离默认根并断言实际移动来源和目的地。
 
 ## 3. 承接个人经验与已有诊断
 

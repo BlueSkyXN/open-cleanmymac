@@ -49,9 +49,10 @@ fail-closed，不会伪报成功。
 > 当前版本 `0.24.0a4`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
 > 完整范围与 JSON/Run 版本见 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
 
-developer 域新增 Homebrew Cask 旧版本目录识别：按安装回执版本核对 Caskroom 顶层版本目录，
-仅严格更低的目录成为 critical 精确选择候选，brew 运行或版本证据不明时不可执行；
-等价 `brew cleanup --cask` 的目录范围，不触碰 `.metadata` 也不调用 brew。
+未发布源码在 developer 域新增 Homebrew Cask 旧版本目录识别：回执、最新安装元数据、
+当前版本目录及支持的安装入口一致时，严格更低版本才可经 critical 精确选择移入同卷 Trash。
+目前支持可核实的 binary、manpage 和 shell completion 链接；其它安装类型仅报告。
+执行前重查安装状态、brew 活动和打开句柄；保留 `.metadata`，不调用 brew。
 
 `0.24.0a4` 新增应用架构、嵌套语言资源、Chrome 旧组件和下载/镜像只读识别，支持保存
 文件审阅目录及文本/TUI 逐项查看证据。它也包含扫描暂停/取消、Analyze 浏览、项目范围选择

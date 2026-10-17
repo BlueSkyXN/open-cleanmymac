@@ -613,8 +613,10 @@ def _measure_retention_root(
     now: float,
     include_directory_mtime: bool = False,
     entry_limit: int | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> _RetentionMeasurement:
     assert root_facts.stat is not None
+    cooperate = checkpoint or (lambda: None)
     measurement = _RetentionMeasurement()
     if include_directory_mtime:
         measurement.newest_mtime = root_facts.stat.st_mtime
@@ -622,10 +624,12 @@ def _measure_retention_root(
     seen: set[tuple[int, int]] = set()
     stack = [root_facts.path]
     while stack:
+        cooperate()
         directory = stack.pop()
         try:
             entries = scandir_entries(directory)
             for entry in entries:
+                cooperate()
                 if entry_limit is not None and visited >= entry_limit:
                     issues.append(ScanIssue(
                         code="diagnostic_entry_limit", message="诊断条目超过上限，结果仅为部分测量",
@@ -1125,6 +1129,7 @@ def _candidate_measurement(
     *,
     task: str,
     now: float,
+    checkpoint: Callable[[], None] | None = None,
 ) -> _RetentionMeasurement | None:
     facts = _candidate_directory_facts(
         path,
@@ -1141,6 +1146,7 @@ def _candidate_measurement(
         issues,
         task=task,
         now=now,
+        checkpoint=checkpoint,
     )
 
 
