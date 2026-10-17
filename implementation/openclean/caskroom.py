@@ -7,6 +7,7 @@ import re
 import stat
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -272,6 +273,8 @@ def _iter_prefix_links(
             facts = inspection.checked_path(root)
         except FileNotFoundError:
             continue
+        except OSError as exc:
+            raise InspectionError(f"无法检查 Cask prefix 链接目录 {root}：{exc}") from exc
         if not stat.S_ISDIR(facts.stat.st_mode):
             raise InspectionError("Cask prefix 链接目录不是普通目录")
         root_device = facts.stat.st_dev
@@ -307,24 +310,86 @@ def _iter_prefix_links(
     return entries
 
 
+def _resolve_inventory_link(inspection: _CaskInspection, entry: Path) -> Path | None:
+    """只读核实残留入口的最终归属，逐组件展开链接后再处理 ``..``。"""
+    current = Path(entry.anchor)
+    pending = deque(entry.parts[1:])
+    observed = {current: inspection.probe(current)}
+    links: list[FileFacts] = []
+    visited: set[tuple[Path, tuple[str, ...]]] = set()
+    while pending:
+        inspection.tick()
+        part = pending.popleft()
+        if part in ("", "."):
+            continue
+        if part == "..":
+            current = current.parent
+            continue
+        candidate = current / part
+        try:
+            facts = inspection.probe(candidate)
+        except FileNotFoundError:
+            current = None
+            break
+        except OSError as exc:
+            raise InspectionError(f"无法核实链接组件 {candidate}：{exc}") from exc
+        if stat.S_ISLNK(facts.stat.st_mode):
+            key = (candidate, tuple(pending))
+            if key in visited:
+                raise InspectionError(f"Cask 链接目标包含循环：{candidate}")
+            if len(links) >= _MAX_LINK_HOPS:
+                raise InspectionError(f"Cask 链接目标超过跳数上限：{candidate}")
+            visited.add(key)
+            with open_directory(current, inspection.protection) as descriptor:
+                if FileIdentity.from_stat(os.stat(
+                    part, dir_fd=descriptor, follow_symlinks=False,
+                )) != facts.identity:
+                    raise InspectionError(f"Cask 链接身份变化：{candidate}")
+                raw = os.readlink(part, dir_fd=descriptor)
+            after = inspection.probe(candidate)
+            if (after.identity != facts.identity
+                    or after.stat.st_ctime_ns != facts.stat.st_ctime_ns):
+                raise InspectionError(f"Cask 链接在读取期间变化：{candidate}")
+            if not raw or raw.startswith("~") or "\x00" in raw:
+                raise InspectionError(f"Cask 链接目标路径无效：{candidate}")
+            links.append(facts)
+            if raw.startswith(os.sep):
+                current = Path(os.sep)
+            pending.extendleft(reversed(raw.split(os.sep)))
+        else:
+            if pending and not stat.S_ISDIR(facts.stat.st_mode):
+                raise InspectionError(f"Cask 链接目标穿过非目录组件：{candidate}")
+            current = candidate
+            observed[current] = facts
+    # 读取使用目录 fd 和 no-follow，返回前还须排除链接被替换的情况。
+    for facts in links:
+        inspection.checked_path(facts.path.parent)
+        after = inspection.probe(facts.path)
+        if (after.identity != facts.identity
+                or after.stat.st_ctime_ns != facts.stat.st_ctime_ns):
+            raise InspectionError(f"Cask 链接在复核期间变化：{facts.path}")
+    if current is not None and inspection.checked_path(current).identity != observed[current].identity:
+        raise InspectionError(f"Cask 链接最终目标身份变化：{current}")
+    return current
+
+
 def _resolve_link_target(
     inspection: _CaskInspection, entry: Path, token_root: Path,
     cache: dict[Path, Path | None] | None = None,
-    *, allow_indirect: bool = True, visited: tuple[Path, ...] = (),
+    *, allow_indirect: bool = True,
 ) -> Path | None:
-    """逐组件解析链接目标；中间组件须是已验证的真实目录，``..`` 只在其后出现。
-
-    词法折叠 ``..`` 只有在全部中间组件都不是符号链接时才等于实际解析；
-    因此先验证再回退，包含符号链接组件的目标直接拒绝。
-    残留入口的末级链接按跳数上限继续核对；当前安装入口仍只接受直接链接。
-    ``cache`` 复用同一残留链接的最终目标，不能代替直接入口的检查。
-    """
-    if entry in visited:
-        raise InspectionError("Cask 链接目标包含循环")
-    if len(visited) >= _MAX_LINK_HOPS:
-        raise InspectionError("Cask 链接目标超过跳数上限")
-    if cache is not None and entry in cache:
-        return cache[entry]
+    """残留入口有界核实最终归属；当前声明入口仍要求直接链接。"""
+    if allow_indirect:
+        if cache is not None and entry in cache:
+            return cache[entry]
+        target = _resolve_inventory_link(inspection, entry)
+        if target is not None and filesystem_relative_parts(
+            target, token_root.parent, probe=inspection.checked_path,
+        ) is None:
+            target = None
+        if cache is not None:
+            cache[entry] = target
+        return target
     inspection.checked_path(entry.parent)
     entry_facts = inspection.probe(entry)
     if not stat.S_ISLNK(entry_facts.stat.st_mode):
@@ -366,11 +431,7 @@ def _resolve_link_target(
         target = None
     else:
         if stat.S_ISLNK(target_facts.stat.st_mode):
-            if not allow_indirect:
-                raise InspectionError("Cask 安装入口目标仍是符号链接，仅支持直接链接")
-            target = _resolve_link_target(
-                inspection, target, token_root, cache, visited=(*visited, entry),
-            )
+            raise InspectionError("Cask 安装入口目标仍是符号链接，仅支持直接链接")
         elif filesystem_relative_parts(
             target, token_root.parent, probe=inspection.checked_path,
         ) is None:
@@ -429,7 +490,10 @@ def _scan_prefix_links(
         try:
             for entry, _facts in _iter_prefix_links(inspection, token_root):
                 inspection.tick()
-                _resolve_link_target(inspection, entry, token_root, prefix_links.targets)
+                try:
+                    _resolve_link_target(inspection, entry, token_root, prefix_links.targets)
+                except OSError as exc:
+                    raise InspectionError(f"无法核实 Cask prefix 入口 {entry}：{exc}") from exc
         except OSError as exc:
             # 同一轮中共享无法完整读取的结论，避免逐 token 重复耗尽遍历预算。
             prefix_links.errors[prefix] = str(exc)

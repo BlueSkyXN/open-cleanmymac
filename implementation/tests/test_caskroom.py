@@ -645,6 +645,76 @@ class CaskroomMetadataTests(CaskroomFixture):
         (self.base / "bin/unrelated-tool").symlink_to(elsewhere / "alias")
         self.assertTrue(self.old(self.scan()).actionable)
 
+    def test_unrelated_homebrew_opt_link_does_not_block_cleanup(self) -> None:
+        token = self.make_cask()
+        other = self.base / "Cellar/other/1.0"
+        (other / "bin").mkdir(parents=True)
+        (other / "bin/other").write_bytes(b"x")
+        (self.base / "opt").mkdir()
+        (self.base / "opt/other").symlink_to(other, target_is_directory=True)
+        unrelated = self.base / "bin/unrelated"
+        unrelated.symlink_to("../opt/other/bin/other")
+        item = self.old(self.scan())
+        self.assertTrue(item.actionable, item.action_block_reason)
+        report = execute_cleanup([item], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "moved_to_trash")
+        self.assertTrue(unrelated.exists())
+        self.assertTrue((token / "2.0/bin/tool").exists())
+
+    def test_opt_link_back_to_old_version_blocks(self) -> None:
+        token = self.make_cask()
+        (self.base / "opt").mkdir()
+        (self.base / "opt/legacy").symlink_to(token / "1.0", target_is_directory=True)
+        (self.base / "bin/legacy").symlink_to("../opt/legacy/bin/tool")
+        self.assert_blocked(text="旧版本")
+
+    def test_residual_dotdot_uses_resolved_directory(self) -> None:
+        token = self.make_cask()
+        (token / "1.0/nested").mkdir()
+        (token / "2.0/bridge").symlink_to(token / "1.0/nested", target_is_directory=True)
+        (self.base / "bin/legacy").symlink_to(token / "2.0/bridge/../bin/tool")
+        self.assert_blocked(text="旧版本")
+
+    def test_unrelated_dangling_opt_link_does_not_block(self) -> None:
+        self.make_cask()
+        (self.base / "opt").mkdir()
+        (self.base / "opt/missing").symlink_to("../Cellar/missing/1.0", target_is_directory=True)
+        (self.base / "bin/unrelated").symlink_to("../opt/missing/bin/tool")
+        self.assertTrue(self.old(self.scan()).actionable)
+
+    def test_protected_intermediate_link_reports_entry_and_component(self) -> None:
+        token = self.make_cask()
+        (self.base / "opt").mkdir()
+        bridge = self.base / "opt/legacy"
+        bridge.symlink_to(token / "1.0", target_is_directory=True)
+        entry = self.base / "bin/legacy"
+        entry.symlink_to("../opt/legacy/bin/tool")
+        item = self.assert_blocked(IgnoreRules((str(bridge),)), text="忽略")
+        self.assertIn(str(entry), item.action_block_reason)
+        self.assertIn(str(bridge), item.action_block_reason)
+
+    def test_intermediate_link_changed_during_resolution_blocks(self) -> None:
+        token = self.make_cask()
+        (self.base / "opt").mkdir()
+        bridge = self.base / "opt/legacy"
+        bridge.symlink_to(token / "2.0", target_is_directory=True)
+        (self.base / "bin/legacy").symlink_to("../opt/legacy/bin/tool")
+        original = os.readlink
+        changed = False
+
+        def readlink(path, **kwargs):
+            nonlocal changed
+            value = original(path, **kwargs)
+            if not changed and value == str(token / "2.0"):
+                changed = True
+                bridge.unlink()
+                bridge.symlink_to(token / "1.0", target_is_directory=True)
+            return value
+
+        with mock.patch("openclean.caskroom.os.readlink", side_effect=readlink):
+            self.assert_blocked(text="变化")
+        self.assertTrue(changed)
+
     def test_terminal_link_cycle_and_protected_target_block(self) -> None:
         token = self.make_cask()
         bridge = token / "2.0/bridge"

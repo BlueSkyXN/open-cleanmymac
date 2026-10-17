@@ -115,6 +115,7 @@ def _run_fixture(root: Path, home: Path, brew: str, token: str, tap: str, qualif
         return result
 
     prefix = Path(command("--prefix").stdout.strip()).resolve()
+    print(command("--version").stdout.strip(), flush=True)
     caskroom = prefix / "Caskroom"
     token_root = caskroom / token
     require(not token_root.exists(), "unique-token")

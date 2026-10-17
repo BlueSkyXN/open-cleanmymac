@@ -56,6 +56,7 @@ Caskroom 是 Homebrew 为 `brew install --cask` 安装的软件保存版本文�
 执行前重查安装状态、brew 活动和打开句柄；保留当前版本和 `.metadata` 安装记录，不调用 brew。
 Analyze 同样保护整个 Caskroom 及包含它的父目录；历史 manpage、补全和自定义 binary
 入口经多层链接仍引用旧版本时也阻断清理，文件自身的大小写别名同样检查打开句柄。
+其它 Homebrew 软件的链接经核实无关后，不影响当前软件的旧版本清理。
 真实安装、升级与回滚的专用验收范围见 [TODO](implementation/TODO.md)。
 
 `0.24.0a4` 新增应用架构、嵌套语言资源、Chrome 旧组件和下载/镜像只读识别，支持保存
