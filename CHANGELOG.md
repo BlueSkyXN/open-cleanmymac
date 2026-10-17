@@ -11,6 +11,20 @@
 
 ### Added
 
+- 经典 `clean/purge --select-file FILE`：从最多 50000 项、8 MiB 的非空 JSON 数组精确选择路径或
+  资源 identifier，重新扫描后一次索引匹配；保留风险授权、预览和逐项复核，空清单或失效目标拒绝。
+- Codex 临时对象的阻断说明细分为缺项、空/异常 HEAD、实际 Git 数据、安装元数据/配置/正式安装
+  缺失及 revision/内容差异；JSON diagnostics 与文本提供按原因计数。
+- Codex 临时对象接入经典 `scan/clean ai`：Git 空骨架静置满 24 小时，marketplace 升级暂存
+  静置满 7 天且为空或有配置对应的正式相同副本时，提供 critical 精确选择和同卷 Trash 动作。
+  执行前重新检查结构、mtime/ctime、安装来源/内容、配置引用、进程和句柄；新增
+  `codex-transient` 清理范围，父目录及内部叶文件不能通过通用清理绕过。
+  Git 精确候选预算 32768 个，超限和取消保留已检查项并阻断，汇总进入 diagnostics 以避免重复计量。
+  工作树、个人材料、example、恢复备份和 daemon 发行包不纳入；Agent 生产策略保持只读。
+- Codex HOME 一级材料只读审阅：`scan/clean ai --details` 和 TUI F 区分 Finder 元数据、
+  备份/示例、命名 profile、配置引用、额外资料和待确认归属。复用有界 no-follow 遍历，
+  只读有界 config/profile 的模型路径键，不递归材料目录或读取凭据正文；JSON schema v2
+  增加只读 `codex_home` 诊断类型，不改变 Item 字段和清理资格。
 - Homebrew Cask 旧版本目录识别：developer 域核对安装回执、最新带时间戳安装元数据、
   当前版本目录和安装入口。仅已核实的严格更低版本可经 critical 精确选择移入同卷 Trash；
   当前支持 binary、manpage 和 shell completion 链接，其它安装类型或证据不一致保持只读。
@@ -18,6 +32,11 @@
 
 ### Fixed
 
+- Codex 配置嵌套过深时保留 HOME 材料审阅并报告引用检查不完整，临时清理候选保持阻断；
+  同次扫描复用解析失败结果，避免每个候选重复解析异常配置。
+- 大量精确 selector 改用索引匹配，避免每个 selector 重扫整个候选列表。Codex 的两次准备后
+  完整检查合并到源/Trash fd 打开后的最终检查，保留每目标新鲜进程/句柄和结构复核。
+- Codex Git 临时空骨架超出 8192 个名称候选时保留有界部分结果并报告不完整，避免整组汇总消失。
 - 修复无关 Homebrew `opt` 链接使全部 Cask 旧版本候选误阻断的问题：残留入口逐组件核实
   最终归属，先展开链接再处理 `..`；仍引用旧版、循环、保护检查失败或路径变化时继续阻断。
   链接核实失败时补充具体入口及组件路径；当前安装入口、安装记录和清理目标保留严格检查。

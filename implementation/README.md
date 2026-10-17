@@ -75,6 +75,34 @@ openclean config --update-knowledge HTTPS_URL --knowledge-public-key publisher-p
 前四条会修改文件；清空 Trash 和 Docker prune 是永久操作。验证写路径应运行
 `make preview`。
 
+## 批量精确选择清单（未发布）
+
+`clean` 和 `purge` 支持 `--select-file FILE`，读取 UTF-8 JSON 字符串数组，例如：
+
+```json
+["/absolute/path/from-scan/one", "/absolute/path/from-scan/two"]
+```
+
+路径或资源 identifier 从当前扫描结果中选取。清单最多 50000 项、8 MiB，每项最多 4096 字符，
+重复项去重；空清单、非字符串、NUL、读取变化或格式错误在扫描前返回 exit 2。
+清单文件须为普通文件，文件本身不能是 symlink。路径按 `--select` 的词法规范化匹配，
+不展开 glob。与 `--select`、`--all`、`--force`、显式交互或 Agent Run/Finding 模式互斥。
+
+```bash
+openclean clean ai --select-file targets.json --include-critical --json
+# 在已授权的范围内执行上面审阅的目标：
+openclean clean ai --select-file targets.json --include-critical --yes --json
+```
+
+该入口从空选择集开始，默认预选和同等级其他候选不附带进入；confirm/critical 仍需对应 flag。
+每次命令重新扫描并用索引匹配整个清单；任一目标未发现、歧义或不可执行，整份选择拒绝。
+清单只保存 selector，前次预览的 inode 没有跨命令冻结；本次选出的 Item 携带当前身份，
+进入既有整批预检和逐项复核。普通文件沿用同卷 Trash，清单不会生成父目录删除动作。
+
+批量执行基准：`PYTHONPATH=. python3 scripts/benchmark_codex_cleanup.py --entries 100 1000`。
+它只操作 TemporaryDirectory，真实执行同卷 Trash；进程/句柄是合成空闲快照，无 ps/lsof
+子进程。输出分别记录扫描、选择、执行耗时及探测调用数，不能作为真实进程探测延迟的测量。
+
 ## 后续源码的缓存保护与 Purge 说明（未发布）
 
 通用用户缓存与 Darwin 用户缓存先使用静态进程归属；未命中的一级 bundle-ID 型子目录
@@ -379,11 +407,47 @@ Analyze 的公共参数、JSON schema v2、`--top` 显示截断和 critical 执�
 - `updater_temp`：动态 ShipIt app 的版本状态；
 - `codex_transient`：`total_count`、`open_handle_count`；marketplace staging 另有
   `measured_count` 和 `measurement_complete`；
+- `codex_home`：HOME 一级材料审阅，详细条目放在同次 `diagnostics[].files`，支持文本
+  `--details` 和 TUI F 资源列表。分类为 Finder 元数据、备份/示例、命名 profile、配置引用、
+  额外资料目录/文本、归属待确认；分类不授予清理资格。容量只计一级普通文件并去重硬链接，
+  目录容量为未知，不递归会话、插件或用户材料。最多枚举 512 项，最多读取 32 个不超过
+  1 MiB 的 config/profile，仅提取 `model_catalog_json` / `model_instructions_file` 路径；
+  不读取被引用文件正文、凭据或数据库。未检查项目配置、命令行、脚本和内嵌模板，不声称未使用。
+  配置读取失败或超限报告不完整；未知名称可能来自新版本，不视为违规或垃圾。
 - `crashpad_pairing`：`paired_artifact_count`、`recent_artifact_count`；
 - `open_unlinked`：`potential_bytes=0`，逻辑上限只进入 `logical_bytes`、`total_count`、
   `related_process_count` 和 `open_handle_count`。
 
 `resource_kind=filesystem_subset` 的 `path` 只是聚合锚点，字节数仅覆盖命中子集。
+Agent 保留的 Codex Git 聚合诊断最多检查 8192 个名称候选；超限仍返回已确认子集，
+`total_count` 和容量只表示该子集，issue 为 blocking，扫描报告不完整。
+
+未发布源码的经典 `scan --domain ai` / `clean ai` 改为逐目录候选：
+
+- `~/.codex/.tmp/git-*`：默认 HEAD，空 objects/refs（允许普通 `.DS_Store`），所有目录和文件
+  的最新 mtime/ctime 静置满 24 小时；额外文件、Git 数据、链接或不完整骨架阻断。
+- `~/.codex/.tmp/marketplaces/.staging/marketplace-upgrade-*`：静置满 7 天；须真空，或支持的
+  marketplace manifest、安装元数据、用户 config/profile 来源与正式安装一致。非空暂存还
+  逐文件比较 SHA-256 和目录集合，忽略普通 `.DS_Store` 内容差异；额外文件或不同 revision 阻断。
+- 两类均为 `filesystem` Item，`cleanup_scope=codex-transient` 绑定默认 HOME 下的 `.codex`
+  根及 inode。critical、默认不选、要求精确 `--select` 和 `--include-critical`；无 `--yes`
+  只预览，执行移入同卷 Trash。执行前重读结构、ctime、配置、安装、进程和打开句柄。
+  Codex 运行、状态未知、符号链接、硬链接、非当前用户、跨设备、云占位和忽略路径均阻断。
+  `.tmp`、正式市场、备份、`.staging` 父目录与内部叶文件不能通过通用 Analyze/清理绕过。
+- 汇总放在 `diagnostics[kind=codex_transient_targets]`：`total_count`、`checked_count`、
+  `actionable_count`、`complete`、`minimum_age_days`、`age_basis`。容量只计逐目标 Item，
+  不再同时加入 staging/Git 聚合字节；`latest_mtime` 仍为 mtime，`age_days` 按最新 mtime/ctime。
+  `block_reasons[]` 提供 `code`、`message`、`count`，区分缺项/空 HEAD/非预期 HEAD、Git 数据、
+  额外文件、缺安装元数据、未配置市场、正式安装缺失、revision/内容不同以及年龄/占用等原因。
+  单项说明和文本摘要使用同次结果。取消时保留已检查项并阻断，摘要可执行数归零。
+
+经典 Git 预算为 32768 个目标、staging 为 2048 个；超限保留前缀并阻断该组动作。
+根枚举上限 65536 项，非空 staging 单树上限 20000 项、深度 32、内容比较每树 64 MiB，
+单个 JSON/TOML 1 MiB、配置最多 32 个。超限、解析失败与读取失败报告检查不完整。
+配置引用检查覆盖默认 HOME 下 config、managed_config、requirements 和命名 profile 的字符串值；
+不解析项目配置、脚本和命令行覆盖，不支持把任意 `CODEX_HOME` 重定向目录加入动作范围。
+Agent pack 的生产动作仍关闭；旧 Run 或 synthetic approval 不能绕过执行器的专项范围复核。
+
 `optimize --json` 返回：
 
 ```json

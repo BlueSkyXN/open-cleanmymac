@@ -346,6 +346,26 @@ class BrowserStorageDiagnosticTests(unittest.TestCase):
 
 
 class CodexStructuredStorageDiagnosticTests(unittest.TestCase):
+    def test_git_limit_keeps_verified_subset_and_reports_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("git-a", "git-b"):
+                candidate = root / name
+                (candidate / "objects").mkdir(parents=True)
+                (candidate / "refs").mkdir()
+                (candidate / "HEAD").write_text("ref: refs/heads/main\n")
+            with mock.patch("openclean.storage_diagnostics._MAX_CODEX_GIT_ROOTS", 1):
+                result = scan_codex_git_skeletons(
+                    root, IgnoreRules(), process_snapshot=ProcessSnapshot(()),
+                    open_files=OpenFileSnapshot(()),
+                )
+            self.assertFalse(result.complete)
+            self.assertEqual(len(result.items), 1)
+            self.assertEqual(result.items[0].total_count, 1)
+            self.assertFalse(result.items[0].actionable)
+            self.assertIn("已确认子集", result.items[0].note)
+            self.assertTrue((root / "git-b/HEAD").exists())
+
     def test_codex_diagnostic_rejects_symlinked_home_component(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

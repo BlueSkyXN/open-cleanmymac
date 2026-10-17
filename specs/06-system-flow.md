@@ -22,7 +22,7 @@ VAL-FLOW-001：任务记录能对应发现、精确预览、授权依据和结�
 REQ-FLOW-001b：显示模式集中判定，显式参数优先于 TTY 探测。`--json` 是机器输出，
 不能与 `--interactive`/`--line-interactive` 组合；`--no-interactive` 与显式交互互斥，
 与 `--json` 同时出现是冗余的明确意图。`--interactive` 需要 stdin/stdout 均连接终端并
-不能与参数化选择（`--select`/`--all`/`--include-confirm`/`--include-critical`/`--force`
+不能与参数化选择（`--select`/`--select-file`/`--all`/`--include-confirm`/`--include-critical`/`--force`
 及 Agent `--run/--finding`）组合，冲突在扫描前以 exit 2 拒绝；`--yes` 是执行授权，
 不是选择来源，可与 `--interactive` 配合。无显式模式时沿用 TTY 自动判断；显式子命令
 默认文本 CLI 属于未实施的推荐目标，不作为现状。
@@ -85,6 +85,15 @@ REQ-FLOW-003：无 `--select` 时使用既有默认预选和 tier 批量语义�
 有 `--select` 时从空集合开始，只选择精确命中，不附带同等级项目。
 `--select + --all` 在扫描前拒绝。环境来源项、Docker、updater 等显式选择要求不能被批量参数覆盖。
 `--force --yes` 仅沿用默认预选并拒绝扩大选择参数，不表示绕过保护。
+
+REQ-FLOW-003a：经典 clean/purge 的 `--select-file FILE` 读取非空 UTF-8 JSON 字符串数组，
+最多 50000 项/8 MiB/每项 4096 字符；重复项去重，空项、NUL、非法格式、读取变化与非普通文件拒绝。
+文件本身不跟随 symlink；有效清单沿用精确 selector 的词法匹配和本次扫描，不展开 glob。
+与 `--select`、`--all`、`--force`、显式交互、Agent 参数互斥，冲突或文件无效在扫描前返回 2。
+所有 selector 必须匹配本次唯一且可执行的候选，任一失败则不进入执行器；不附带默认选择。
+保留风险 flag、`--yes`、整批预检、逐项复核及部分失败回执；清单不冻结前次对象身份。
+VAL-FLOW-003a：`test_selection_file.py` 覆盖格式/边界/互斥、TTY 路由、精确选择、无授权预览、
+临时 Trash、无效清单拒绝和两万个 selector；索引匹配保持同路径诊断与普通候选的原有歧义语义。
 
 REQ-FLOW-004：不带 `--yes` 的 clean/purge/analyze 不修改候选。
 TUI 有 `--yes` 仍需汇总确认；critical 保留二次确认。

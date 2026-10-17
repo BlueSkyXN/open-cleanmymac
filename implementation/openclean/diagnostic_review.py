@@ -8,7 +8,7 @@ from pathlib import Path
 from .engine import human
 from .models import Item
 
-_KINDS = frozenset({"application_binaries", "application_languages", "downloads", "disk_image"})
+_KINDS = frozenset({"application_binaries", "application_languages", "downloads", "disk_image", "codex_home"})
 _FILE_TYPES = {
     "disk_image": "磁盘镜像候选", "in_progress": "进行中后缀线索",
     "installer": "安装包", "archive": "压缩文件", "other": "普通文件",
@@ -67,7 +67,24 @@ def _entry(kind: str, row: dict, record: dict) -> EvidenceEntry:
         "状态：只读证据，不提供选择或清理；容量不等于可释放空间",
         f"所属报告完整：{'是' if record.get('complete') else '否，保留部分证据'}",
     ]
-    if kind == "application_binaries":
+    if kind == "codex_home":
+        labels = {
+            "configured_reference": "被配置引用", "supported_profile": "命名 profile",
+            "finder_metadata": "Finder 元数据", "backup_or_example": "备份/示例线索",
+            "supplemental_directory": "额外资料目录", "supplemental_document": "额外文本材料",
+            "unclassified": "归属待确认",
+        }
+        label = labels.get(row.get("classification"), "归属待确认")
+        amount = _size(row.get("allocated_bytes")) if row.get("entry_type") == "file" else "目录未计量"
+        summary = f"{amount} · {label}"
+        lines.extend((
+            f"用途分类：{label}", str(row.get("note", "")),
+            f"逻辑大小：{_size(row.get('logical_bytes'))}", f"已分配占用：{amount}",
+            "小文件：" + ("是（不超过 1 MiB，不代表无用）" if row.get("small_file") else "否/目录"),
+            "引用检查：仅用户 config/profile 的模型目录与指令路径；未检查项目、脚本或内嵌模板",
+            "配置引用检查完整：" + ("是" if record.get("reference_scan_complete") else "否"),
+        ))
+    elif kind == "application_binaries":
         slices = row.get("slices", [])
         architectures = ", ".join(str(s.get("architecture", "未知")) for s in slices) or "未知"
         amount = _size(row.get("other_architecture_logical_bytes"))

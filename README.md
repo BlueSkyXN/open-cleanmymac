@@ -49,6 +49,20 @@ fail-closed，不会伪报成功。
 > 当前版本 `0.24.0a4`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
 > 完整范围与 JSON/Run 版本见 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
 
+当前未发布源码另为 `scan --domain ai --details` / `clean ai --details` 增加 Codex HOME
+一级材料审阅：区分 Finder 元数据、备份/示例、命名 profile、配置引用、额外资料和归属待确认项。
+只读检查有界元数据与配置中的模型路径，不将小文件或非标准名称当垃圾，不提供这些对象的清理动作。
+`scan --domain ai` / `clean ai` 还增加两类精确清理候选：静置满 24 小时的 Git 临时空骨架，
+以及静置满 7 天的 marketplace 升级暂存。暂存须为空，或与配置对应的正式安装具有相同
+来源、revision 和内容。候选为 critical、默认不选，使用扫描返回的路径和 `--include-critical`
+精确选择；执行带 `--yes` 后移入同卷 Trash。Codex 运行中、句柄占用或状态未知时阻断。
+工作树、example、个人材料、回滚备份和 daemon 安装包不在这两条规则内。
+Git 一次最多检查 32768 个候选；超限保留已检查子集并阻断该组动作。
+经典 `clean/purge` 可用 `--select-file FILE` 导入精确路径/identifier 的 JSON 数组，
+支持大量目标的审阅与执行；最多 50000 项、8 MiB，沿用风险授权和逐项复核。
+Codex 的阻断原因细分为骨架缺项、HEAD 异常、已有 Git 数据、安装元数据缺失、revision/内容不同等，
+文本和 JSON 均提供原因计数。格式与操作示例见[实现说明](implementation/README.md#批量精确选择清单未发布)。
+
 Caskroom 是 Homebrew 为 `brew install --cask` 安装的软件保存版本文件和安装记录的目录。
 未发布源码在 developer 域新增其中的旧版本目录识别：回执、最新安装元数据、
 当前版本目录及支持的安装入口一致时，严格更低版本才可经 critical 精确选择移入同卷 Trash。

@@ -444,9 +444,14 @@ AI_TOOL_JUNK: list[ScanPoint] = [
         "Codex 临时结构与 Crashpad 配对",
         (),
         "critical",
-        "只读识别 marketplace staging、Git 空壳和孤立 Crashpad sidecar",
+        "Git 空骨架与已验证 marketplace 暂存可精确选择；Crashpad 配对只读",
         default_selected=False,
         scanner="codex-storage-artifacts",
+    ),
+    ScanPoint(
+        "Codex 用户目录材料审阅",
+        (), "critical", "一级元数据与有界配置引用；额外材料不等于垃圾",
+        scanner="codex-home", default_selected=False,
     ),
     ScanPoint(
         "Gemini 临时",

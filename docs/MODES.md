@@ -34,7 +34,7 @@ curses）不会静默改走其他模式；自动 TTY 判断失败时才保留文
    `invalid_mode_options`（exit 2），不静默忽略其中一个。
 3. `--no-interactive` 与显式交互互斥；`--json` 搭配 `--no-interactive` 是冗余的明确
    意图，继续允许。
-4. `--interactive` 与参数化选择（`--select`、`--all`、`--include-confirm`、
+4. `--interactive` 与参数化选择（`--select`、经典 clean/purge 的 `--select-file`、`--all`、`--include-confirm`、
    `--include-critical`、`--force`、Agent `--run/--finding`）互斥：菜单与参数是两个
    选择来源。`--yes` 是执行授权参数，不是选择来源，可与 `--interactive` 配合。
 5. 无显式模式时沿用兼容期自动判断：stdin/stdout 均为 TTY 且没有参数化选择才进入

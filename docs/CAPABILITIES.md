@@ -93,7 +93,10 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | WorkBuddy 个人经验结构 | `scan --domain ai` / `clean ai` / `inspect workbuddy` | `read-only` | expired 后缀、numeric Worker 整组年龄和精确 Electron 缓存；不触碰 binaries、插件、技能、会话历史；见 [经验依据](EXPERIENCE.md) |
 | 浏览器 CacheStorage 保留期 | `scan/clean junk` | `read-only` | Chrome/Brave/Edge/Comet Default/Profile 根；不读取 origin、Cookies、Login Data、IndexedDB 或整个 Profile |
 | SQLite freelist | `scan/clean ai` | `read-only` | immutable page/freelist/WAL/句柄；不 `VACUUM` 或删除数据库 |
-| Codex 临时结构与 Crashpad 配对 | `scan/clean ai` | `read-only` | `.tmp` 整根固定保护；只报告精确 staging、Git 空壳和无同名 dump 的 sidecar；staging 超限返回有界部分结果 |
+| Codex Git 空骨架与升级暂存 | `scan/clean ai` | `available`（未发布源码） | Git 静置 24 小时；staging 静置 7 天且为空或与配置/正式安装内容一致；critical 精确选择、同卷 Trash、运行与句柄保护；执行前复核，父容器不可选 |
+| 大批量精确选择 | `clean/purge --select-file FILE` | `available`（未发布源码） | 有界 JSON selector 数组，重扫后索引匹配；不附带默认项，任一无效目标拒绝，沿用风险授权/Trash/逐项复核 |
+| Codex Crashpad 配对 | `scan/clean ai` | `read-only` | 仅报告无同名 dump 的 sidecar；保留配对 dump 与近期项 |
+| Codex HOME 一级材料 | `scan/clean ai --details`、TUI F | `read-only`（未发布源码） | 元数据、备份/示例、profile、配置引用、额外材料与待确认归属；不递归目录，不读正文/凭据，不把名称、小体积或未发现引用当删除证据 |
 | deleted-open 卷占用 | `scan/clean junk` | `read-only` | `lsof +L1` 字段模式、device/inode 去重和逻辑大小上限；路径只用于内存保护过滤，结果只显示进程名 |
 | Darwin updater 临时副本 | `scan/clean junk` | `read-only` | getconf 动态根、Qoder ShipIt 版本状态；固定不可执行 |
 | Darwin 临时/运行副本 | `scan/clean junk` | `read-only` | `T/X` 公开名称模式、7/14/30 天容量、进程/句柄；固定不可执行 |
@@ -133,7 +136,7 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | 日志/runtime/download 保留期诊断 | `project-extension` | `storage_diagnostics.py`、`processes.py` | 固定/动态根、mtime 桶、物理块、ignore、进程/句柄和不可执行测试 |
 | 浏览器 CacheStorage 保留期 | `project-extension` | `storage_diagnostics.py` | 已知浏览器与 Default/Profile 发现、symlink 拒绝、运行态和不可执行测试 |
 | SQLite freelist 诊断 | `project-extension` | `storage_diagnostics.py` | immutable URI、页统计、sidecar 不变和 malformed DB 测试 |
-| Codex 临时结构与 Crashpad 配对 | `project-extension` | `storage_diagnostics.py` | staging 精确根、Git 正/负结构、dump/sidecar 配对、最近项、句柄和不可执行测试 |
+| Codex 临时结构与 Crashpad 配对 | `project-extension` | `codex_artifacts.py`、`storage_diagnostics.py` | `test_codex_artifacts.py`：精确候选、内容比较、scope 防绕过、变化复核、临时 Trash、两万目录与取消；原聚合和 Crashpad 继续只读 |
 | deleted-open 卷占用 | `project-extension` | `processes.py`、`storage_diagnostics.py` | lsof 字段 parser、跨进程 FD 去重、按卷映射、未知 device 和不可执行测试 |
 | Darwin updater 临时副本 | `project-extension` | `macos.py`、`updater.py`、`storage_diagnostics.py` | getconf、动态 root、版本状态和不可执行测试 |
 | Darwin 临时/运行副本 | `project-extension` | `application_ownership.py`、`storage_diagnostics.py` | `T/X` 合成目录、未知名称排除、进程归属和不可执行测试 |

@@ -14,11 +14,13 @@ from .application_ownership import (
     ApplicationResolver,
 )
 from .caskroom import CaskScanCache, CaskVersionState, assess_cask_path, caskroom_roots
+from .codex_artifacts import CodexArtifactContext, PROCESS_MARKERS as CODEX_PROCESS_MARKERS, transient_relation
 from .filesystem import lstat_retry, scandir_entries
 from .macos import filesystem_name_matches, filesystem_relative_parts, scan_symlink_anchor
 from .models import FileFacts, normalize_path
 from .predicates import Predicate, ProtectionGate
-from .processes import OpenFileDetectionError, ProcessDetectionError, ProcessSnapshot, capture_open_file_snapshot
+from .processes import (OpenFileDetectionError, OpenFileSnapshot, ProcessDetectionError,
+                        ProcessSnapshot, capture_open_file_snapshot)
 from .scanpoints import DOMAINS
 from .updater import UPDATER_RULES, UpdaterAssessment, assess_updater_candidate
 
@@ -61,6 +63,7 @@ class CleanupGuardContext:
         home: Path | None = None,
         application_resolver: ApplicationResolver | None = None,
         cask_scan_cache: CaskScanCache | None = None,
+        capture_open_files: Callable[[], OpenFileSnapshot] | None = None,
     ) -> None:
         self.home = normalize_path(home or Path.home())
         self.protection = protection
@@ -72,6 +75,9 @@ class CleanupGuardContext:
         self._snapshot: ProcessSnapshot | None = None
         self._process_error = ""
         self._static_roots = tuple(self._build_registered_roots())
+        self.capture_open_files = capture_open_files or capture_open_file_snapshot
+        self._codex_context: CodexArtifactContext | None = None
+        self._codex_lock = threading.Lock()
 
     def _probe(self, path: Path) -> FileFacts | None:
         anchor = scan_symlink_anchor(path, home=self.home)
@@ -195,6 +201,7 @@ class CleanupGuardContext:
         process_markers: tuple[str, ...] = (),
         darwin_cache_root: Path | None = None,
         checkpoint: Callable[[], None] = lambda: None,
+        codex_scope: bool = False,
     ) -> CleanupGuards:
         path = normalize_path(path)
         markers = list(process_markers)
@@ -206,6 +213,26 @@ class CleanupGuardContext:
         try:
             if self._probe(path) is None:
                 raise GuardInspectionError("应用保护范围已不存在，需重新扫描")
+            relation = transient_relation(path, self.home, self._probe)
+            if relation:
+                if relation == "container" or not codex_scope:
+                    return CleanupGuards(block_reason="Codex 临时范围须通过 clean ai 精确选择已验证的子目录")
+                snapshot, error = self._processes()
+                with self._codex_lock:
+                    if self._codex_context is None:
+                        try:
+                            handles = self.capture_open_files()
+                        except OpenFileDetectionError:
+                            handles = None
+                        self._codex_context = CodexArtifactContext(
+                            self.home, self.protection, process_snapshot=snapshot, open_files=handles,
+                        )
+                    _, block, note = self._codex_context.assess(path, relation)
+                return CleanupGuards(
+                    process_markers=CODEX_PROCESS_MARKERS, block_reason=block, note=note,
+                    process_error=error,
+                    resource_in_use=snapshot is not None and snapshot.any_running(CODEX_PROCESS_MARKERS),
+                )
             for root in homebrew.lock_roots():
                 if self._homebrew_scope(path, root) is not None:
                     reason = "选择范围包含 Homebrew 锁目录，不支持清理"

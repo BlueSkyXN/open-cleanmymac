@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -46,7 +47,7 @@ def _rules(home: Path) -> Path:
     return rules
 
 
-def _trusted_pack() -> StrategyPack:
+def _trusted_pack(root: str = "~/synthetic-marketplace-staging") -> StrategyPack:
     """构建一个合成 trusted pack，供测试执行路径使用。"""
     strategy = Strategy(
         id="codex.test.old-staging",
@@ -54,7 +55,7 @@ def _trusted_pack() -> StrategyPack:
         pack="codex",
         status="trusted",
         provenance=(Provenance(kind="personal_experience", observation_id="obs:test"),),
-        locator=Locator(roots=("~/.codex/.tmp/marketplaces/.staging",)),
+        locator=Locator(roots=(root,)),
         detector=Detector(
             name="codex_transient",
             params={"subkind": "codex_marketplace_staging_targets", "name_glob": "marketplace-upgrade-*"},
@@ -83,7 +84,8 @@ class CleanExecTests(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
-        staging = self.home / ".codex/.tmp/marketplaces/.staging"
+        # 合成 trusted 策略验证通用执行器；真实 Codex 范围另有结构和 scope 门。
+        staging = self.home / "synthetic-marketplace-staging"
         self.old = staging / "marketplace-upgrade-old"
         self.old.mkdir(parents=True)
         (self.old / "blob.bin").write_bytes(b"x" * 8192)
@@ -254,6 +256,8 @@ class CleanExecTests(unittest.TestCase):
         self.assertTrue(self.old.exists())
 
     def test_cli_execute_active_summary_is_rejected(self) -> None:
+        actual = self.home / ".codex/.tmp/marketplaces/.staging" / self.old.name
+        shutil.copytree(self.old, actual)
         rules = _rules(self.home)
         rs = ["--run-store", str(self.runs), "--rules", str(rules)]
         _, out = self._call(["inspect", "codex", "--json", *rs])
@@ -283,7 +287,29 @@ class CleanExecTests(unittest.TestCase):
         self.assertIn("strategy_not_trusted", reasons)
         self.assertIn("aggregate_root_not_actionable", reasons)
         # 聚合根 .staging 必须仍在
-        self.assertTrue(self.old.parent.exists())
+        self.assertTrue(actual.parent.exists())
+
+    def test_synthetic_approval_cannot_bypass_codex_scope(self) -> None:
+        actual = self.home / ".codex/.tmp/marketplaces/.staging" / self.old.name
+        shutil.copytree(self.old, actual)
+        registry = approved_registry((_trusted_pack("~/.codex/.tmp/marketplaces/.staging"),))
+        result = inspect_target(
+            "codex", self.protection, registry=registry, run_store=self.store,
+            home=self.home, snapshots=(_EMPTY_PROC, _EMPTY_OPEN),
+        )
+        finding = self._old_finding(result)
+        plan = resolve_plan(
+            run=result.run, findings=result.findings, selected_ids=[finding.finding_id],
+            registry=registry, user_confirmed=True, include_confirm=True,
+        )
+        report, records = execute_plan(
+            plan, list(result.findings), self.protection, home=self.home,
+            run=result.run, registry=registry, user_confirmed=True,
+            include_confirm=True, snapshots=(_EMPTY_PROC, _EMPTY_OPEN),
+        )
+        self.assertFalse(report.complete)
+        self.assertTrue(actual.exists())
+        self.assertEqual(records[0].status, "blocked")
 
     def test_cli_finding_not_in_run(self) -> None:
         rules = _rules(self.home)
