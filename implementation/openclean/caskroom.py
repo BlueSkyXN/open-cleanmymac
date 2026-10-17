@@ -35,6 +35,7 @@ _MAX_RECEIPT_BYTES = 2 * 1024 * 1024
 _MAX_TOKENS = 20_000
 _MAX_METADATA_ENTRIES = 4096
 _PREFIX_LINK_BUDGET = 200_000
+_PREFIX_LINK_TIMEOUT = 20.0
 _MAX_LINK_HOPS = 40
 _TOKEN_NAME = re.compile(r"^[a-z0-9][a-z0-9@._+-]*$")
 _TIMESTAMP = re.compile(r"^[0-9]{14}(?:\.[0-9]+)?$")
@@ -154,8 +155,11 @@ class CaskScanCache:
 
 
 class _CaskInspection(PathInspection):
-    def __init__(self, token_root: Path, protection: Predicate, checkpoint: Callable[[], None]):
-        super().__init__(protection, checkpoint=checkpoint, max_entries=_MAX_METADATA_ENTRIES)
+    def __init__(
+        self, token_root: Path, protection: Predicate, checkpoint: Callable[[], None],
+        *, timeout: float = 5.0,
+    ):
+        super().__init__(protection, checkpoint=checkpoint, max_entries=_MAX_METADATA_ENTRIES, timeout=timeout)
         self.token_root = token_root
         self.root = self.checked_path(token_root)
         if not stat.S_ISDIR(self.root.stat.st_mode) or self.root.stat.st_uid != os.getuid():
@@ -749,7 +753,7 @@ def _installation_version(
         # 除声明的入口外，prefix 链接目录中的任何残留链接也不得指向当前版本之外；
         # 历史版本记录过的入口在升级改名后仍可能保留在 bin/manpage 等目录中。
         prefix_started = time.monotonic()
-        prefix_inspection = _CaskInspection(token_root, protection, checkpoint)
+        prefix_inspection = _CaskInspection(token_root, protection, checkpoint, timeout=_PREFIX_LINK_TIMEOUT)
         prefix_inspection.remaining += _PREFIX_LINK_BUDGET
         _scan_prefix_links(prefix_inspection, token_root, current, links)
         # 全局 prefix 检查有自己的预算，不占用本 token 元数据复核的计时。

@@ -4,6 +4,14 @@ name: Acceptance
 # 磁盘镜像。手动触发或每周定时，不进入 PR 检查路径；结论以每次运行日志为准。
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: "验收范围"
+        type: choice
+        default: all
+        options:
+          - all
+          - caskroom
   schedule:
     - cron: "17 4 * * 1"
 
@@ -23,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15, macos-26]
-        suite: [homebrew, caskroom, volumes, zig, deriveddata, exfat, unicode]
+        suite: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.suite == 'caskroom' && '["caskroom"]' || '["homebrew","caskroom","volumes","zig","deriveddata","exfat","unicode"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,6 +49,7 @@ jobs:
   # 性能基准只记录趋势（continue-on-error），不做阈值拦截，避免 runner
   # 性能波动制造假警报；结果以 artifact 历史对比为准。
   benchmarks:
+    if: github.event_name != 'workflow_dispatch' || inputs.suite != 'caskroom'
     name: ${{ matrix.os }} / benchmarks (record-only)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30

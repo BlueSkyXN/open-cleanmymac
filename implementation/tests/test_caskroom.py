@@ -749,11 +749,28 @@ class CaskroomMetadataTests(CaskroomFixture):
 
         def delayed(*args, **kwargs):
             nonlocal elapsed
-            elapsed += 6.0
+            elapsed += caskroom._PREFIX_LINK_TIMEOUT + 1.0
             return original(*args, **kwargs)
 
         with mock.patch("openclean.caskroom.time.monotonic", side_effect=lambda: clock() + elapsed), \
              mock.patch.object(caskroom, "_scan_prefix_links", side_effect=delayed):
+            item = self.old(self.scan())
+        self.assertFalse(item.actionable)
+        self.assertIn("时间预算", item.action_block_reason)
+
+    def test_token_metadata_keeps_its_short_time_budget(self) -> None:
+        self.make_cask()
+        clock = time.monotonic
+        elapsed = 0.0
+        original = caskroom._check_installed_links
+
+        def delayed(*args, **kwargs):
+            nonlocal elapsed
+            elapsed += 6.0
+            return original(*args, **kwargs)
+
+        with mock.patch("openclean.caskroom.time.monotonic", side_effect=lambda: clock() + elapsed), \
+             mock.patch.object(caskroom, "_check_installed_links", side_effect=delayed):
             item = self.old(self.scan())
         self.assertFalse(item.actionable)
         self.assertIn("时间预算", item.action_block_reason)

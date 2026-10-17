@@ -144,6 +144,7 @@ Countable total、每任务 Control 聚合和 observer 仅是条件增强；需�
   `acceptance.yml` 已接入 `caskroom` 专用套件（`scripts/acceptance_caskroom.py`）：以自有 tap
   验证真实 brew 安装、升级、安装失败回滚、并发与打开句柄保护，并清理复制得到的合成旧版本。
   该套件只在一次性 macOS runner 运行，结果以对应提交的云端日志为准；原 `homebrew` 缓存套件不覆盖这些场景。
+  手动验收可选择 `suite=caskroom` 仅运行两个 macOS Caskroom job；默认及定时运行全部套件。
   不在本机真实 Caskroom 执行测试。历史 Ruby 定义保持只读；旧版 Homebrew 与各类 JSON
   定义的兼容性仍需补充版本矩阵，当前套件只验证 runner 自带的 Homebrew。
 - Claude/Copilot 等版本目录应先解析当前 symlink/安装版本，只报告非当前完整旧版本；

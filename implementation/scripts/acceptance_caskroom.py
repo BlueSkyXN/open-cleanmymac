@@ -17,6 +17,7 @@ import subprocess
 import tarfile
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -143,7 +144,9 @@ def _run_fixture(root: Path, home: Path, brew: str, token: str, tap: str, qualif
             definition.write_text(cask_source(token, version, archives[version], base_url), encoding="utf-8")
 
         def scan_old():
+            started = time.monotonic()
             result = scan_caskroom_versions(IgnoreRules(), roots=(caskroom,))
+            print(f"Caskroom scan: {time.monotonic() - started:.2f}s", flush=True)
             require(result.complete, "scan-complete", repr(result.issues))
             old = next((item for item in result.items if item.path == token_root / "0.5"), None)
             require(old is not None, "synthetic-residue-visible")
