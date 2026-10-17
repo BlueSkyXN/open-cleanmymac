@@ -154,6 +154,14 @@ Countable total、每任务 Control 聚合和 observer 仅是条件增强；需�
   执行前复核句柄，再纳入 updater 状态机。
 - Codex 相邻原子写 temp 与 disabled feature cache 仍未做通用判定；目标缺失、JSON 截断或
   当前配置关闭都不能单独证明可删除，后续必须先定义 primary/backup/feature ownership。
+- Codex HOME 一级材料已加入只读审阅，区分 profile/模型路径引用与额外材料；不认定文件未使用，
+  不检查正文重复或任意脚本引用。经典 AI 域已实现 Git 空骨架和空/相同副本 marketplace 暂存
+  的 critical 精确选择与 Trash 复核，见 `test_codex_artifacts.py`；安装包与真实环境交付另验。
+  daemon 旧版本、不同 revision/无完整证据的暂存、非默认 CODEX_HOME、在线清理和个人材料删除
+  仍需各自的生命周期证据与动作验收；Agent 生产策略未启用。
+- 经典 clean/purge 已补 `--select-file` 有界精确清单和索引匹配；Codex 原因计数及逐项最终复核
+  已覆盖批量路径。`scripts/benchmark_codex_cleanup.py` 可重跑临时目录真实 Trash 基准，
+  其中进程/句柄是合成快照；真实探测延迟、大批量实机验收和安装发行仍单独核验。
 
 ### 10. Analyze 响应与规模验收
 

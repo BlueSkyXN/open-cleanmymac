@@ -58,6 +58,7 @@ from .runtime.inspect_service import inspect_target, validated_home
 from .runtime.run_store import RunStore, finding_to_dict, default_run_store_dir
 from .scan_tui import ScanScreenFailure, start_scan_screen
 from .scanpoints import DOMAINS
+from .selection_file import SelectionFileError, load_selection_file
 from .space_tui import SpaceTUIUnavailable, review_space
 from .terminal_ui import pad_cells, safe_text, safety_label
 from .strategies.registry import StrategyRegistry, pack_hash
@@ -360,6 +361,10 @@ def _add_cleanup_execution_options(parser: argparse.ArgumentParser) -> None:
             "不继承默认预选，confirm/critical 仍需对应授权"
         ),
     )
+    parser.add_argument(
+        "--select-file", type=Path, metavar="FILE",
+        help="从非空 JSON 字符串数组精确选择路径/identifier（最多 50000 项、8 MiB）；重新扫描并复核",
+    )
     _add_interactive_mode_group(parser)
 
 
@@ -375,6 +380,9 @@ def _progress_renderer(as_json: bool) -> TerminalProgressRenderer | None:
 
 
 def _validate_cleanup_execution_args(args: argparse.Namespace) -> str | None:
+    selection_file = getattr(args, "select_file", None)
+    if selection_file is not None and args.select:
+        return "--select-file 不能与 --select 同时使用"
     if args.force and not args.yes:
         return "--force 需要同时指定 --yes；拒绝执行删除"
     if args.force and (
@@ -382,10 +390,11 @@ def _validate_cleanup_execution_args(args: argparse.Namespace) -> str | None:
         or args.include_confirm
         or args.include_critical
         or args.select
+        or selection_file is not None
     ):
         return "--force 只执行默认预选项，不能与选择扩展参数同时使用"
-    if args.select and args.select_all_safe:
-        return "--select 是精确选择模式，不能与批量选择参数 --all 同时使用"
+    if (args.select or selection_file is not None) and args.select_all_safe:
+        return "--select/--select-file 是精确选择模式，不能与批量选择参数 --all 同时使用"
     return None
 
 
@@ -468,6 +477,7 @@ def _parameterized_selection(args: argparse.Namespace, command: str) -> bool:
         return bool(args.select)
     classic = bool(
         getattr(args, "select", [])
+        or getattr(args, "select_file", None) is not None
         or getattr(args, "select_all_safe", False)
         or getattr(args, "include_confirm", False)
         or getattr(args, "include_critical", False)
@@ -983,6 +993,11 @@ def _print_text_totals(result: ScanResult, *, selection_label: str = "当前选�
     print(f"发现 {human(result.total)} · 当前可执行 {human(result.actionable_total)}")
     print(f"{selection_label} {human(result.preselected_total)} · "
           f"只读/阻断 {human(sum(item.size for item in result.items if not item.actionable))}")
+    for row in result.diagnostics:
+        if row.get("kind") == "codex_transient_targets" and row.get("block_reasons"):
+            print(f"{safe_text(row['category'])} · 阻断原因：")
+            for reason in row["block_reasons"]:
+                print(f"  {reason['count']} 项：{safe_text(reason['message'])}")
 
 
 def _print_text_evidence(item: Item, evidence: EvidenceIndex) -> None:
@@ -2224,6 +2239,7 @@ def main(argv: list[str] | None = None) -> int:
             or args.config_path
             or args.details
             or getattr(args, "select", [])
+            or getattr(args, "select_file", None) is not None
             or getattr(args, "select_all_safe", False)
             or getattr(args, "force", False)
             or any(arg == "--workers" or arg.startswith("--workers=") for arg in raw_argv)
@@ -2249,7 +2265,7 @@ def main(argv: list[str] | None = None) -> int:
             return _fail(
                 args, "clean", "mixed_clean_modes",
                 "clean：Agent 参数（--run/--finding）不能与经典参数"
-                "（category/--select/--all/--force）混用。",
+                "（category/--select/--select-file/--all/--force）混用。",
                 exit_code=2,
             )
         try:
@@ -2270,6 +2286,11 @@ def main(argv: list[str] | None = None) -> int:
                 "invalid_selection_options",
                 f"clean：{error}。",
             )
+        if args.select_file is not None:
+            try:
+                args.select = list(load_selection_file(args.select_file))
+            except SelectionFileError as exc:
+                return _fail(args, "clean", "invalid_selection_file", str(exc))
         domains = (
             [CLEAN_CATEGORY_DOMAINS[args.category]]
             if args.category is not None
@@ -2562,6 +2583,11 @@ def main(argv: list[str] | None = None) -> int:
             purge_mode = _display_mode(args, "purge")
         except DisplayModeError as exc:
             return _fail(args, "purge", exc.code, f"purge：{exc}")
+        if args.select_file is not None:
+            try:
+                args.select = list(load_selection_file(args.select_file))
+            except SelectionFileError as exc:
+                return _fail(args, "purge", "invalid_selection_file", str(exc))
         if args.path is not None:
             root = args.path.expanduser()
             if not root.exists() or not root.is_dir() or root.is_symlink():

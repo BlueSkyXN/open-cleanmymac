@@ -79,8 +79,9 @@ REQ-DETECT-003：复用下表能力和 [EXPERIENCE](../docs/EXPERIENCE.md) 的�
 | 主题 | 应当解释的证据 | 识别/处理边界 |
 |---|---|---|
 | 多工具 retention | 文件数、已分配/逻辑容量、7/14/30 天桶、句柄与测量限制 | 桶可重叠；年龄不直接授予整根删除 |
-| Codex staging | 精确 marketplace 子目标和聚合摘要、目标数/测量数、完整性 | .tmp/.staging 父目录不可泛化；结构动作门仍未实现 |
-| Codex Git 空壳 | 临时根下已验证空骨架结构 | 普通仓库、有内容/工作状态的近似结构排除 |
+| Codex staging | 精确 marketplace 子目标、空目录或配置/正式安装相同副本、静置期、完整性 | 经典 CLI 逐目标 critical 选择；.tmp/.staging 父目录、恢复备份和未知布局保护，Agent 动作仍关闭 |
+| Codex Git 空壳 | 临时根下已验证空骨架、所有节点 mtime/ctime、运行与句柄 | 普通仓库、有内容/工作状态的近似结构排除；经典 CLI 逐目标 critical 选择 |
+| Codex HOME 材料 | 一级元数据、备份/示例名称线索、支持的 profile、配置中的模型路径引用与未知归属 | 目录不递归；不读材料、凭据或数据库正文；额外/小文件/未发现引用均不等于可删 |
 | Codex SQLite | page/freelist、内部空闲、WAL/SHM/journal | 不读业务行、不在线 VACUUM、不删除 DB/sidecar |
 | Crashpad | sidecar 与同名 dump 配对、近期项、数量 | 不删除配对 .dmp；聚合证据不等于动作目标 |
 | Qoder/updater | staged/installed 版本与应用存在性、Darwin 临时副本 | 当前/待升级/未知版本不能作旧版本残留；临时副本诊断保持只读 |
@@ -90,6 +91,28 @@ REQ-DETECT-003：复用下表能力和 [EXPERIENCE](../docs/EXPERIENCE.md) 的�
 | WorkBuddy | expired 后缀、numeric Worker 整组年龄、精确 Electron 缓存 | 以下专项要求，全部只读 |
 
 VAL-DETECT-003：专项 JSON/文本/详情解释使用本次 Item 证据，不额外读取正文，不把诊断字节计入可回收。
+
+Codex HOME 材料只读审阅使用现有子集诊断；最多 512 个一级项、32 个配置、每配置 1 MiB。
+配置只提取用户 config/profile 的模型目录与指令路径，解析失败或预算耗尽必须报告不完整；
+不推断项目、脚本、CLI 或内嵌模板是否仍使用材料。Git 空骨架超出结构检查预算时保留已确认
+部分结果并报告不完整，不能因数量大就显示为空。验收：`test_codex_home.py`、`test_storage_diagnostics.py`。
+
+REQ-DETECT-003b：经典 Codex 精确候选仅限默认 HOME 的 `.codex/.tmp/git-*` 和
+`.codex/.tmp/marketplaces/.staging/marketplace-upgrade-*` 直接子目录。Git 检查默认 HEAD、
+空 objects/refs，允许普通 `.DS_Store`；所有节点最新 mtime/ctime 满 24 小时。
+staging 满 7 天且为空，或有受支持 manifest、安装元数据、相同配置来源和正式安装的相同
+目录/普通文件内容（SHA-256 比较，普通 `.DS_Store` 除外）。正式安装或来源未知时不执行。
+两类要求同用户、同设备、无链接/云占位/保护项，Codex 退出且句柄状态已知为零；
+critical、默认不选，精确选择后经 `codex-transient` 范围及根身份复核移入同卷 Trash。
+执行期重新检查以上事实；父容器、内部文件和脱离专用 scope 的泛化候选不能绕过。
+Git 目标预算 32768、staging 2048；超限保留已检查前缀且阻断该组动作，取消保留并阻断已检查项。
+根枚举超过 65536 项时报告检查失败。逐目标容量与 diagnostics 汇总分开，避免重复计量。
+同次 `diagnostics[].block_reasons` 按 `code`/`message` 汇总 `count`，区分结构缺项、HEAD、
+真实 Git 数据、安装/配置/revision/内容和运行条件；单项仍使用现有 `action_block_reason`。
+取消时所有已检查项不可执行、摘要可执行数归零。Codex 执行期保留整批预检以及每项进入动作和
+源/Trash fd 打开后的两次完整复核；后者覆盖 Trash 准备期间变化，不复用此前进程/句柄快照。
+VAL-DETECT-003b：`test_codex_artifacts.py` 覆盖正/负结构、配置/安装关系、状态未知、变化复核、
+精确选择、临时 Trash、两万目录、部分结果、取消；`test_agent_clean_exec.py` 覆盖合成审批不能绕过。
 
 Codex Electron 补充精确缓存子目录时沿用运行保护、confirm 与默认不选；不递归扩展任意
 profile/partition，不包含登录、历史、会话和组件目录。Service Worker/CacheStorage 保持

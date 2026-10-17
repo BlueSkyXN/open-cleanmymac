@@ -64,6 +64,7 @@ from .scanpoints import (
     project_artifact_note,
 )
 from .startup_items import scan_broken_startup_items
+from .codex_home import scan_codex_home
 from .storage_diagnostics import (
     scan_codex_browser_storage_diagnostics,
     scan_codex_storage_artifact_diagnostics,
@@ -739,6 +740,9 @@ def _apply_scan_guards(
 ) -> Item:
     if not item.actionable or item.resource_kind != "filesystem" or item.path is None:
         return item
+    if item.cleanup_scope == "codex-transient":
+        # 专项扫描已完整判定；执行器会独立重读，扫描不重复遍历万级目录。
+        return item
     assessment = guards.assess(
         item.path,
         process_markers=item.running_process_markers,
@@ -1060,7 +1064,13 @@ def _scan_dynamic_point_with_progress(
         elif point.scanner == "open-unlinked":
             result = scan_open_unlinked_diagnostics(protection)
         elif point.scanner == "codex-storage-artifacts":
-            result = scan_codex_storage_artifact_diagnostics(protection)
+            result = scan_codex_storage_artifact_diagnostics(
+                protection, exact_targets=True, checkpoint=ctl.checkpoint, on_progress=progress.advance,
+            )
+        elif point.scanner == "codex-home":
+            result = scan_codex_home(
+                protection, checkpoint=ctl.checkpoint, on_progress=progress.advance,
+            )
         elif point.scanner == "codex-browser-storage":
             result = scan_codex_browser_storage_diagnostics(protection)
         elif point.scanner == "caskroom-versions":

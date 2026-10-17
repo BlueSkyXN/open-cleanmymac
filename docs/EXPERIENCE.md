@@ -10,11 +10,27 @@
 | Docker 目标绑定 | `d526744`；`docker.py`、`cleanup.py` | 扫描和执行绑定 CLI/context/daemon；固定 prune，Volumes 不开放 |
 | 多工具日志、runtime、浏览器缓存保留期 | `43ba38a`、`d040d48`、`a1b4b58`；`storage_diagnostics.py` | 年龄桶是占用诊断，不是整根删除规则 |
 | Codex SQLite、临时结构和 Crashpad | 同上及后续保护修正；`storage_diagnostics.py` | 不删除数据库、整个 .tmp、会话或配对 dump |
+| Codex HOME 材料与配置引用 | 用户授权的目录/公开源码核查；`codex_home.py`、`test_codex_home.py` | 原生数据、官方自定义入口、个人材料和未知归属分开；只读识别不等于无用判定 |
+| Codex Git 空骨架和 marketplace 暂存清理 | 同次公开源码核查；`codex_artifacts.py`、`test_codex_artifacts.py` | 固定子目录、结构/ctime/运行/句柄/配置复核；非空暂存要求正式安装有完整相同副本；精确选择后移入 Trash |
 | Qoder 更新与临时 runtime | 同上；Darwin 动态根和 updater 版本判断 | 当前/待升级/未知版本不能当成旧缓存 |
 | WorkBuddy 精确结构 | `obs:personal:workbuddy:20260901`；`workbuddy.py` | 本轮新增确定性只读识别，经典 AI 域和 `inspect workbuddy` 共用 |
 
 这些提交证明功能已经进入项目历史，不代表每条规则的最初来源都已独立查明；
 无法从历史证据确认的条目，不标为“CleanMyMac 官方规则”或伪造 Observation。
+
+Codex 公开源码依据：[openai/codex 的 bb64b894fd67](https://github.com/openai/codex/tree/bb64b894fd67158be0f874872e6d7bfe717e7368/codex-rs)，以下路径相对于 `codex-rs/`。
+`core-plugins/src/git_policy.rs` 定义隔离 Git 骨架；`installed_marketplaces.rs` 将已安装
+marketplace 放在 `.tmp/marketplaces`；`state/src/sqlite.rs` 区分状态、历史投影、队列、目标和记忆库。
+`utils/cli/src/shared_options.rs` 的命名 profile 与 `core/src/config/mod.rs` 的模型路径说明：
+额外文件名可能是正式配置引用，不能仅凭没有固定官方名称就判为垃圾。模型目录还可能内嵌指令文本；
+仅查路径引用不足以证明某个 Markdown 的内容已不再使用。主程序根目录名称集合不是封闭 schema。
+
+同版本 `core-plugins/src/marketplace_upgrade.rs` 创建 `marketplace-upgrade-*`，
+`marketplace_upgrade/activation.rs` 写入 `.codex-marketplace-install.json` 后 rename 激活；
+恢复失败时可能保留正式安装根旁的 `marketplace-backup-*/root`。OpenClean 保留该备份范围。
+`marketplace.rs` 支持 `.agents/plugins/marketplace.json`、同目录 `api_marketplace.json`、
+`.claude-plugin/marketplace.json` 和 `.cursor-plugin/marketplace.json`；近似路径不视为证据。
+24 小时/7 天静置期、相同副本要求和内容比较预算属于 OpenClean 的产品规则，非 Codex 官方保留期。
 
 ## WorkBuddy 个人经验摘要
 

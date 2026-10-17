@@ -13,7 +13,7 @@ from pathlib import Path
 SAFETY_LEVELS = frozenset({"safe", "confirm", "critical"})
 FILESYSTEM_RESOURCE_KINDS = frozenset({"filesystem", "filesystem_subset"})
 RESOURCE_KINDS = frozenset({*FILESYSTEM_RESOURCE_KINDS, "docker"})
-CLEANUP_SCOPES = frozenset({"", "darwin-user-cache", "homebrew-caskroom"})
+CLEANUP_SCOPES = frozenset({"", "darwin-user-cache", "homebrew-caskroom", "codex-transient"})
 PATH_SOURCES = frozenset({"builtin", "environment"})
 UPDATER_STATUSES = frozenset(
     {
@@ -33,6 +33,7 @@ DIAGNOSTIC_KINDS = frozenset(
         "updater_temp",
         "open_unlinked",
         "codex_transient",
+        "codex_home",
         "crashpad_pairing",
         "application_binaries",
         "application_updates",
@@ -41,7 +42,7 @@ DIAGNOSTIC_KINDS = frozenset(
     }
 )
 FILESYSTEM_SUBSET_DIAGNOSTIC_KINDS = frozenset(
-    {"open_unlinked", "codex_transient", "crashpad_pairing", "application_binaries", "application_updates", "downloads", "disk_image"}
+    {"open_unlinked", "codex_transient", "codex_home", "crashpad_pairing", "application_binaries", "application_updates", "downloads", "disk_image"}
 )
 
 # ``SF_DATALESS`` is part of the public macOS ``sys/stat.h`` contract.  Older

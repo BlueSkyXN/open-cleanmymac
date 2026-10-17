@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .cleanup_guards import CleanupGuardContext
+from .codex_artifacts import transient_relation
 from .docker import (
     DockerPruneError,
     DockerTargetError,
@@ -128,10 +129,23 @@ def select_cleanup_items(
                 and not item.requires_explicit_selection
             )
 
+    # 一次建索引；按候选位置去重，保留同路径多候选的歧义判定。
+    literal_index: dict[str, set[int]] = {}
+    path_index: dict[Path, set[int]] = {}
+    if selector_values:
+        for index, item in enumerate(candidates):
+            if item.identifier:
+                literal_index.setdefault(item.identifier, set()).add(index)
+            if item.path is not None:
+                literal_index.setdefault(str(item.path), set()).add(index)
+                path_index.setdefault(item.path, set()).add(index)
     for selector in selector_values:
-        matches = [
-            item for item in candidates if _matches_selector(item, selector)
-        ]
+        positions = set(literal_index.get(selector, ()))
+        try:
+            positions.update(path_index.get(normalize_path(selector), ()))
+        except (TypeError, ValueError, OSError):
+            pass
+        matches = [candidates[index] for index in sorted(positions)]
         # 诊断锚点可以与普通候选同路径，但不是另一个执行目标。
         # 仍保留普通候选的歧义和阻断检查，不能仅按 actionable 过滤。
         ordinary_matches = [item for item in matches if not item.diagnostic_kind]
@@ -265,6 +279,27 @@ def _validate_cleanup_scope(
     home: Path,
     protection: Predicate,
 ) -> None:
+    def probe(candidate: Path) -> FileFacts | None:
+        facts = FileFacts.from_path(candidate)
+        return facts if facts.stat is not None else None
+
+    try:
+        relation = transient_relation(path, home, probe)
+    except OSError as exc:
+        raise CleanupSafetyError("Codex 临时路径范围无法确认") from exc
+    if relation or item.cleanup_scope == "codex-transient":
+        root = home / ".codex"
+        if (relation not in {"git", "marketplace"} or item.cleanup_scope != "codex-transient"
+                or item.cleanup_root != root or not item.requires_explicit_selection
+                or item.safety != "critical" or item.preselected or item.domain != "ai"):
+            raise CleanupSafetyError("Codex 临时范围须通过 clean ai 精确选择已验证的子目录")
+        if component := symlink_component(path, anchor=home):
+            raise CleanupSafetyError(f"Codex 临时路径包含符号链接组件：{component}")
+        facts = FileFacts(root, _lstat(root))
+        if (facts.identity != item.cleanup_root_identity or facts.stat.st_uid != uid
+                or not stat.S_ISDIR(facts.stat.st_mode) or facts.is_probable_cloud_placeholder):
+            raise CleanupSafetyError("Codex 根目录身份或状态已变化")
+        return
     if not item.cleanup_scope:
         if reason := nonprivileged_action_block_reason(path, home=home):
             raise CleanupSafetyError(f"拒绝操作{reason}")
@@ -553,6 +588,7 @@ def _audit_item(
         path,
         process_markers=item.running_process_markers,
         darwin_cache_root=item.cleanup_root if item.cleanup_scope == "darwin-user-cache" else None,
+        codex_scope=item.cleanup_scope == "codex-transient",
     )
     if assessment.process_error:
         raise CleanupSafetyError(f"进程检测失败，拒绝清理受运行状态保护的候选：{assessment.process_error}")
@@ -574,7 +610,10 @@ def _live_guard_context(
     home: Path,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None,
 ) -> CleanupGuardContext:
-    return CleanupGuardContext(protection, lambda: capture_process_snapshot(runner=process_runner), home=home)
+    return CleanupGuardContext(
+        protection, lambda: capture_process_snapshot(runner=process_runner), home=home,
+        capture_open_files=lambda: capture_open_file_snapshot(runner=process_runner),
+    )
 
 
 def trash_directory_for(
@@ -867,13 +906,15 @@ def _move_to_trash(
     path = normalize_path(item.path)
     _audit_item(item, protection, home, uid, _live_guard_context(protection, home, process_runner))
     trash = normalize_path(trash_resolver(path))
-    _audit_item(
-        item,
-        protection,
-        home,
-        uid,
-        _live_guard_context(protection, home, process_runner),
-    )
+    if item.cleanup_scope != "codex-transient":
+        _audit_item(
+            item,
+            protection,
+            home,
+            uid,
+            _live_guard_context(protection, home, process_runner),
+        )
+    # Codex 在源/Trash fd 打开后的最终复核覆盖准备阶段的变化，不在这里重复整树和 ps/lsof。
     if not _identity_matches(path, item):
         raise CleanupSafetyError(f"准备 Trash 后 inode 已变化：{path}")
     path_stat = _lstat(path)
@@ -943,6 +984,11 @@ def _move_to_trash(
             pass
         else:
             raise CleanupSafetyError(f"Trash 目标已被占用：{destination}")
+        if item.cleanup_scope == "codex-transient":
+            # Trash 准备、目录 fd 打开后再检查一次结构、ctime、配置和占用。
+            _audit_item(item, protection, home, uid, _live_guard_context(protection, home, process_runner))
+            if FileIdentity.from_stat(_stat_at(source_parent_fd, path.name, path)) != item.identity:
+                raise CleanupSafetyError("Codex 临时目录在移动前变化")
         try:
             _rename_no_replace(
                 source_parent_fd,

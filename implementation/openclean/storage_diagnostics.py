@@ -1584,24 +1584,23 @@ def scan_codex_git_skeletons(
         _append_filesystem_issue(result.issues, exc, root, task)
         return result
     matching = [entry for entry in entries if entry.name.startswith("git-")]
-    if len(matching) > _MAX_CODEX_GIT_ROOTS:
+    limit_reached = len(matching) > _MAX_CODEX_GIT_ROOTS
+    if limit_reached:
         result.issues.append(
             ScanIssue(
                 code="diagnostic_limit_reached",
-                message="Codex git-* 数量超过安全上限，已放弃本次汇总",
+                message="Codex git-* 数量超过安全上限，仅保留有界部分结果",
                 task=task,
                 path=root,
-                blocking=False,
             )
         )
-        return result
 
     observed_at = time.time() if now is None else now
     count = logical_bytes = allocated_bytes = 0
     open_handles = 0 if open_files is not None else None
     newest_mtime: float | None = None
     excluded_paths = cross_device_paths = cloud_file_count = 0
-    for entry in matching:
+    for entry in matching[:_MAX_CODEX_GIT_ROOTS]:
         try:
             if not entry.is_dir(follow_symlinks=False):
                 continue
@@ -1665,6 +1664,8 @@ def scan_codex_git_skeletons(
         f"{count} 个仅含 HEAD/objects/refs 的 git-* 目录",
         "未匹配普通、bare、worktree、partial clone 或含对象的仓库",
     ]
+    if limit_reached:
+        notes.append("超过检查上限，数量和容量仅代表已确认子集")
     notes.extend(
         _runtime_diagnostic_notes(
             process_snapshot,
@@ -1852,6 +1853,10 @@ def scan_crashpad_orphan_sidecars(
 
 def scan_codex_storage_artifact_diagnostics(
     protection: Predicate,
+    *,
+    exact_targets: bool = False,
+    checkpoint: Callable[[], None] = lambda: None,
+    on_progress: Callable[[], None] = lambda: None,
 ) -> ScanResult:
     """汇总 Codex 精确临时结构和 Crashpad 配对关系。"""
 
@@ -1861,6 +1866,20 @@ def scan_codex_storage_artifact_diagnostics(
         task="Codex 临时结构",
     )
     home = normalize_path(Path.home())
+    if exact_targets:
+        from .codex_artifacts import scan_codex_transient_targets
+
+        result.extend(scan_codex_transient_targets(
+            protection, home=home, process_snapshot=processes, open_files=open_files,
+            checkpoint=checkpoint, on_progress=on_progress,
+        ))
+        if result.cancelled:
+            return result
+        result.extend(scan_crashpad_orphan_sidecars(
+            normalize_path(_CODEX_CRASHPAD_PENDING), protection,
+            process_snapshot=processes, open_files=open_files, anchor=home,
+        ))
+        return result
     scans = (
         scan_codex_marketplace_staging(
             normalize_path(_CODEX_MARKETPLACE_STAGING),

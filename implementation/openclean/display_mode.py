@@ -58,7 +58,7 @@ def resolve_display_mode(
         if parameterized_selection:
             raise DisplayModeError(
                 "--interactive 由菜单构造选择，不能与参数化选择"
-                "（--select/--all/--include-confirm/--include-critical/--force）"
+                "（--select/--select-file/--all/--include-confirm/--include-critical/--force）"
                 "同时使用。"
             )
         if not (stdin_isatty and stdout_isatty):
