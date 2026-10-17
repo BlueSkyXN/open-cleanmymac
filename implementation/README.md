@@ -136,7 +136,7 @@ probe 核对同一 device/inode/owner，不全局 casefold 或 resolve；身份�
 
 Homebrew Cask 旧版本目录使用 `homebrew-caskroom` 专用范围。默认 Caskroom 根之外，只接受
 绝对 `HOMEBREW_PREFIX`。存在多个顶层版本目录时，核对 `.metadata/INSTALL_RECEIPT.json`
-的 `source.version`、最新 `.metadata/<version>/<timestamp>/Casks/<token>.json|rb`、当前版本
+的 `source.version`、最新 `.metadata/<version>/<timestamp>/Casks/<token>.json|internal.json|rb`、当前版本
 目录及安装入口；证据一致且目录版本严格更低时，才成为 developer 域 critical 可执行候选。
 需要 `--select <精确路径> --include-critical`，执行还需 `--yes`；同版、更高版本、带后缀或
 不可比较的版本、元数据缺失或矛盾均保持阻断。
@@ -150,14 +150,18 @@ manpage、bash/zsh/fish/pwsh completion：每个目标必须是直接指向当�
 缺少安装链接及未知结构仅报告。旧 Ruby 定义只核对文件路径，不执行或解析 Ruby；入口由回执提供。
 链接目标逐组件验证：中间组件必须是已验证的真实目录，含 `..` 的目标只在无符号链接组件时按
 逐层回退解析，任何穿过符号链接的回退一律拒绝（词法折叠不等于实际解析）。除声明的入口外，
-prefix 各链接目录中的一级符号链接会全量核对：目标位于本 token 内但指向当前版本之外的
-（含历史版本记录过的残留入口）一律阻断；指向其它 token 的链接由目标 token 自己的扫描判定，
-指向 prefix 之外的软件链接不受影响。链接目标解析在整次扫描内缓存复用，不随 token 数放大。
+prefix 已知链接目录会有界递归枚举，覆盖 manpage 章节目录和嵌套 binary，枚举不跟随链接。
+同时读取已有历史 JSON 定义，核对其记录的自定义目标（包括 prefix 外的绝对 binary target）；
+已移除的历史入口允许通过，仍引用本 token 非当前版本的入口阻断。历史 Ruby 定义或未知安装
+类型缺少可核实的入口记录时保持只读。链接归属按文件系统语义及对象身份核对大小写别名；
+指向其它 token 的链接由目标 token 自己的扫描判定。目录枚举和目标解析在整次扫描内缓存复用，
+执行复核重新读取；预算超限、路径变化或保护范围无法读取时拒绝放行。
 
 Caskroom 子路径按 token/版本 槽位重判，覆盖 Analyze 的父目录、当前版本子目录和任意入口：
 当前版本不可清理，brew 运行或句柄检测失败拒绝执行；选中槽位存在打开句柄时阻断，
 句柄匹配按组件核对大小写别名（dev/inode 相同才视为同一对象）。token 根本身聚合全部版本
-与安装证据、`.metadata` 等安装证据目录均不可清理。
+与安装证据、`.metadata` 等安装证据目录均不可清理。Caskroom 根及包含已存在 Caskroom 的
+祖先目录同样不可整体清理；不存在的根和名称相似的 sibling 不扩大保护范围。
 
 扫描与执行前均对安装证据及祖先执行 no-follow、ignore/protect、云占位、属主和文件系统检查，
 JSON 有大小上限，元数据检查有项数与时间预算，候选目录计量在检查点响应取消。执行时重新发现根、
@@ -165,7 +169,9 @@ JSON 有大小上限，元数据检查有项数与时间预算，候选目录计
 拒绝执行。通过后只移动精确旧版本目录到同卷 Trash，保留 token、`.metadata` 和当前安装入口，
 不调用 brew。已安装定义支持 `.json`、`.internal.json` 与 `.rb`。用户显式忽略整个 Caskroom
 根时静默跳过，不报告为文件系统故障。这是 OpenClean 的受限识别规则，不等同于 Homebrew
-cleanup；真实安装/升级并发验收见 TODO。
+cleanup；专用 `acceptance.yml` 的 `caskroom` 套件使用本地自有 tap 验证真实安装、升级、失败
+回滚、brew/lsof 并发保护及合成旧版本残留的清理，仅在一次性 GitHub macOS runner 上运行。
+已编写的验收脚本不作为验收通过记录，结果以对应提交的运行日志为准。
 
 ### AI 浏览器缓存路径补齐
 

@@ -140,8 +140,12 @@ Countable total、每任务 Control 聚合和 observer 仅是条件增强；需�
   运行中固定不可执行。origin 级汇总仍需先确认稳定、结构化且可脱敏的数据源，不使用
   `strings` 或临时正则解析 LevelDB。
 - Homebrew Caskroom 已有受限旧版本清理：binary/manpage/completion 入口、回执和最新安装元数据
-  必须一致；app/pkg、脚本钩子和未知入口只报告。真实 brew 安装/升级/失败回滚并发、旧版 Ruby
-  定义与新版 JSON 定义的兼容性仍需一次性 macOS runner 验收；不在本机真实 Caskroom 执行测试。
+  必须一致；历史入口继续引用旧版本时阻断，app/pkg、脚本钩子和未知入口只报告。
+  `acceptance.yml` 已接入 `caskroom` 专用套件（`scripts/acceptance_caskroom.py`）：以自有 tap
+  验证真实 brew 安装、升级、安装失败回滚、并发与打开句柄保护，并清理复制得到的合成旧版本。
+  该套件尚待一次性 macOS runner 运行；原 `homebrew` 缓存套件不覆盖这些场景。
+  不在本机真实 Caskroom 执行测试。历史 Ruby 定义保持只读；旧版 Homebrew 与各类 JSON
+  定义的兼容性仍需补充版本矩阵，当前套件只验证 runner 自带的 Homebrew。
 - Claude/Copilot 等版本目录应先解析当前 symlink/安装版本，只报告非当前完整旧版本；
   零字节更新 marker、当前 binary 和 session state 必须保留。
 - UURemote application/updater logs、历史 `.pkg` 和 Darwin temp 已纳入只读 retention

@@ -114,8 +114,16 @@ class CleanupGuardContext:
     ) -> CaskVersionState | None:
         for root in caskroom_roots():
             relative = filesystem_relative_parts(path, root, probe=self._probe)
-            if relative is None or not relative:
-                continue
+            if relative is None:
+                if (filesystem_relative_parts(root, path, probe=self._probe) is None
+                        or self._probe(root) is None):
+                    continue
+                relative = ()
+            if not relative:
+                return CaskVersionState(
+                    "", "", "", "version_unknown",
+                    "选择范围包含 Caskroom 安装根，不支持整体清理；请精确选择已核实的旧版本",
+                )
             token = relative[0]
             if len(relative) == 1:
                 # token 根本身聚合全部版本与安装证据，清理等于卸载 cask。

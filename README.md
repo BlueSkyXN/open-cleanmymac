@@ -53,6 +53,8 @@ fail-closed，不会伪报成功。
 当前版本目录及支持的安装入口一致时，严格更低版本才可经 critical 精确选择移入同卷 Trash。
 目前支持可核实的 binary、manpage 和 shell completion 链接；其它安装类型仅报告。
 执行前重查安装状态、brew 活动和打开句柄；保留 `.metadata`，不调用 brew。
+Analyze 同样保护整个 Caskroom 及包含它的父目录；历史 manpage、补全和自定义 binary
+入口仍引用旧版本时阻断清理。真实安装、升级与回滚的专用验收范围见 [TODO](implementation/TODO.md)。
 
 `0.24.0a4` 新增应用架构、嵌套语言资源、Chrome 旧组件和下载/镜像只读识别，支持保存
 文件审阅目录及文本/TUI 逐项查看证据。它也包含扫描暂停/取消、Analyze 浏览、项目范围选择

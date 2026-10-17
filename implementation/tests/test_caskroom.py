@@ -653,7 +653,9 @@ class CaskroomMetadataTests(CaskroomFixture):
         (elsewhere / "tool").write_bytes(b"x")
         for index in range(12):
             (self.base / "bin" / f"unrelated{index}").symlink_to(elsewhere / "tool")
-        result = self.scan()
+        with mock.patch("openclean.caskroom._iter_prefix_links", wraps=caskroom._iter_prefix_links) as enumerate_links:
+            result = self.scan()
+        self.assertEqual(enumerate_links.call_count, 1)
         olds = [item for item in result.items if item.path.name == "1.0"]
         self.assertEqual(len(olds), 24)
         self.assertTrue(all(item.actionable for item in olds),
@@ -683,6 +685,155 @@ class CaskroomMetadataTests(CaskroomFixture):
         self.assertTrue(all(outcome.status == "blocked" for outcome in report.outcomes))
         self.assertTrue((brew_root / "fixture").exists())
         self.assertTrue((brew_root / "fixture/.metadata").exists())
+
+    def test_analyze_caskroom_root_and_ancestor_cli_preserve_installation(self) -> None:
+        brew, brew_root = self._home_brew_fixture()
+        os.environ["HOMEBREW_PREFIX"] = str(brew)
+        for target in (brew_root, brew):
+            with self.subTest(target=target.name):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    status = main(["analyze", str(target.parent), "--select", str(target),
+                                   "--yes", "--json"])
+                payload = json.loads(output.getvalue())
+                self.assertNotEqual(status, 0, payload)
+                self.assertTrue((brew_root / "fixture/2.0/bin/tool").exists())
+                self.assertTrue((brew / "bin/fixture").exists())
+                self.assertEqual(list(self.trash.iterdir()), [])
+
+    def test_caskroom_scope_matrix_preserves_unrelated_siblings(self) -> None:
+        brew, root = self._home_brew_fixture()
+        token = root / "fixture"
+        sibling = brew / "Caskroom-backup"
+        sibling.mkdir()
+        guards = CleanupGuardContext(IgnoreRules(), lambda: IDLE[0], home=self.home)
+        cases = ((brew, True), (root, True), (token, True),
+                 (token / ".metadata", True),
+                 (token / ".metadata/2.0" / _TIMESTAMP / "Casks", True),
+                 (token / "2.0", True), (token / "2.0/bin", True),
+                 (token / "1.0", False), (token / "1.0/bin", False), (sibling, False))
+        for target, blocked in cases:
+            with self.subTest(path=target.relative_to(self.home)):
+                self.assertEqual(bool(guards.assess(target).block_reason), blocked)
+        alias = root.with_name("CASKROOM")
+        if alias.exists() and alias.stat().st_ino == root.stat().st_ino:
+            self.assertTrue(guards.assess(alias).block_reason)
+
+    def test_absent_caskroom_does_not_protect_prefix(self) -> None:
+        prefix = self.home / "empty-brew"
+        prefix.mkdir()
+        self.guard_roots.return_value = (prefix / "Caskroom",)
+        guards = CleanupGuardContext(IgnoreRules(), lambda: IDLE[0], home=self.home)
+        self.assertFalse(guards.assess(prefix).block_reason)
+
+    def test_historical_manpage_blocks_scan_and_execution(self) -> None:
+        token = self.make_cask()
+        item = self.old(self.scan())
+        source = token / "1.0/share/man/man1/fixture-legacy.1"
+        source.parent.mkdir(parents=True)
+        source.write_text("old manual\n")
+        link = self.base / "share/man/man1/fixture-legacy.1"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(source)
+        self.assert_blocked(text="仍指向旧版本")
+        report = execute_cleanup([item], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertTrue(link.exists())
+
+    def test_historical_custom_binary_targets_are_checked(self) -> None:
+        token = self.make_cask()
+        definition = token / ".metadata/1.0/20250101000000.000/Casks/fixture.json"
+        definition.parent.mkdir(parents=True)
+        for target in ("nested/fixture-legacy", str(self.home / "custom/fixture-legacy")):
+            with self.subTest(target=target):
+                link = Path(target) if Path(target).is_absolute() else self.base / "bin" / target
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(token / "1.0/bin/tool")
+                _write_json(definition, {"version": "1.0", "artifacts": [
+                    {"binary": ["bin/tool", {"target": target}]},
+                ]})
+                self.assert_blocked(text="仍指向旧版本")
+                link.unlink()
+                # 旧入口已被卸载时仍允许清理；不存在的入口不是错误。
+                self.assertTrue(self.old(self.scan()).actionable)
+
+    def test_prefix_residual_link_case_alias_is_checked(self) -> None:
+        token = self.make_cask()
+        alias = token.with_name("FIXTURE")
+        if not alias.exists() or alias.stat().st_ino != token.stat().st_ino:
+            self.skipTest("真实大小写别名需不敏感文件系统")
+        (self.base / "bin/legacy").symlink_to(alias / "1.0/bin/tool")
+        self.assert_blocked(text="仍指向旧版本")
+
+    def test_historical_metadata_is_protected_and_unknown_ruby_is_not_executed(self) -> None:
+        token = self.make_cask()
+        definition = token / ".metadata/1.0/20250101000000.000/Casks/fixture.json"
+        definition.parent.mkdir(parents=True)
+        _write_json(definition, {"version": "1.0", "artifacts": []})
+        self.assertTrue(self.old(self.scan()).actionable)
+        self.assert_blocked(IgnoreRules((str(definition),)), text="忽略")
+        definition.unlink()
+        ruby = definition.with_suffix(".rb")
+        ruby.write_text("raise 'must never execute historical Ruby'\n")
+        with mock.patch("subprocess.run", side_effect=AssertionError("must not run Ruby")):
+            self.assert_blocked(text="历史 Cask Ruby")
+
+    def test_prefix_tree_protection_cancel_and_budget(self) -> None:
+        token = self.make_cask()
+        directory = self.base / "share/man/man1"
+        directory.mkdir(parents=True)
+        (directory / "old.1").symlink_to(token / "1.0/bin/tool")
+        self.assert_blocked(IgnoreRules((str(directory),)), text="忽略")
+        with mock.patch("openclean.caskroom._PREFIX_LINK_BUDGET", 0), \
+             mock.patch("openclean.caskroom._MAX_METADATA_ENTRIES", 200):
+            # 大目录消耗真实计数预算，超限不能跳过剩余链接后仍放行。
+            for index in range(240):
+                (directory / f"page{index}.1").write_text("manual\n")
+            self.assert_blocked(text="预算")
+        original = caskroom._CaskInspection.probe
+        cancelled = False
+
+        def probe(inspection, path):
+            nonlocal cancelled
+            if path == directory:
+                cancelled = True
+            return original(inspection, path)
+
+        def checkpoint():
+            if cancelled:
+                raise Cancelled()
+
+        with mock.patch.object(caskroom._CaskInspection, "probe", probe):
+            self.assertTrue(self.scan(checkpoint=checkpoint).cancelled)
+
+    def test_current_entry_outside_prefix_accepts_relative_link(self) -> None:
+        token = self.make_cask()
+        link = self.home / "tools/fixture"
+        link.parent.mkdir()
+        link.symlink_to(os.path.relpath(token / "2.0/bin/tool", link.parent))
+        _write_json(token / ".metadata/INSTALL_RECEIPT.json", {
+            "source": {"version": "2.0"},
+            "uninstall_artifacts": [{"binary": ["bin/tool", {"target": str(link)}]}],
+        })
+        self.assertTrue(self.old(self.scan()).actionable)
+
+    def test_historical_generated_completion_requires_known_output_layout(self) -> None:
+        token = self.make_cask()
+        definition = token / ".metadata/1.0/20250101000000.000/Casks/fixture.json"
+        definition.parent.mkdir(parents=True)
+        _write_json(definition, {"version": "1.0", "artifacts": [
+            {"generate_completions_from_executable": ["bin/tool", {"shells": ["unknown"]}]},
+        ]})
+        self.assert_blocked(text="shell 范围不明确")
+
+    def test_unreadable_prefix_inventory_is_not_retried_per_token(self) -> None:
+        for index in range(6):
+            _make_cask(self.root, f"tool{index}", "2.0", "1.0", "2.0")
+        with mock.patch("openclean.caskroom._iter_prefix_links", side_effect=PermissionError("unreadable")) as inventory:
+            result = self.scan()
+        self.assertEqual(inventory.call_count, 1)
+        self.assertTrue(result.items)
+        self.assertTrue(all(not item.actionable for item in result.items))
 
     def test_installation_conflict_keeps_real_entry_intact(self) -> None:
         token = self.make_cask()
