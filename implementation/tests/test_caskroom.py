@@ -791,6 +791,25 @@ class CaskroomMetadataTests(CaskroomFixture):
             self.assert_blocked(text="变化")
         self.assertTrue(changed)
 
+    def test_inventory_ignores_unrelated_shared_ancestor_activity(self) -> None:
+        self.make_cask()
+        outside = self.base / "outside"
+        outside.write_bytes(b"x")
+        entry = self.base / "bin/unrelated"
+        entry.symlink_to(outside)
+        original = caskroom._resolve_inventory_link
+
+        def resolve(inspection, path, inventory):
+            result = original(inspection, path, inventory)
+            if path == entry:
+                (self.base / "unrelated-temporary-file").write_bytes(b"x")
+            return result
+
+        with mock.patch("openclean.caskroom._resolve_inventory_link", side_effect=resolve):
+            result = self.scan()
+        self.assertTrue(result.complete, result.issues)
+        self.assertTrue(self.old(result).actionable, self.old(result).action_block_reason)
+
     def test_intermediate_link_changed_during_resolution_blocks(self) -> None:
         token = self.make_cask()
         (self.base / "opt").mkdir()

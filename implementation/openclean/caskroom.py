@@ -89,8 +89,10 @@ class _LinkInventory:
             after = inspection.probe(path)
             if (after.identity != before.identity
                     or after.stat.st_mode != before.stat.st_mode
-                    or after.stat.st_mtime_ns != before.stat.st_mtime_ns
-                    or after.stat.st_ctime_ns != before.stat.st_ctime_ns):
+                    or (not stat.S_ISDIR(before.stat.st_mode) and (
+                        after.stat.st_mtime_ns != before.stat.st_mtime_ns
+                        or after.stat.st_ctime_ns != before.stat.st_ctime_ns
+                    ))):
                 raise InspectionError(f"Cask 链接组件在复核期间变化：{path}")
         self.pending.clear()
 
