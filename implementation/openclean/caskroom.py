@@ -71,10 +71,36 @@ class CaskVersionState:
 
 
 @dataclass
+class _LinkInventory:
+    """复用共享祖先的只读检查，整批解析后复核本轮新增的对象。"""
+
+    facts: dict[Path, FileFacts] = field(default_factory=dict)
+    pending: set[Path] = field(default_factory=set)
+
+    def probe(self, inspection: _CaskInspection, path: Path) -> FileFacts:
+        if path not in self.facts:
+            self.facts[path] = inspection.probe(path)
+            self.pending.add(path)
+        return self.facts[path]
+
+    def verify(self, inspection: _CaskInspection) -> None:
+        for path in sorted(self.pending, key=lambda value: (len(value.parts), value)):
+            before = self.facts[path]
+            after = inspection.probe(path)
+            if (after.identity != before.identity
+                    or after.stat.st_mode != before.stat.st_mode
+                    or after.stat.st_mtime_ns != before.stat.st_mtime_ns
+                    or after.stat.st_ctime_ns != before.stat.st_ctime_ns):
+                raise InspectionError(f"Cask 链接组件在复核期间变化：{path}")
+        self.pending.clear()
+
+
+@dataclass
 class _PrefixLinks:
     targets: dict[Path, Path | None] = field(default_factory=dict)
     scanned_prefixes: set[Path] = field(default_factory=set)
     errors: dict[Path, str] = field(default_factory=dict)
+    inventory: _LinkInventory = field(default_factory=_LinkInventory)
 
 
 class CaskScanCache:
@@ -310,15 +336,19 @@ def _iter_prefix_links(
     return entries
 
 
-def _resolve_inventory_link(inspection: _CaskInspection, entry: Path) -> Path | None:
+def _resolve_inventory_link(
+    inspection: _CaskInspection, entry: Path, inventory: _LinkInventory,
+) -> Path | None:
     """只读核实残留入口的最终归属，逐组件展开链接后再处理 ``..``。"""
     current = Path(entry.anchor)
     pending = deque(entry.parts[1:])
-    observed = {current: inspection.probe(current)}
+    inventory.probe(inspection, current)
     links: list[FileFacts] = []
     visited: set[tuple[Path, tuple[str, ...]]] = set()
     while pending:
-        inspection.tick()
+        inspection.cooperate()
+        if time.monotonic() >= inspection.deadline:
+            raise InspectionError("内容保护检查超出时间预算")
         part = pending.popleft()
         if part in ("", "."):
             continue
@@ -327,7 +357,7 @@ def _resolve_inventory_link(inspection: _CaskInspection, entry: Path) -> Path | 
             continue
         candidate = current / part
         try:
-            facts = inspection.probe(candidate)
+            facts = inventory.probe(inspection, candidate)
         except FileNotFoundError:
             current = None
             break
@@ -360,29 +390,22 @@ def _resolve_inventory_link(inspection: _CaskInspection, entry: Path) -> Path | 
             if pending and not stat.S_ISDIR(facts.stat.st_mode):
                 raise InspectionError(f"Cask 链接目标穿过非目录组件：{candidate}")
             current = candidate
-            observed[current] = facts
-    # 读取使用目录 fd 和 no-follow，返回前还须排除链接被替换的情况。
-    for facts in links:
-        inspection.checked_path(facts.path.parent)
-        after = inspection.probe(facts.path)
-        if (after.identity != facts.identity
-                or after.stat.st_ctime_ns != facts.stat.st_ctime_ns):
-            raise InspectionError(f"Cask 链接在复核期间变化：{facts.path}")
-    if current is not None and inspection.checked_path(current).identity != observed[current].identity:
-        raise InspectionError(f"Cask 链接最终目标身份变化：{current}")
     return current
 
 
 def _resolve_link_target(
     inspection: _CaskInspection, entry: Path, token_root: Path,
     cache: dict[Path, Path | None] | None = None,
-    *, allow_indirect: bool = True,
+    *, allow_indirect: bool = True, inventory: _LinkInventory | None = None,
 ) -> Path | None:
     """残留入口有界核实最终归属；当前声明入口仍要求直接链接。"""
     if allow_indirect:
         if cache is not None and entry in cache:
             return cache[entry]
-        target = _resolve_inventory_link(inspection, entry)
+        shared_inventory = inventory if inventory is not None else _LinkInventory()
+        target = _resolve_inventory_link(inspection, entry, shared_inventory)
+        if inventory is None:
+            shared_inventory.verify(inspection)
         if target is not None and filesystem_relative_parts(
             target, token_root.parent, probe=inspection.checked_path,
         ) is None:
@@ -491,14 +514,19 @@ def _scan_prefix_links(
             for entry, _facts in _iter_prefix_links(inspection, token_root):
                 inspection.tick()
                 try:
-                    _resolve_link_target(inspection, entry, token_root, prefix_links.targets)
+                    _resolve_link_target(
+                        inspection, entry, token_root, prefix_links.targets,
+                        inventory=prefix_links.inventory,
+                    )
                 except OSError as exc:
                     raise InspectionError(f"无法核实 Cask prefix 入口 {entry}：{exc}") from exc
+            prefix_links.inventory.verify(inspection)
         except OSError as exc:
             # 同一轮中共享无法完整读取的结论，避免逐 token 重复耗尽遍历预算。
             prefix_links.errors[prefix] = str(exc)
             raise
         prefix_links.scanned_prefixes.add(prefix)
+    prefix_links.inventory.verify(inspection)
     for entry, target in prefix_links.targets.items():
         inspection.tick()
         if target is None or filesystem_relative_parts(
@@ -547,7 +575,10 @@ def _check_historical_links(
                 except FileNotFoundError:
                     continue
                 if stat.S_ISLNK(facts.stat.st_mode):
-                    _resolve_link_target(inspection, target, inspection.token_root, links.targets)
+                    _resolve_link_target(
+                        inspection, target, inspection.token_root, links.targets,
+                        inventory=links.inventory,
+                    )
     return payloads
 
 

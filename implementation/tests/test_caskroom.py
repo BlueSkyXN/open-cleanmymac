@@ -682,6 +682,20 @@ class CaskroomMetadataTests(CaskroomFixture):
         (self.base / "bin/unrelated").symlink_to("../opt/missing/bin/tool")
         self.assertTrue(self.old(self.scan()).actionable)
 
+    def test_large_manpage_inventory_reuses_component_checks(self) -> None:
+        self.make_cask()
+        pages = self.base / "share/man/man3"
+        pages.mkdir(parents=True)
+        target = self.base / "Cellar/other/1.0/share/man/man3/topic.3"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"manual")
+        for index in range(6000):
+            (pages / f"alias{index:04d}.3").symlink_to(
+                "../../../Cellar/other/1.0/share/man/man3/topic.3",
+            )
+        item = self.old(self.scan())
+        self.assertTrue(item.actionable, item.action_block_reason)
+
     def test_protected_intermediate_link_reports_entry_and_component(self) -> None:
         token = self.make_cask()
         (self.base / "opt").mkdir()
@@ -692,6 +706,28 @@ class CaskroomMetadataTests(CaskroomFixture):
         item = self.assert_blocked(IgnoreRules((str(bridge),)), text="忽略")
         self.assertIn(str(entry), item.action_block_reason)
         self.assertIn(str(bridge), item.action_block_reason)
+
+    def test_inventory_cache_rechecks_links_after_resolution(self) -> None:
+        token = self.make_cask()
+        outside = self.base / "outside"
+        outside.write_bytes(b"x")
+        entry = self.base / "bin/unrelated"
+        entry.symlink_to(outside)
+        original = caskroom._resolve_inventory_link
+        changed = False
+
+        def resolve(inspection, path, inventory):
+            nonlocal changed
+            target = original(inspection, path, inventory)
+            if path == entry and not changed:
+                changed = True
+                entry.unlink()
+                entry.symlink_to(token / "1.0/bin/tool")
+            return target
+
+        with mock.patch("openclean.caskroom._resolve_inventory_link", side_effect=resolve):
+            self.assert_blocked(text="变化")
+        self.assertTrue(changed)
 
     def test_intermediate_link_changed_during_resolution_blocks(self) -> None:
         token = self.make_cask()
