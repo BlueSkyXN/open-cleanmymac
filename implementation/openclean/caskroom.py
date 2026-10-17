@@ -5,8 +5,10 @@ import json
 import os
 import re
 import stat
+import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +34,7 @@ _MAX_RECEIPT_BYTES = 2 * 1024 * 1024
 _MAX_TOKENS = 20_000
 _MAX_METADATA_ENTRIES = 4096
 _PREFIX_LINK_BUDGET = 200_000
+_MAX_LINK_HOPS = 40
 _TOKEN_NAME = re.compile(r"^[a-z0-9][a-z0-9@._+-]*$")
 _TIMESTAMP = re.compile(r"^[0-9]{14}(?:\.[0-9]+)?$")
 _LINK_DIRECTORIES = {
@@ -71,6 +74,54 @@ class _PrefixLinks:
     targets: dict[Path, Path | None] = field(default_factory=dict)
     scanned_prefixes: set[Path] = field(default_factory=set)
     errors: dict[Path, str] = field(default_factory=dict)
+
+
+class CaskScanCache:
+    """一次扫描内共享安装检查和句柄快照；执行复核不使用此缓存。"""
+
+    def __init__(self, protection: Predicate) -> None:
+        self.protection = protection
+        self._lock = threading.Lock()
+        self._links = _PrefixLinks()
+        self._installations: dict[Path, tuple[str, str]] = {}
+        self._handles_checked = False
+        self._handles: OpenFileSnapshot | None = None
+        self._handles_error = ""
+
+    @contextmanager
+    def _locked(self, checkpoint: Callable[[], None]):
+        # 其它扫描线程持锁时仍响应暂停与取消。
+        while not self._lock.acquire(timeout=0.05):
+            checkpoint()
+        try:
+            yield
+        finally:
+            self._lock.release()
+
+    def installation_version(
+        self, token_root: Path, checkpoint: Callable[[], None],
+    ) -> tuple[str, str]:
+        checkpoint()
+        with self._locked(checkpoint):
+            if token_root not in self._installations:
+                self._installations[token_root] = _installation_version(
+                    token_root, self.protection, checkpoint, self._links,
+                )
+            return self._installations[token_root]
+
+    def open_files(self, checkpoint: Callable[[], None]) -> OpenFileSnapshot:
+        checkpoint()
+        with self._locked(checkpoint):
+            if not self._handles_checked:
+                try:
+                    self._handles = capture_open_file_snapshot()
+                except OpenFileDetectionError as exc:
+                    self._handles_error = str(exc) or "无法获取打开文件快照"
+                self._handles_checked = True
+            if self._handles_error:
+                raise OpenFileDetectionError(self._handles_error)
+            assert self._handles is not None
+            return self._handles
 
 
 class _CaskInspection(PathInspection):
@@ -259,20 +310,32 @@ def _iter_prefix_links(
 def _resolve_link_target(
     inspection: _CaskInspection, entry: Path, token_root: Path,
     cache: dict[Path, Path | None] | None = None,
+    *, allow_indirect: bool = True, visited: tuple[Path, ...] = (),
 ) -> Path | None:
     """逐组件解析链接目标；中间组件须是已验证的真实目录，``..`` 只在其后出现。
 
     词法折叠 ``..`` 只有在全部中间组件都不是符号链接时才等于实际解析；
     因此先验证再回退，包含符号链接组件的目标直接拒绝。
-    ``cache`` 复用同一链接的解析结果（链接路径→目标），扫描与声明入口共用。
+    残留入口的末级链接按跳数上限继续核对；当前安装入口仍只接受直接链接。
+    ``cache`` 复用同一残留链接的最终目标，不能代替直接入口的检查。
     """
+    if entry in visited:
+        raise InspectionError("Cask 链接目标包含循环")
+    if len(visited) >= _MAX_LINK_HOPS:
+        raise InspectionError("Cask 链接目标超过跳数上限")
     if cache is not None and entry in cache:
         return cache[entry]
+    inspection.checked_path(entry.parent)
+    entry_facts = inspection.probe(entry)
+    if not stat.S_ISLNK(entry_facts.stat.st_mode):
+        raise InspectionError("Cask 安装入口不再是符号链接")
     prefix = token_root.parent.parent
     try:
         raw = os.readlink(entry)
     except OSError as exc:
         raise InspectionError(f"无法读取 Cask 链接目标：{exc}") from exc
+    if inspection.probe(entry).identity != entry_facts.identity:
+        raise InspectionError("Cask 安装入口在读取期间变化")
     if raw.startswith("~") or "\x00" in raw:
         raise InspectionError("Cask 链接目标路径无效")
     parts = Path(raw)
@@ -296,20 +359,24 @@ def _resolve_link_target(
         target = Path(os.sep).joinpath(*resolved) if resolved else Path(os.sep)
     else:
         target = prefix.joinpath(*resolved) if resolved else prefix
-    if filesystem_relative_parts(target, token_root, probe=inspection.checked_path) is None:
-        # 缓存值区分"目标在其它 token/范围外"（保留绝对目标路径，
-        # 由目标所属 token 自行判定）与"无法解析"（None）。
-        inside = filesystem_relative_parts(target, token_root.parent, probe=inspection.checked_path)
-        value = target if inside is not None else None
-        if cache is not None:
-            cache[entry] = value
-        return value
     try:
         inspection.checked_path(target.parent)
+        target_facts = inspection.probe(target)
     except FileNotFoundError:
-        if cache is not None:
-            cache[entry] = None
-        return None
+        target = None
+    else:
+        if stat.S_ISLNK(target_facts.stat.st_mode):
+            if not allow_indirect:
+                raise InspectionError("Cask 安装入口目标仍是符号链接，仅支持直接链接")
+            target = _resolve_link_target(
+                inspection, target, token_root, cache, visited=(*visited, entry),
+            )
+        elif filesystem_relative_parts(
+            target, token_root.parent, probe=inspection.checked_path,
+        ) is None:
+            target = None
+    if inspection.probe(entry).identity != entry_facts.identity:
+        raise InspectionError("Cask 安装入口在复核期间变化")
     if cache is not None:
         cache[entry] = target
     return target
@@ -534,8 +601,9 @@ def _check_installed_links(
             if FileIdentity.from_stat(os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)) != target_facts.identity:
                 raise InspectionError("Cask 安装入口身份变化")
             linked = _resolve_link_target(
-                inspection, target, inspection.token_root, prefix_links.targets,
+                inspection, target, inspection.token_root, allow_indirect=False,
             )
+            prefix_links.targets[target] = linked
         if linked is None or filesystem_relative_parts(linked, current, probe=inspection.checked_path) is None:
             raise InspectionError("Cask 安装入口仍指向旧版本或其它位置")
         linked_facts = inspection.metadata_facts(linked)
@@ -622,8 +690,11 @@ def assess_cask_version(token: str, receipt_version: str, directory_version: str
 
 def assess_cask_path(
     path: Path, protection: Predicate, *, checkpoint: Callable[[], None] = lambda: None,
+    scan_cache: CaskScanCache | None = None,
 ) -> CaskVersionState:
-    version, error = _installation_version(path.parent, protection, checkpoint)
+    version, error = (scan_cache.installation_version(path.parent, checkpoint)
+                      if scan_cache is not None else
+                      _installation_version(path.parent, protection, checkpoint))
     if error:
         return CaskVersionState(path.parent.name, "", path.name, "version_unknown", error)
     return assess_cask_version(path.parent.name, version, path.name)
@@ -636,11 +707,13 @@ def scan_caskroom_versions(
     snapshots: tuple[ProcessSnapshot | None, OpenFileSnapshot | None] | None = None,
     now: float | None = None,
     checkpoint: Callable[[], None] = lambda: None,
+    scan_cache: CaskScanCache | None = None,
 ) -> ScanResult:
     from .engine import Cancelled
     from .homebrew import running
 
     result = ScanResult()
+    scan_cache = scan_cache if scan_cache is not None else CaskScanCache(protection)
     if snapshots is None:
         try:
             processes: ProcessSnapshot | None = capture_process_snapshot()
@@ -651,7 +724,10 @@ def scan_caskroom_versions(
                 task=CASKROOM_SCAN_TASK, blocking=False,
             ))
         try:
-            handles: OpenFileSnapshot | None = capture_open_file_snapshot()
+            handles: OpenFileSnapshot | None = scan_cache.open_files(checkpoint)
+        except Cancelled:
+            result.cancelled = True
+            return result
         except OpenFileDetectionError:
             handles = None
             result.issues.append(ScanIssue(
@@ -663,7 +739,6 @@ def scan_caskroom_versions(
     brew_running = processes is not None and running(processes)
     observed_at = time.time() if now is None else now
     scanned_tokens = 0
-    prefix_links = _PrefixLinks()
     try:
         for raw_root in dict.fromkeys(roots if roots is not None else caskroom_roots()):
             root = normalize_path(raw_root)
@@ -686,7 +761,7 @@ def scan_caskroom_versions(
                     _scan_token(root / token, facts.stat.st_dev, protection, result,
                                 brew_running=brew_running, now=observed_at,
                                 process_snapshot=processes, open_files=handles,
-                                checkpoint=checkpoint, prefix_links=prefix_links)
+                                checkpoint=checkpoint, scan_cache=scan_cache)
             except FileNotFoundError:
                 continue
             except OSError as exc:
@@ -710,7 +785,7 @@ def _scan_token(
     process_snapshot: ProcessSnapshot | None,
     open_files: OpenFileSnapshot | None,
     checkpoint: Callable[[], None],
-    prefix_links: _PrefixLinks | None = None,
+    scan_cache: CaskScanCache,
 ) -> None:
     task = CASKROOM_SCAN_TASK
     try:
@@ -732,10 +807,7 @@ def _scan_token(
         return
     if len(versions) <= 1:
         return
-    receipt_version, receipt_error = _installation_version(
-        token_root, protection, checkpoint,
-        prefix_links,
-    )
+    receipt_version, receipt_error = scan_cache.installation_version(token_root, checkpoint)
     for directory_version in versions:
         checkpoint()
         state = (

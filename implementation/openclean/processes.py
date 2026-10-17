@@ -60,7 +60,7 @@ class OpenFileSnapshot:
         # 组件折叠相同后，还须逐个差异组件核对是否同一文件系统对象。
         candidate_parts = os.path.abspath(candidate).split(os.sep)
         root_parts = normalized.rstrip(os.sep).split(os.sep)
-        if (len(candidate_parts) <= len(root_parts)
+        if (len(candidate_parts) < len(root_parts)
                 or any(a.casefold() != b.casefold()
                        for a, b in zip(candidate_parts, root_parts))):
             return False

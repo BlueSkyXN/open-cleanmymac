@@ -13,7 +13,7 @@ from .application_ownership import (
     DARWIN_CACHE_PROCESS_MARKERS,
     ApplicationResolver,
 )
-from .caskroom import CaskVersionState, assess_cask_path, caskroom_roots
+from .caskroom import CaskScanCache, CaskVersionState, assess_cask_path, caskroom_roots
 from .filesystem import lstat_retry, scandir_entries
 from .macos import filesystem_name_matches, filesystem_relative_parts, scan_symlink_anchor
 from .models import FileFacts, normalize_path
@@ -60,11 +60,13 @@ class CleanupGuardContext:
         *,
         home: Path | None = None,
         application_resolver: ApplicationResolver | None = None,
+        cask_scan_cache: CaskScanCache | None = None,
     ) -> None:
         self.home = normalize_path(home or Path.home())
         self.protection = protection
         self.resolver = application_resolver or ApplicationResolver(home=self.home)
         self.capture_processes = capture_processes
+        self.cask_scan_cache = cask_scan_cache
         self._process_lock = threading.Lock()
         self._process_checked = False
         self._snapshot: ProcessSnapshot | None = None
@@ -138,7 +140,10 @@ class CleanupGuardContext:
                     token, "", directory_version, "version_unknown",
                     "Caskroom 安装证据目录不是清理对象",
                 )
-            return assess_cask_path(root / token / directory_version, self.protection, checkpoint=checkpoint)
+            return assess_cask_path(
+                root / token / directory_version, self.protection, checkpoint=checkpoint,
+                scan_cache=self.cask_scan_cache,
+            )
         return None
 
     def _build_registered_roots(self) -> Iterator[tuple[Path, tuple[str, ...]]]:
@@ -264,7 +269,9 @@ class CleanupGuardContext:
                 else:
                     # 任意入口（含 Analyze）选中 Caskroom 内对象时都必须复核句柄。
                     try:
-                        handles = capture_open_file_snapshot()
+                        handles = (self.cask_scan_cache.open_files(checkpoint)
+                                   if self.cask_scan_cache is not None else
+                                   capture_open_file_snapshot())
                     except OpenFileDetectionError as exc:
                         reason = reason or f"无法复核 Caskroom 打开句柄：{exc}"
                     else:

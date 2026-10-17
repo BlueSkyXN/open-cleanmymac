@@ -22,7 +22,7 @@ from .application_updates import scan_chrome_versions
 from .application_ownership import ApplicationResolver
 from .cleanup_guards import CleanupGuardContext
 from .docker import scan_docker_resources
-from .caskroom import scan_caskroom_versions
+from .caskroom import CaskScanCache, scan_caskroom_versions
 from .downloads import scan_downloads
 from .filesystem import filesystem_id_retry, lstat_retry, scandir_entries
 from .knowledge_base import KnowledgeBase
@@ -780,7 +780,8 @@ def _apply_scan_guards(
 
 def _scan_guard_context(protection: Predicate) -> CleanupGuardContext:
     return CleanupGuardContext(protection, capture_process_snapshot,
-                               application_resolver=ApplicationResolver())
+                               application_resolver=ApplicationResolver(),
+                               cask_scan_cache=CaskScanCache(protection))
 
 
 def _scan_point(
@@ -1065,6 +1066,7 @@ def _scan_dynamic_point_with_progress(
         elif point.scanner == "caskroom-versions":
             result = scan_caskroom_versions(
                 protection, checkpoint=ctl.checkpoint,
+                scan_cache=guards.cask_scan_cache,
             )
         elif point.scanner == "workbuddy-storage":
             result = scan_workbuddy_storage(protection)

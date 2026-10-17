@@ -85,7 +85,7 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | WorkBuddy 两代 BundleMigration | `scan/clean junk` | `available` | 分别校验旧/新 bundle ID 的暂存 app 与 ZIP；待安装包、损坏 ZIP、安装缺失和版本冲突均阻断；不混用两代安装元数据 |
 | Codex Electron 精确缓存 | `scan/clean ai` | `available` | 已知根与精确浏览器分区中的 Cache/Code Cache/GPU/Dawn、根级 shader/CRX 缓存；confirm、默认不选、运行保护及执行前复核 |
 | Codex 浏览器 CacheStorage | `scan/clean ai` | `read-only` | 已知根与精确浏览器分区中的 Service Worker/CacheStorage，仅报告元数据与 retention；保留登录、历史、会话和组件数据 |
-| Homebrew Cask 旧版本目录 | `scan/clean dev` | `available`（受限） | 回执、最新安装元数据、当前目录及 binary/manpage/completion 链接一致，历史入口不再引用旧版时才允许 critical 精确清理；其它类型仅报告。Analyze 同样保护 Caskroom 根、祖先和安装证据；执行前重查状态、进程与句柄，不调用 brew。专用真实验收待运行，见 TODO |
+| Homebrew Cask 旧版本目录 | `scan/clean dev` | `available`（受限） | 回执、最新安装元数据、当前目录及 binary/manpage/completion 链接一致，历史入口的最终目标不再引用旧版时才允许 critical 精确清理；其它类型仅报告。Analyze 同样保护 Caskroom 根、祖先和安装证据；句柄匹配包含候选自身的大小写别名。扫描内复用检查，执行前重查状态、进程与句柄，不调用 brew。专用真实验收待运行，见 TODO |
 | Go/Homebrew 环境缓存路径 | `scan/clean dev` | `available`（受限） | 跟随 GOCACHE/GOMODCACHE/HOMEBREW_CACHE，但仅限可信用户缓存根；要求精确选择，外置卷路径仍拒绝 |
 | 按卷容量汇总 | JSON 扫描/预览 | `available` | 按运行时 device 分组系统盘与外置盘；非文件系统资源不归卷 |
 | 递归大文件扫描 | `large [path]` | `read-only` | 表观大小阈值/排序、独立物理计量、top/预算、硬链接去重、忽略/云/跨卷边界；无访问日期推断、无清理执行器 |

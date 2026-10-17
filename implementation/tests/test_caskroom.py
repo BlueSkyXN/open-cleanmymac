@@ -239,6 +239,15 @@ class ScanCaskroomTests(CaskroomFixture):
         self.assertTrue(result.cancelled)
         self.assertFalse(result.complete)
 
+    def test_cancel_before_handle_snapshot_returns_incomplete_result(self) -> None:
+        def checkpoint():
+            raise Cancelled()
+
+        result = self.scan(snapshots=None, checkpoint=checkpoint)
+        self.assertTrue(result.cancelled)
+        self.assertFalse(result.complete)
+        self.scan_handles.assert_not_called()
+
     def test_explicit_roots_never_scan_other_default_root(self) -> None:
         self.make_cask()
         foreign_root = self.base / "foreign/Caskroom"
@@ -601,6 +610,69 @@ class CaskroomMetadataTests(CaskroomFixture):
         other.symlink_to(elsewhere / "tool")
         self.assertTrue(self.old(self.scan()).actionable)
 
+    def test_residual_terminal_symlink_to_old_blocks_scan_and_execution(self) -> None:
+        token = self.make_cask()
+        item = self.old(self.scan())
+        (token / "2.0/bridge").symlink_to(token / "1.0/bin/tool")
+        legacy = self.base / "bin/legacy"
+        legacy.symlink_to(token / "2.0/bridge")
+        self.assert_blocked(text="旧版本")
+        report = execute_cleanup([item], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertEqual(legacy.resolve(strict=True), token / "1.0/bin/tool")
+
+    def test_historical_absolute_target_chain_to_old_blocks(self) -> None:
+        token = self.make_cask()
+        definition = token / ".metadata/1.0/20250101000000.000/Casks/fixture.json"
+        definition.parent.mkdir(parents=True)
+        legacy = self.home / "custom/legacy"
+        legacy.parent.mkdir()
+        bridge = self.home / "custom/bridge"
+        bridge.symlink_to(token / "1.0/bin/tool")
+        legacy.symlink_to("bridge")
+        _write_json(definition, {"version": "1.0", "artifacts": [
+            {"binary": ["bin/tool", {"target": str(legacy)}]},
+        ]})
+        self.assert_blocked(text="旧版本")
+        self.assertEqual(legacy.resolve(strict=True), token / "1.0/bin/tool")
+
+    def test_unrelated_terminal_link_chain_is_not_a_cask_blocker(self) -> None:
+        self.make_cask()
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "tool").write_bytes(b"x")
+        (elsewhere / "alias").symlink_to("tool")
+        (self.base / "bin/unrelated-tool").symlink_to(elsewhere / "alias")
+        self.assertTrue(self.old(self.scan()).actionable)
+
+    def test_terminal_link_cycle_and_protected_target_block(self) -> None:
+        token = self.make_cask()
+        bridge = token / "2.0/bridge"
+        bridge.symlink_to("bridge")
+        (self.base / "bin/legacy").symlink_to(bridge)
+        self.assert_blocked(text="循环")
+        bridge.unlink()
+        bridge.symlink_to(token / "1.0/bin/tool")
+        self.assert_blocked(IgnoreRules((str(bridge),)), text="忽略")
+
+    def test_terminal_link_hop_limit_blocks(self) -> None:
+        token = self.make_cask()
+        target = token / "1.0/bin/tool"
+        for index in range(caskroom._MAX_LINK_HOPS + 1):
+            link = token / "2.0" / f"bridge{index}"
+            link.symlink_to(target)
+            target = link
+        (self.base / "bin/legacy").symlink_to(target)
+        self.assert_blocked(text="跳数上限")
+
+    def test_current_installed_entry_still_requires_a_direct_link(self) -> None:
+        token = self.make_cask()
+        (token / "2.0/bridge").symlink_to("bin/tool")
+        entry = self.base / "bin/fixture"
+        entry.unlink()
+        entry.symlink_to(token / "2.0/bridge")
+        self.assert_blocked(text="符号链接")
+
     def test_ignored_root_reports_clean_skip(self) -> None:
         self.make_cask()
         result = self.scan(IgnoreRules((str(self.root),)))
@@ -666,6 +738,43 @@ class CaskroomMetadataTests(CaskroomFixture):
         state = {item.path.parent.name: item.actionable for item in blocked.items if item.path.name == "1.0"}
         self.assertFalse(state["tool03"])
         self.assertTrue(sum(1 for ok in state.values() if ok) >= 22)
+
+    def test_domain_scan_reuses_cask_checks_but_next_scan_is_fresh(self) -> None:
+        tokens = [_make_cask(self.root, f"tool{index:02d}", "2.0", "1.0", "2.0")
+                  for index in range(24)]
+        point = next(p for p in DEVELOPER_JUNK if p.scanner == "caskroom-versions")
+        with mock.patch.dict("openclean.engine.DOMAINS", {"developer": [point]}), \
+             mock.patch("openclean.caskroom._iter_prefix_links", wraps=caskroom._iter_prefix_links) as inventory, \
+             mock.patch("openclean.caskroom._installation_version", wraps=caskroom._installation_version) as installation:
+            result = scan_domains(["developer"], workers=1)
+            self.assertEqual(sum(item.actionable for item in result.items), 24)
+            self.assertEqual(inventory.call_count, 1)
+            self.assertEqual(installation.call_count, 24)
+            self.assertEqual(self.scan_handles.call_count, 1)
+            self.assertEqual(self.guard_handles.call_count, 0)
+            (self.base / "bin/legacy").symlink_to(tokens[3] / "1.0/bin/tool")
+            fresh = scan_domains(["developer"], workers=1)
+            self.assertEqual(inventory.call_count, 2)
+            self.assertEqual(self.scan_handles.call_count, 2)
+            state = {item.path.parent.name: item.actionable
+                     for item in fresh.items if item.path.name == "1.0"}
+            self.assertFalse(state["tool03"])
+            self.assertTrue(state["tool02"])
+
+    def test_analyze_reuses_checks_and_failed_handle_snapshot(self) -> None:
+        _, root = self._home_brew_fixture()
+        old = root / "fixture/1.0"
+        for index in range(8):
+            (old / f"file{index}").write_bytes(b"x")
+        self.scan_handles.side_effect = OpenFileDetectionError("unavailable")
+        self.guard_handles.side_effect = OpenFileDetectionError("unavailable")
+        with mock.patch("openclean.caskroom._installation_version", wraps=caskroom._installation_version) as installation:
+            result = analyze_path(old, workers=4)
+        self.assertEqual(installation.call_count, 1)
+        self.assertEqual(self.scan_handles.call_count, 1)
+        self.assertEqual(self.guard_handles.call_count, 0)
+        self.assertTrue(result.entries)
+        self.assertTrue(all(not entry.item.actionable for entry in result.entries))
 
     def test_analyze_token_root_and_metadata_are_blocked(self) -> None:
         # Analyze 选中 token 根或 .metadata 时必须只读：清理等于卸载或破坏安装证据。
@@ -899,6 +1008,24 @@ class CaskroomExecutionTests(CaskroomFixture):
         self.assertIn("打开句柄", report.outcomes[0].message)
         self.assertTrue(item.path.exists())
 
+    def test_analyze_file_case_alias_with_open_handle_is_preserved(self) -> None:
+        _, root = self._home_brew_fixture()
+        actual = root / "fixture/1.0/bin/tool"
+        alias_parent = root / "fixture/1.0/BIN"
+        if not alias_parent.exists() or alias_parent.stat().st_ino != actual.parent.stat().st_ino:
+            self.skipTest("真实大小写别名需不敏感文件系统")
+        alias = alias_parent / "tool"
+        item = next(entry.item for entry in analyze_path(alias_parent, workers=1).entries
+                    if entry.item.path == alias)
+        self.assertTrue(item.actionable, item.action_block_reason)
+        with actual.open("rb"):
+            self.guard_handles.return_value = OpenFileSnapshot((str(actual),))
+            report = execute_cleanup([item], IgnoreRules(), home=self.home)
+        self.assertEqual(report.outcomes[0].status, "blocked")
+        self.assertIn("打开句柄", report.outcomes[0].message)
+        self.assertTrue(actual.exists())
+        self.assertEqual(list(self.trash.iterdir()), [])
+
     def test_analyze_current_version_child_blocks_as_current_install(self) -> None:
         # Analyze 选中当前版本内的子目录同样按 token/版本 槽位重判：
         # 当前安装版本不可清理，brew 运行时整体也不可执行。
@@ -1066,6 +1193,19 @@ class CaskroomRootsTests(unittest.TestCase):
 
 
 class OpenFileSnapshotAliasTests(unittest.TestCase):
+    def test_same_length_file_and_directory_aliases_match(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve() / "Caskroom"
+            root.mkdir()
+            (root / "tool").write_bytes(b"x")
+            alias = root.with_name("CASKROOM")
+            if not alias.exists() or alias.stat().st_ino != root.stat().st_ino:
+                self.skipTest("真实大小写别名需不敏感文件系统")
+            for actual, alternate in ((root, alias), (root / "tool", alias / "TOOL")):
+                with self.subTest(name=actual.name):
+                    self.assertEqual(OpenFileSnapshot((str(actual),)).count_under(alternate), 1)
+                    self.assertEqual(OpenFileSnapshot((str(alternate),)).count_under(actual), 1)
+
     def test_case_alias_handles_match_by_identity(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary).resolve() / "Caskroom"
