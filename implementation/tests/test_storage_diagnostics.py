@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import plistlib
 import sqlite3
@@ -10,7 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from openclean import storage_diagnostics
-from openclean.cli import _item_payload
+from openclean.cli import _item_payload, main
 from openclean.engine import IgnoreRules, finalize_overlapping_result
 from openclean.knowledge_base import KnowledgeBase
 from openclean.macos import DarwinUserCacheDiscovery, DarwinUserTempDiscovery
@@ -21,6 +24,7 @@ from openclean.processes import (
     OpenFileSnapshot,
     ProcessSnapshot,
 )
+from openclean.scanpoints import DOMAINS
 from openclean.storage_diagnostics import (
     RETENTION_RULES,
     BrowserStorageRoot,
@@ -887,6 +891,81 @@ class RetentionDiagnosticTests(unittest.TestCase):
 
 
 class DarwinTransientDiagnosticTests(unittest.TestCase):
+    def test_zcode_bash_scan_and_clean_measure_only_matching_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            temp_root = base / "T"
+            root = temp_root / "zcode-bash-Ab1cD2"
+            mounted_root = temp_root / "zcode-bash-Ef3gH4"
+            session_name = "sess_10000000-0000-4000-8000-000000000001"
+            session = root / session_name
+            subagent = root / "sess_subagent_agent_20000000-0000-4000-8000-000000000002"
+            normal_log, subagent_log = session / "call_A1-stdout.log", subagent / "call_B2-stdout.log"
+            now = int(time.time())
+            for path, days in ((normal_log, 16), (subagent_log, 2)):
+                path.parent.mkdir(parents=True)
+                path.write_bytes(b"log\n" * 2048)
+                timestamp = now - days * 86400
+                os.utime(path, (timestamp, timestamp))
+
+            for path in (
+                root / ".DS_Store", session / "call_C3-stderr.log",
+                session / "nested/call_C4-stdout.log", root / "sess_unknown/call_C5-stdout.log",
+                session / "call_skip-stdout.log",
+                temp_root / "zcode-bash-Ab1cD2-backup" / session_name / "call_C6-stdout.log",
+                base / "external/call_C7-stdout.log",
+                mounted_root / session_name / "call_C8-stdout.log",
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"other\n" * 2048)
+            (session / "call_link-stdout.log").symlink_to(base / "external/call_C7-stdout.log")
+            (root / "sess_30000000-0000-4000-8000-000000000003").symlink_to(
+                base / "external", target_is_directory=True,
+            )
+            point = next(p for p in DOMAINS["system"] if p.scanner == "retention-diagnostics")
+            filesystem_id = storage_diagnostics.filesystem_id_retry
+            with (
+                mock.patch.object(Path, "home", return_value=base),
+                mock.patch.dict(DOMAINS, {"system": [point]}),
+                mock.patch.object(storage_diagnostics, "RETENTION_RULES", ()),
+                mock.patch.object(storage_diagnostics, "discover_darwin_user_temp",
+                                  return_value=DarwinUserTempDiscovery(paths=(temp_root,))),
+                mock.patch.object(storage_diagnostics, "discover_darwin_user_cache",
+                                  return_value=DarwinUserCacheDiscovery()),
+                mock.patch.object(storage_diagnostics, "filesystem_id_retry", side_effect=lambda path: (
+                    filesystem_id(path) + 1 if path == mounted_root else filesystem_id(path)
+                )),
+                mock.patch.object(storage_diagnostics, "capture_process_snapshot",
+                                  return_value=ProcessSnapshot(("zcode-cli",))),
+                mock.patch.object(storage_diagnostics, "capture_open_file_snapshot",
+                                  return_value=OpenFileSnapshot((str(normal_log),))),
+            ):
+                options = ["--json", "--ignore", "call_skip-stdout.log"]
+                for command in (["scan", "--domain", "system"], ["clean", "junk"]):
+                    with self.subTest(command=command), contextlib.redirect_stdout(io.StringIO()) as out:
+                        self.assertEqual(main([*command, *options]), 0)
+                        report = json.loads(out.getvalue())
+                        items = report["items"] if command[0] == "scan" else report["categories"][0]["items"]
+                        self.assertEqual(len(items), 1)
+                        item = items[0]
+                        self.assertEqual(item["path"], str(root))
+                        self.assertEqual(item["category"], "ZCode Bash 输出")
+                        self.assertEqual(item["diagnostic_kind"], "retention")
+                        self.assertEqual(item["retention_file_count"], 2)
+                        self.assertEqual(item["allocated_bytes"], sum(
+                            path.stat().st_blocks * 512 for path in (normal_log, subagent_log)
+                        ))
+                        self.assertEqual(item["latest_mtime"], subagent_log.stat().st_mtime)
+                        self.assertEqual(item["open_handle_count"], 1)
+                        self.assertFalse(item["actionable"])
+                        self.assertFalse(item["preselected"])
+                        self.assertEqual(report["reclaimable_bytes"], 0)
+                        self.assertIn("cross_filesystem_skipped", {issue["code"] for issue in report["issues"]})
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    status = main(["clean", "junk", *options, "--select", str(root), "--include-critical"])
+                self.assertEqual(status, 2)
+                self.assertEqual(json.loads(out.getvalue())["error"]["code"], "selection_error")
+
     def test_discovers_only_public_dynamic_name_patterns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -100,6 +100,7 @@ Desktop 应用卸载、恶意软件扫描等有意不进入本 CLI 对齐范围�
 | deleted-open 卷占用 | `scan/clean junk` | `read-only` | `lsof +L1` 字段模式、device/inode 去重和逻辑大小上限；路径只用于内存保护过滤，结果只显示进程名 |
 | Darwin updater 临时副本 | `scan/clean junk` | `read-only` | getconf 动态根、Qoder ShipIt 版本状态；固定不可执行 |
 | Darwin 临时/运行副本 | `scan/clean junk` | `read-only` | `T/X` 公开名称模式、7/14/30 天容量、进程/句柄；固定不可执行 |
+| ZCode Bash 输出 | `scan --domain system` / `clean junk` | `read-only`（未发布源码） | 当前用户 Darwin 临时目录中的已知会话输出结构。按匹配日志计量，报告目录句柄 |
 | RAM/purgeable 能力状态 | `optimize ram / purgeable` | `guarded-unavailable` | 没有已验证、安全、公开的等价执行接口 |
 | 特权系统清理 | 候选只读可见 | `external-prerequisite` | 需 native host/helper、SMAppService、签名、entitlements、安装验收 |
 | universal binary thinning | 无 | `not-implemented` | 当前不实现；修改签名/兼容性风险高 |

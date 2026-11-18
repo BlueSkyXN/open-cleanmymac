@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from pathlib import Path
 
 DEFAULT_PROCESS_TIMEOUT = 5.0
 DEFAULT_OPEN_FILE_TIMEOUT = 10.0
+_DARWIN_VAR_FOLDERS = ("/var/folders", "/private/var/folders")
 
 
 class ProcessDetectionError(RuntimeError):
@@ -17,6 +19,24 @@ class ProcessDetectionError(RuntimeError):
 
 class OpenFileDetectionError(RuntimeError):
     pass
+
+
+def _alternate_var_folders_path(path: str) -> str | None:
+    """仅在两个 Darwin 系统路径指向同一个目录时换用其别名。"""
+    short, long = _DARWIN_VAR_FOLDERS
+    folded = path.casefold()
+    for prefix, alternate in ((short, long), (long, short)):
+        if folded != prefix.casefold() and not folded.startswith(prefix.casefold() + os.sep):
+            continue
+        try:
+            current = os.lstat(path[:len(prefix)])
+            other = os.lstat(alternate)
+        except OSError:
+            return None
+        if stat.S_ISDIR(current.st_mode) and os.path.samestat(current, other):
+            return alternate + path[len(prefix):]
+        return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -48,7 +68,12 @@ class OpenFileSnapshot:
 
     def count_under(self, root: str | os.PathLike[str]) -> int:
         normalized = os.path.abspath(os.fspath(root))
-        return sum(self._matches(candidate, normalized) for candidate in self.paths)
+        alternate = _alternate_var_folders_path(normalized)
+        return sum(
+            self._matches(candidate, normalized)
+            or (alternate is not None and self._matches(candidate, alternate))
+            for candidate in self.paths
+        )
 
     @staticmethod
     def _matches(candidate: str, normalized: str) -> bool:

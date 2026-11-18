@@ -106,6 +106,35 @@ class ProcessSnapshotTests(unittest.TestCase):
         snapshot = OpenFileSnapshot(("/tmp/root/file",))
         self.assertEqual(snapshot.count_under("/tmp/root"), 1)
 
+    def test_open_file_snapshot_matches_verified_var_folders_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            long = base / "private/var/folders"
+            short = base / "var/folders"
+            directory = long / "T/Session"
+            directory.mkdir(parents=True)
+            (short.parent).symlink_to(long.parent, target_is_directory=True)
+            sibling = long / "T/Session-other"
+            sibling.mkdir()
+            paths = (directory / "live.log", short / "T/Session/live.log", sibling / "live.log")
+            with mock.patch("openclean.processes._DARWIN_VAR_FOLDERS", (str(short), str(long))):
+                snapshot = OpenFileSnapshot(tuple(map(str, paths)))
+                self.assertEqual(snapshot.count_under(short / "T/Session"), 2)
+                self.assertEqual(snapshot.count_under(directory), 2)
+                self.assertEqual(snapshot.count_under(short / "T/Session/live.log"), 2)
+                outside = OpenFileSnapshot((str(long.with_name("folders-other") / "live.log"),))
+                self.assertEqual(outside.count_under(short.with_name("folders-other")), 0)
+
+    def test_open_file_snapshot_rejects_var_folders_with_different_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            short, long = base / "var/folders", base / "private/var/folders"
+            short.mkdir(parents=True)
+            long.mkdir(parents=True)
+            with mock.patch("openclean.processes._DARWIN_VAR_FOLDERS", (str(short), str(long))):
+                snapshot = OpenFileSnapshot((str(long / "T/Session/live.log"),))
+                self.assertEqual(snapshot.count_under(short / "T/Session"), 0)
+
     def test_deleted_open_parser_deduplicates_device_inode_and_handles(self) -> None:
         snapshot = parse_deleted_open_files(
             "p10\ncWorkBuddy Helper\nf1\nD0x100000d\ni42\ns100\n"
