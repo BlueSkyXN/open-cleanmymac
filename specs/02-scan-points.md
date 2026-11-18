@@ -92,6 +92,12 @@ REQ-DETECT-003：复用下表能力和 [EXPERIENCE](../docs/EXPERIENCE.md) 的�
 
 VAL-DETECT-003：专项 JSON/文本/详情解释使用本次 Item 证据，不额外读取正文，不把诊断字节计入可回收。
 
+ZCode Bash 输出由 `DARWIN_USER_TEMP_DIR` 定位。只统计 `zcode-bash-<六位字母数字>` 一级目录下，
+位于 `sess_<UUID>` 或 `sess_subagent_agent_<UUID>` 内的普通 `call_*-stdout.log` 文件。
+文件数量、占用、最近写入时间和保留期桶均按匹配文件计算。打开句柄计数覆盖该目录及其后代。
+扫描跳过其它属主、符号链接、云占位与跨文件系统对象，单目录最多检查 10000 个条目。
+在 `scan --domain system` 和 `clean junk` 中复用只读 retention 结果，验收见 `test_storage_diagnostics.py`。
+
 Codex HOME 材料只读审阅使用现有子集诊断；最多 512 个一级项、32 个配置、每配置 1 MiB。
 配置只提取用户 config/profile 的模型目录与指令路径，解析失败或预算耗尽必须报告不完整；
 不推断项目、脚本、CLI 或内嵌模板是否仍使用材料。Git 空骨架超出结构检查预算时保留已确认

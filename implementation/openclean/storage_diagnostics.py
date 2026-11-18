@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import sqlite3
 import stat
 import time
@@ -16,7 +17,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
-from .filesystem import lstat_retry, scandir_entries
+from .filesystem import filesystem_id_retry, lstat_retry, scandir_entries
 from .macos import (
     discover_darwin_user_cache,
     discover_darwin_user_temp,
@@ -36,6 +37,7 @@ from .processes import (
     capture_open_file_snapshot,
     capture_process_snapshot,
 )
+from .resource_walk import WalkBudget, walk_resources
 from .updater import UpdaterAssessment, assess_updater_staging_root
 
 RETENTION_DAYS = (7, 14, 30)
@@ -51,6 +53,10 @@ _MAX_CODEX_LOG_PARTITIONS = 128
 _MAX_CODEX_STAGING_ROOTS = 2048
 _MAX_CODEX_GIT_ROOTS = 8192
 _MAX_CRASHPAD_ENTRIES = 100_000
+_ZCODE_BASH_SESSION = re.compile(
+    r"sess_(?:subagent_agent_)?[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+)
+_ZCODE_BASH_STDOUT = re.compile(r"call_[A-Za-z0-9]+-stdout\.log")
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,7 @@ class RetentionRule:
     category: str
     path: str
     process_markers: tuple[str, ...]
+    entry_type: Callable[[Path], int | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,7 @@ class DarwinTransientPattern:
     category: str
     name_globs: tuple[str, ...]
     process_markers: tuple[str, ...] = ()
+    entry_type: Callable[[Path], int | None] | None = None
 
 
 RETENTION_RULES: tuple[RetentionRule, ...] = (
@@ -173,7 +181,24 @@ BROWSER_STORAGE_ROOTS: tuple[BrowserStorageRoot, ...] = (
 )
 
 
+def _zcode_bash_entry_type(relative: Path) -> int | None:
+    parts = relative.parts
+    if not parts or not _ZCODE_BASH_SESSION.fullmatch(parts[0]):
+        return None
+    if len(parts) == 1:
+        return stat.S_IFDIR
+    if len(parts) == 2 and _ZCODE_BASH_STDOUT.fullmatch(parts[1]):
+        return stat.S_IFREG
+    return None
+
+
 DARWIN_TEMP_RETENTION_PATTERNS: tuple[DarwinTransientPattern, ...] = (
+    DarwinTransientPattern(
+        "ZCode Bash 输出",
+        ("zcode-bash-" + "[A-Za-z0-9]" * 6,),
+        ("ZCode.app", "ZCodeself.app", "ZCode Helper", "zcode-cli"),
+        entry_type=_zcode_bash_entry_type,
+    ),
     DarwinTransientPattern(
         "Darwin Go build 临时目录保留期",
         ("go-build*",),
@@ -235,6 +260,7 @@ DARWIN_CODE_SIGN_RETENTION_PATTERNS: tuple[DarwinTransientPattern, ...] = (
 
 
 _MAX_DYNAMIC_RETENTION_ROOTS = 128
+_MAX_STRUCTURED_RETENTION_ENTRIES = 10_000
 _MAX_VOLUME_ROOTS = 128
 _MAX_BROWSER_PROFILES = 64
 
@@ -364,6 +390,7 @@ def _discover_transient_rules_under(
                     pattern.category,
                     entry.path,
                     pattern.process_markers,
+                    entry_type=pattern.entry_type,
                 )
             )
     except FileNotFoundError:
@@ -604,6 +631,30 @@ def discover_codex_log_partition_rules(
     return tuple(rules), tuple(issues)
 
 
+def _add_retention_file(
+    measurement: _RetentionMeasurement,
+    facts: FileFacts,
+    seen: set[tuple[int, int]],
+    now: float,
+) -> None:
+    info = facts.stat
+    assert info is not None
+    identity = (info.st_dev, info.st_ino)
+    if identity in seen:
+        return
+    seen.add(identity)
+    allocated = facts.allocated_size
+    measurement.file_count += 1
+    measurement.logical_bytes += facts.logical_size
+    measurement.allocated_bytes += allocated
+    if measurement.newest_mtime is None or info.st_mtime > measurement.newest_mtime:
+        measurement.newest_mtime = info.st_mtime
+    assert measurement.older_bytes is not None
+    for days in RETENTION_DAYS:
+        if info.st_mtime <= now - days * 86400:
+            measurement.older_bytes[days] += allocated
+
+
 def _measure_retention_root(
     root_facts: FileFacts,
     protection: Predicate,
@@ -663,27 +714,54 @@ def _measure_retention_root(
                         measurement.newest_mtime = max(measurement.newest_mtime, stat_result.st_mtime)
                     stack.append(path)
                     continue
-                if not stat.S_ISREG(stat_result.st_mode):
-                    continue
-                identity = (stat_result.st_dev, stat_result.st_ino)
-                if identity in seen:
-                    continue
-                seen.add(identity)
-                allocated = facts.allocated_size
-                measurement.file_count += 1
-                measurement.logical_bytes += facts.logical_size
-                measurement.allocated_bytes += allocated
-                if (
-                    measurement.newest_mtime is None
-                    or stat_result.st_mtime > measurement.newest_mtime
-                ):
-                    measurement.newest_mtime = stat_result.st_mtime
-                assert measurement.older_bytes is not None
-                for days in RETENTION_DAYS:
-                    if stat_result.st_mtime <= now - days * 86400:
-                        measurement.older_bytes[days] += allocated
+                if stat.S_ISREG(stat_result.st_mode):
+                    _add_retention_file(measurement, facts, seen, now)
         except OSError as exc:
             _append_filesystem_issue(issues, exc, directory, task)
+    return measurement
+
+
+def _measure_structured_retention_root(
+    root_facts: FileFacts,
+    protection: Predicate,
+    result: ScanResult,
+    *,
+    task: str,
+    entry_type: Callable[[Path], int | None],
+    now: float,
+    entry_limit: int | None,
+) -> _RetentionMeasurement:
+    root = root_facts.path
+    uid = os.getuid()
+    measurement = _RetentionMeasurement()
+    assert root_facts.stat is not None
+    if root_facts.stat.st_uid != uid or root_facts.is_probable_cloud_placeholder:
+        return measurement
+    try:
+        if (lstat_retry(root.parent).st_dev != root_facts.stat.st_dev
+                or filesystem_id_retry(root.parent) != filesystem_id_retry(root)):
+            result.issues.append(ScanIssue(
+                code="cross_filesystem_skipped", message="保留期诊断跳过跨文件系统目录",
+                task=task, path=root, blocking=False,
+            ))
+            return measurement
+    except OSError as exc:
+        _append_filesystem_issue(result.issues, exc, root, task)
+        return measurement
+
+    def matches(facts: FileFacts) -> bool:
+        return (facts.stat.st_uid == uid
+                and stat.S_IFMT(facts.stat.st_mode) == entry_type(facts.path.relative_to(root)))
+
+    limit = _MAX_STRUCTURED_RETENTION_ENTRIES
+    if entry_limit is not None:
+        limit = min(limit, entry_limit)
+    seen: set[tuple[int, int]] = set()
+    for facts, _ in walk_resources(
+        root, protection, result, task, budget=WalkBudget(limit), descend=matches,
+    ):
+        if stat.S_ISREG(facts.stat.st_mode) and matches(facts):
+            _add_retention_file(measurement, facts, seen, now)
     return measurement
 
 
@@ -737,15 +815,17 @@ def scan_retention_rules(
                 )
             )
             continue
-        measurement = _measure_retention_root(
-            root_facts,
-            protection,
-            result.issues,
-            task=rule.category,
-            now=observed_at,
-            include_directory_mtime=include_directory_mtime,
-            entry_limit=entry_limit,
-        )
+        if rule.entry_type is None:
+            measurement = _measure_retention_root(
+                root_facts, protection, result.issues, task=rule.category,
+                now=observed_at, include_directory_mtime=include_directory_mtime,
+                entry_limit=entry_limit,
+            )
+        else:
+            measurement = _measure_structured_retention_root(
+                root_facts, protection, result, task=rule.category, entry_type=rule.entry_type,
+                now=observed_at, entry_limit=entry_limit,
+            )
         if measurement.file_count == 0 and measurement.allocated_bytes == 0:
             continue
         running = (

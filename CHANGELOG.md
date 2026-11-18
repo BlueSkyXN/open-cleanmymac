@@ -11,6 +11,8 @@
 
 ### Added
 
+- `scan --domain system` 和 `clean junk` 新增 ZCode Bash 输出只读诊断。
+  按匹配的会话输出日志报告占用、文件数和写入时间，另报目录下的打开句柄数。
 - 经典 `clean/purge --select-file FILE`：从最多 50000 项、8 MiB 的非空 JSON 数组精确选择路径或
   资源 identifier，重新扫描后一次索引匹配；保留风险授权、预览和逐项复核，空清单或失效目标拒绝。
 - Codex 临时对象的阻断说明细分为缺项、空/异常 HEAD、实际 Git 数据、安装元数据/配置/正式安装
@@ -32,6 +34,8 @@
 
 ### Fixed
 
+- 修复 `/var/folders` 与 `/private/var/folders` 混用导致的目录句柄漏报。
+  核对目录身份后同时匹配两种写法。
 - Codex 配置嵌套过深时保留 HOME 材料审阅并报告引用检查不完整，临时清理候选保持阻断；
   同次扫描复用解析失败结果，避免每个候选重复解析异常配置。
 - 大量精确 selector 改用索引匹配，避免每个 selector 重扫整个候选列表。Codex 的两次准备后

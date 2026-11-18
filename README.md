@@ -49,6 +49,10 @@ fail-closed，不会伪报成功。
 > 当前版本 `0.24.0a4`：经典功能保留；Codex/WorkBuddy 专项 inspect 只读与计划预览可用，生产策略动作未启用。
 > 完整范围与 JSON/Run 版本见 [Agent Runtime 当前状态](docs/AGENT_RUNTIME_STATUS.md)。
 
+未发布源码的 `scan --domain system` 和 `clean junk` 可以发现 ZCode Bash 输出。
+每个 `zcode-bash-*` 目录显示匹配日志的数量、占用和最近写入时间，以及目录下的打开句柄数。
+结果为只读诊断。
+
 当前未发布源码另为 `scan --domain ai --details` / `clean ai --details` 增加 Codex HOME
 一级材料审阅：区分 Finder 元数据、备份/示例、命名 profile、配置引用、额外资料和归属待确认项。
 只读检查有界元数据与配置中的模型路径，不将小文件或非标准名称当垃圾，不提供这些对象的清理动作。
